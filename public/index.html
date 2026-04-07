@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Baustellenabnahme</title>
+  <link rel="stylesheet" href="/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/signature_pad@4.2.0/dist/signature_pad.umd.min.js"></script>
+</head>
+<body>
+
+<div class="app-wrapper">
+  <!-- ══════════ HEADER ══════════ -->
+  <header class="app-header">
+    <h1 class="logo">Bau<span>formular</span></h1>
+    <p class="subtitle">Digitale Baustellenabnahme</p>
+    <button type="button" class="dev-toggle" id="devModeToggle" aria-pressed="false">
+      Testmodus: Aus
+    </button>
+  </header>
+
+  <!-- ══════════ FORM CARD ══════════ -->
+  <div class="form-card">
+
+    <!-- Step Indicator -->
+    <div class="step-indicator" id="stepIndicator"></div>
+
+    <form id="abnahmeForm" novalidate>
+
+      <!-- ────────── STEP 1 ────────── -->
+      <section class="form-step active" data-step="1">
+        <h2>Abschluss der Baustelle</h2>
+        <p class="intro">
+          Auf den folgenden Seiten wirst du Schritt für Schritt durch den Abschluss
+          der Baustelle geführt. Bitte beachte, dass dieser <strong>vor Ort mit dem
+          Kunden</strong> gemeinsam vorgenommen werden muss.
+        </p>
+
+        <label class="field-label required">Termin-ID</label>
+        <input type="text" name="terminId" required placeholder="z.B. UT-12345" />
+
+        <label class="field-label">Kundennummer</label>
+        <input type="text" name="kundennummer" placeholder="Kundennummer" />
+
+        <div class="dev-tools hidden" id="devToolsPanel">
+          <div class="dev-tools-head">
+            <button type="button" class="btn btn-bitrix" id="btnBitrixRefresh">
+              Bitrix-Deals laden
+            </button>
+            <span class="dev-tools-badge">Testmodus</span>
+          </div>
+          <p class="dev-tools-hint">Zeigt alle aktuell verfuegbaren Deals im Bitrix-Test-Status. Klick auf einen Eintrag laedt die Daten in den Auftrag.</p>
+          <div class="bitrix-deal-list" id="bitrixDealList">
+            <p class="bitrix-empty">Noch keine Bitrix-Deals geladen.</p>
+          </div>
+          <button type="button" class="btn btn-bitrix ghost hidden" id="btnBitrixAutofill">
+            Legacy Autofill
+          </button>
+        </div>
+
+        <label class="field-label">Art des Termins</label>
+        <select name="artDesTermins">
+          <option value="Umbau">Umbau</option>
+          <option value="Nachbesserung">Nachbesserung</option>
+          <option value="Service">Service</option>
+        </select>
+
+        <label class="field-label">Hinweise an Finance</label>
+        <textarea name="hinweiseAnFinance" rows="2" placeholder="Optionale Hinweise"></textarea>
+
+        <div class="name-block">
+          <div>
+            <label class="field-label required">Anrede</label>
+            <div class="choice-group choice-group-3">
+              <label class="choice-pill">
+                <input type="radio" name="anrede" value="Frau" />
+                <span>Frau</span>
+              </label>
+              <label class="choice-pill">
+                <input type="radio" name="anrede" value="Herr" />
+                <span>Herr</span>
+              </label>
+              <label class="choice-pill">
+                <input type="radio" name="anrede" value="Familie" />
+                <span>Familie</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="row-2 row-2-name">
+            <div>
+              <label class="field-label required">Vorname</label>
+              <input type="text" name="vorname" required placeholder="Vorname" />
+            </div>
+            <div>
+              <label class="field-label required">Nachname</label>
+              <input type="text" name="nachname" required placeholder="Nachname" />
+            </div>
+          </div>
+        </div>
+
+        <fieldset class="address-group">
+          <legend>Adresse</legend>
+          <input type="text" name="adresse.strasse" placeholder="Straßen Adresse" />
+          <input type="text" name="adresse.adresszeile2" placeholder="Adresszeile 2" />
+          <div class="row-2">
+            <div>
+              <input type="text" name="adresse.stadt" placeholder="Stadt" />
+              <small>Stadt</small>
+            </div>
+            <div>
+              <input type="text" name="adresse.plz" placeholder="PLZ" />
+              <small>Postleitzahl</small>
+            </div>
+          </div>
+        </fieldset>
+
+        <label class="field-label required">Konnte der Termin erfolgreich beendet werden?</label>
+        <select name="terminStatus" required>
+          <option value="">— Bitte wählen —</option>
+          <option value="Erfolgreich beendet">Erfolgreich beendet</option>
+          <option value="Nicht erfolgreich beendet">Nicht erfolgreich beendet</option>
+        </select>
+
+        <label class="field-label">Auftrags-Nummer</label>
+        <input type="text" name="auftragsNummer" placeholder="A-AN-XXXXX" />
+      </section>
+
+      <!-- ────────── STEP 2 ────────── -->
+      <section class="form-step" data-step="2">
+        <h2>Fotos &amp; Video</h2>
+
+        <label class="field-label required">Bilder des fertigen Umbaus</label>
+        <div class="file-upload" data-name="bilderFertigerUmbau" data-multiple="true" data-accept="image/*">
+          <div class="file-drop">
+            <span>Datei(en) wählen</span>
+            <div class="file-actions">
+              <button type="button" class="btn-icon btn-upload" title="Datei hochladen">⬆</button>
+              <button type="button" class="btn-icon btn-camera" title="Foto aufnehmen">📷</button>
+            </div>
+          </div>
+          <div class="file-preview"></div>
+          <input type="file" accept="image/*" multiple hidden />
+        </div>
+
+        <div class="checkbox-row">
+          <label>
+            <input type="checkbox" name="grossesVideoNachgang" />
+            Großes Video im Nachgang hochladen
+          </label>
+          <p class="hint">Wenn diese Checkbox gewählt wird, erhältst du im Nachgang die Möglichkeit, das Video hochzuladen.</p>
+        </div>
+
+        <label class="field-label required">Video des Ablaufs</label>
+        <div class="file-upload" data-name="videoDesAblaufs" data-multiple="false" data-accept="video/*">
+          <div class="file-drop">
+            <span>Datei wählen</span>
+            <div class="file-actions">
+              <button type="button" class="btn-icon btn-upload" title="Datei hochladen">⬆</button>
+              <button type="button" class="btn-icon btn-video" title="Video aufnehmen">🎥</button>
+            </div>
+          </div>
+          <div class="file-preview"></div>
+          <input type="file" accept="video/*" hidden />
+        </div>
+        <p class="hint">Hier bitte die Brause über den Abfluss halten, Wasser laufen lassen und filmen dass es abläuft.</p>
+
+        <label class="field-label">Fotos der Abdichtung</label>
+        <div class="file-upload" data-name="fotosAbdichtung" data-multiple="true" data-accept="image/*">
+          <div class="file-drop">
+            <span>Datei(en) wählen</span>
+            <div class="file-actions">
+              <button type="button" class="btn-icon btn-upload" title="Datei hochladen">⬆</button>
+              <button type="button" class="btn-icon btn-camera" title="Foto aufnehmen">📷</button>
+            </div>
+          </div>
+          <div class="file-preview"></div>
+          <input type="file" accept="image/*" multiple hidden />
+        </div>
+
+        <label class="field-label">Bilder der behobenen Mängel</label>
+        <div class="file-upload" data-name="bilderBehobeneMaengel" data-multiple="true" data-accept="image/*">
+          <div class="file-drop">
+            <span>Datei(en) wählen</span>
+            <div class="file-actions">
+              <button type="button" class="btn-icon btn-upload" title="Datei hochladen">⬆</button>
+              <button type="button" class="btn-icon btn-camera" title="Foto aufnehmen">📷</button>
+            </div>
+          </div>
+          <div class="file-preview"></div>
+          <input type="file" accept="image/*" multiple hidden />
+        </div>
+      </section>
+
+      <!-- ────────── STEP 3 ────────── -->
+      <section class="form-step" data-step="3">
+        <h2>Weitere Bilder</h2>
+
+        <label class="field-label">Weitere Bilder</label>
+        <div class="file-upload" data-name="weitereBilder" data-multiple="true" data-accept="image/*">
+          <div class="file-drop">
+            <span>Datei(en) wählen</span>
+            <div class="file-actions">
+              <button type="button" class="btn-icon btn-upload" title="Datei hochladen">⬆</button>
+              <button type="button" class="btn-icon btn-camera" title="Foto aufnehmen">📷</button>
+            </div>
+          </div>
+          <div class="file-preview"></div>
+          <input type="file" accept="image/*" multiple hidden />
+        </div>
+
+        <label class="field-label">Weitere Bilder 2</label>
+        <div class="file-upload" data-name="weitereBilder2" data-multiple="true" data-accept="image/*">
+          <div class="file-drop">
+            <span>Datei(en) wählen</span>
+            <div class="file-actions">
+              <button type="button" class="btn-icon btn-upload" title="Datei hochladen">⬆</button>
+              <button type="button" class="btn-icon btn-camera" title="Foto aufnehmen">📷</button>
+            </div>
+          </div>
+          <div class="file-preview"></div>
+          <input type="file" accept="image/*" multiple hidden />
+        </div>
+
+        <label class="field-label">Weitere Bilder 3</label>
+        <div class="file-upload" data-name="weitereBilder3" data-multiple="true" data-accept="image/*">
+          <div class="file-drop">
+            <span>Datei(en) wählen</span>
+            <div class="file-actions">
+              <button type="button" class="btn-icon btn-upload" title="Datei hochladen">⬆</button>
+              <button type="button" class="btn-icon btn-camera" title="Foto aufnehmen">📷</button>
+            </div>
+          </div>
+          <div class="file-preview"></div>
+          <input type="file" accept="image/*" multiple hidden />
+        </div>
+      </section>
+
+      <!-- ────────── STEP 4 ─ Umbau-Abschluss ────────── -->
+      <section class="form-step" data-step="4">
+        <h2>Abschluss &amp; Unterschrift</h2>
+
+        <div class="kva-section">
+          <h3>KVA</h3>
+          <label class="field-label">Zusätzlich zur Beauftragung durchgeführte Arbeiten</label>
+          <textarea name="zusaetzlicheArbeiten" rows="3" placeholder="Beschreibung der Zusatzarbeiten"></textarea>
+
+          <label class="field-label">Preis der zusätzlich durchgeführten Arbeiten</label>
+          <div class="input-euro">
+            <input type="number" name="preisZusaetzlich" min="0" step="0.01" placeholder="0,00" />
+            <span class="euro-suffix">€</span>
+          </div>
+        </div>
+
+        <label class="field-label required">Die Arbeiten wurden vollständig abgeschlossen am</label>
+        <input type="date" name="abgeschlossenAm" required />
+
+        <label class="field-label required">Wurden alle Arbeiten durchgeführt?</label>
+        <div class="radio-group">
+          <label><input type="radio" name="alleArbeitenErledigt" value="Ja" /> Ja</label>
+          <label><input type="radio" name="alleArbeitenErledigt" value="Nein" /> Nein</label>
+        </div>
+
+        <div class="conditional-field" data-show-when="alleArbeitenErledigt" data-show-value="Nein">
+          <label class="field-label required">Welche Arbeiten wurden nicht durchgeführt?</label>
+          <textarea name="nichtErledigteArbeiten" rows="3" placeholder="Bitte beschreiben…"></textarea>
+        </div>
+
+        <div class="legal-text">
+          <p>Mit meiner Unterschrift bestätige ich den ordnungsgemäßen Abschluss der beauftragten
+          Arbeiten gemäß des Auftrags <strong class="auftrag-nr-display">A-___</strong>
+          unter Einbezug der eventuell oben festgehaltenen Abweichungen.</p>
+          <p>Falls eine Kostenübernahme durch die Pflegekasse zugesagt wurde, erkläre ich mich damit
+          einverstanden, dass die Seniovo Bau GmbH im Rahmen des Kostenerstattungsverfahren für
+          wohnumfeldverbessernde Maßnahmen direkt mit meiner Krankenkasse abrechnen darf.</p>
+        </div>
+
+        <label class="field-label required">Unterschrift</label>
+        <div class="signature-wrapper" data-name="unterschriftKunde">
+          <canvas class="signature-canvas" width="600" height="200"></canvas>
+          <button type="button" class="btn-clear-sig">Löschen</button>
+        </div>
+        <input type="hidden" name="unterschriftKunde" />
+        <input type="hidden" name="unterschriftZeitpunkt" />
+      </section>
+
+      <!-- ────────── STEP 5 ─ Mängelbeseitigung ────────── -->
+      <section class="form-step" data-step="5">
+        <h2>Mängelbeseitigung</h2>
+
+        <label class="field-label required">Die Mängelbeseitigung wurde vollständig abgeschlossen am</label>
+        <input type="date" name="maengelAbgeschlossenAm" />
+
+        <div class="legal-text">
+          <p>Mit meiner Unterschrift bestätige ich den ordnungsgemäßen Abschluss der Mängelbeseitigung.</p>
+        </div>
+
+        <label class="field-label required">Unterschrift Mängelbeseitigung</label>
+        <div class="signature-wrapper" data-name="unterschriftMaengel">
+          <canvas class="signature-canvas" width="600" height="200"></canvas>
+          <button type="button" class="btn-clear-sig">Löschen</button>
+        </div>
+        <input type="hidden" name="unterschriftMaengel" />
+        <input type="hidden" name="unterschriftMaengelZeitpunkt" />
+      </section>
+
+      <!-- ────────── STEP 6 ─ Nachbesserung ────────── -->
+      <section class="form-step" data-step="6">
+        <h2>Nachbesserung</h2>
+
+        <label class="field-label required">Die Nachlieferung der noch offenen Arbeiten wurde vollständig abgeschlossen am</label>
+        <input type="date" name="nachbesserungAbgeschlossenAm" />
+
+        <div class="kva-section">
+          <h3>KVA für Nachbesserung</h3>
+          <label class="field-label">Zusätzlich zur Beauftragung durchgeführte Arbeiten</label>
+          <textarea name="zusaetzlicheArbeitenNB" rows="3"></textarea>
+
+          <label class="field-label">Preis der zusätzlich durchgeführten Arbeiten</label>
+          <div class="input-euro">
+            <input type="number" name="preisZusaetzlichNB" min="0" step="0.01" placeholder="0,00" />
+            <span class="euro-suffix">€</span>
+          </div>
+        </div>
+
+        <label class="field-label required">Wurden alle Arbeiten durchgeführt?</label>
+        <div class="radio-group">
+          <label><input type="radio" name="alleArbeitenNB" value="Ja" /> Ja</label>
+          <label><input type="radio" name="alleArbeitenNB" value="Nein" /> Nein</label>
+        </div>
+
+        <div class="conditional-field" data-show-when="alleArbeitenNB" data-show-value="Nein">
+          <label class="field-label required">Welche Arbeiten wurden nicht durchgeführt?</label>
+          <textarea name="nichtErledigteArbeitenNB" rows="3"></textarea>
+        </div>
+
+        <div class="legal-text">
+          <p>Mit meiner Unterschrift bestätige ich den ordnungsgemäßen Abschluss der beauftragten
+          Arbeiten unter Einbezug der eventuell oben festgehaltenen Abweichungen.</p>
+          <p>Falls eine Kostenübernahme durch die Pflegekasse zugesagt wurde, erkläre ich mich damit
+          einverstanden, dass die Seniovo Bau GmbH im Rahmen des Kostenerstattungsverfahren für
+          wohnumfeldverbessernde Maßnahmen direkt mit meiner Krankenkasse abrechnen darf.</p>
+        </div>
+
+        <label class="field-label required">Unterschrift Nachbesserung</label>
+        <div class="signature-wrapper" data-name="unterschriftNB">
+          <canvas class="signature-canvas" width="600" height="200"></canvas>
+          <button type="button" class="btn-clear-sig">Löschen</button>
+        </div>
+        <input type="hidden" name="unterschriftNB" />
+        <input type="hidden" name="unterschriftNBZeitpunkt" />
+      </section>
+
+      <!-- ────────── STEP 7 ─ Hinweise ────────── -->
+      <section class="form-step" data-step="7">
+        <h2>Hinweise für das Büro</h2>
+        <textarea name="hinweiseBuero" rows="6" placeholder="Optionale Hinweise für das Büro…"></textarea>
+      </section>
+
+    </form>
+
+    <!-- ══════════ NAVIGATION ══════════ -->
+    <div class="form-nav">
+      <button type="button" class="btn btn-back" id="btnBack">Zurück</button>
+      <button type="button" class="btn btn-draft" id="btnDraft">Zwischenspeichern</button>
+      <button type="button" class="btn btn-next" id="btnNext">Weiter</button>
+      <button type="button" class="btn btn-submit" id="btnSubmit">Absenden</button>
+    </div>
+
+    <div class="step-counter" id="stepCounter">1/7</div>
+  </div>
+</div>
+
+<!-- ══════════ CAMERA MODAL ══════════ -->
+<div class="modal-overlay" id="cameraModal">
+  <div class="modal-content">
+    <h3 id="cameraModalTitle">Foto aufnehmen</h3>
+    <video id="cameraVideo" autoplay playsinline></video>
+    <canvas id="cameraCanvas" hidden></canvas>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-capture" id="btnCapture">📸 Aufnehmen</button>
+      <button type="button" class="btn btn-back" id="btnCameraClose">Abbrechen</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ DRAFT LINK MODAL ══════════ -->
+<div class="modal-overlay" id="draftModal">
+  <div class="modal-content modal-sm">
+    <h3>Zwischengespeichert ✓</h3>
+    <p>Link zu dem zwischengespeicherten Formular:</p>
+    <input type="text" id="draftLink" readonly class="draft-link-input" />
+    <div class="modal-actions">
+      <button type="button" class="btn btn-next" id="btnCopyLink">Link kopieren</button>
+      <button type="button" class="btn btn-back" id="btnCloseDraft">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ TOAST ══════════ -->
+<div class="toast" id="toast"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>
