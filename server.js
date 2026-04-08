@@ -53,7 +53,14 @@ app.get('/form/:token', (_req, res) => res.sendFile(path.join(__dirname, 'public
 
 async function startServer() {
   try {
-    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/bau-formular');
+    const mongoUri = process.env.MONGODB_URI || 'mongodb://localhost:27017/bau-formular';
+    const mongoOptions = {};
+
+    if (process.env.MONGODB_DB) {
+      mongoOptions.dbName = process.env.MONGODB_DB;
+    }
+
+    await mongoose.connect(mongoUri, mongoOptions);
     console.log('✅  MongoDB verbunden');
     return app.listen(PORT, () => console.log(`🚀  Server läuft auf http://localhost:${PORT}`));
   } catch (err) {

@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 
-const schema = new mongoose.Schema({
+const schemaDefinition = {
   /* ── Step 1 ─ Grunddaten ─────────────────────────── */
   terminId:          { type: String, required: true },
   kundennummer:      { type: String, default: '' },
@@ -22,19 +22,65 @@ const schema = new mongoose.Schema({
     default: '',
   },
 
-  /* ── Step 2 ─ Fotos / Video ─────────────────────── */
+  /* ── Step 2 ─ Warenpruefung ─────────────────────── */
+  warenpruefungDatum:            { type: Date },
+  wareWandverkleidungenStatus:   { type: String, enum: ['io', 'nicht-io', ''], default: '' },
+  wareDuschabtrennungenStatus:   { type: String, enum: ['io', 'nicht-io', ''], default: '' },
+  wareDuschwanneStatus:          { type: String, enum: ['io', 'nicht-io', ''], default: '' },
+  wareBadewannentuerStatus:      { type: String, enum: ['io', 'nicht-io', ''], default: '' },
+  wareWaschtischStatus:          { type: String, enum: ['io', 'nicht-io', ''], default: '' },
+  wareToiletteStatus:            { type: String, enum: ['io', 'nicht-io', ''], default: '' },
+  wareHaltegriffStatus:          { type: String, enum: ['io', 'nicht-io', ''], default: '' },
+  wareBoedenStatus:              { type: String, enum: ['io', 'nicht-io', ''], default: '' },
+  wareGelaenderStatus:           { type: String, enum: ['io', 'nicht-io', ''], default: '' },
+  wareSonstigesStatus:           { type: String, enum: ['io', 'nicht-io', ''], default: '' },
+  warenpruefungKommentar:        { type: String, default: '' },
+  unterschriftWarenpruefung:     { type: String, default: '' },
+
+  /* ── Step 3 ─ Montage-Checkliste ────────────────── */
+  checklistFotosWaerendUmsetzung:           { type: Boolean, default: false },
+  checklistFinaleFotos:                     { type: Boolean, default: false },
+  checklistFotosHandwerkskoordination:      { type: Boolean, default: false },
+  checklistFotoUebermittlung:               { type: String, enum: ['iMessage', 'WhatsApp', 'FortyTools', ''], default: '' },
+  checklistVerbrauchsmaterialErfasst:       { type: Boolean, default: false },
+  checklistWarenkorbGeschickt:              { type: Boolean, default: false },
+  checklistDokumentWarenpruefung:           { type: Boolean, default: false },
+  checklistArbeitszeitenErfasst:            { type: Boolean, default: false },
+  checklistBestaetigungKasse:               { type: Boolean, default: false },
+  checklistDokumentArbeitsbericht:          { type: Boolean, default: false },
+  checklistFlyerBadewannentuer:             { type: Boolean, default: false },
+  checklistFlyerBadumbau:                   { type: Boolean, default: false },
+  checklistFlyerHaltegriffe:                { type: Boolean, default: false },
+  checklistBroschuerePflegehinweise:        { type: Boolean, default: false },
+  checklistSilikonDuschabzieher:            { type: Boolean, default: false },
+  checklistHinweisSilikonfugen:             { type: Boolean, default: false },
+  checklistGratisHaltegriffMontiert:        { type: Boolean, default: false },
+  checklistGratisHaltegriffKommentar:       { type: String, default: '' },
+
+  /* ── Step 4 ─ Abschlusskontrolle ────────────────── */
+  abschlusskontrolleBaustelleSauber:        { type: Boolean, default: false },
+  abschlusskontrolleVerpackungEntsorgt:     { type: Boolean, default: false },
+  abschlusskontrolleFunktionstest:          { type: Boolean, default: false },
+  abschlusskontrolleKundeEingewiesen:       { type: Boolean, default: false },
+  abschlusskontrolleWerkzeugeMitgenommen:   { type: Boolean, default: false },
+  sonstigeBemerkungenBaustelle:             { type: String, default: '' },
+  unterschriftMonteur1:                     { type: String, default: '' },
+  unterschriftMonteur2:                     { type: String, default: '' },
+  unterschriftMonteurDatum:                 { type: Date },
+
+  /* ── Step 5 ─ Fotos / Video ─────────────────────── */
   bilderFertigerUmbau:   [String],
   grossesVideoNachgang:  { type: Boolean, default: false },
   videoDesAblaufs:       { type: String, default: '' },
   fotosAbdichtung:       [String],
   bilderBehobeneMaengel: [String],
 
-  /* ── Step 3 ─ Weitere Bilder ────────────────────── */
+  /* ── Step 6 ─ Weitere Bilder ────────────────────── */
   weitereBilder:  [String],
   weitereBilder2: [String],
   weitereBilder3: [String],
 
-  /* ── Step 4 ─ Abschluss Umbau ───────────────────── */
+  /* ── Step 7 ─ Abschluss Umbau ───────────────────── */
   zusaetzlicheArbeiten:  { type: String, default: '' },
   preisZusaetzlich:      { type: Number, default: 0 },
   abgeschlossenAm:       { type: Date },
@@ -44,12 +90,12 @@ const schema = new mongoose.Schema({
   unterschriftKunde:     { type: String, default: '' },   // base64 PNG
   unterschriftZeitpunkt: { type: Date },
 
-  /* ── Step 5 ─ Mängelbeseitigung ─────────────────── */
+  /* ── Step 8 ─ Mängelbeseitigung ─────────────────── */
   maengelAbgeschlossenAm:        { type: Date },
   unterschriftMaengel:           { type: String, default: '' },
   unterschriftMaengelZeitpunkt:  { type: Date },
 
-  /* ── Step 6 ─ Nachbesserung ─────────────────────── */
+  /* ── Step 9 ─ Nachbesserung ─────────────────────── */
   nachbesserungAbgeschlossenAm:  { type: Date },
   zusaetzlicheArbeitenNB:       { type: String, default: '' },
   preisZusaetzlichNB:            { type: Number, default: 0 },
@@ -58,14 +104,22 @@ const schema = new mongoose.Schema({
   unterschriftNB:                { type: String, default: '' },
   unterschriftNBZeitpunkt:       { type: Date },
 
-  /* ── Step 7 ─ Hinweise ──────────────────────────── */
+  /* ── Step 10 ─ Hinweise ─────────────────────────── */
   hinweiseBuero: { type: String, default: '' },
 
   /* ── System ─────────────────────────────────────── */
   status:     { type: String, enum: ['draft', 'submitted'], default: 'draft' },
   shareToken: { type: String, unique: true, sparse: true },
-}, {
-  timestamps: true,
-});
+};
 
-module.exports = mongoose.model('Abnahme', schema);
+function createAbnahmeSchema(collectionName) {
+  return new mongoose.Schema(schemaDefinition, {
+    timestamps: true,
+    collection: collectionName,
+  });
+}
+
+const schema = createAbnahmeSchema('Abnahmen');
+
+module.exports = mongoose.models.Abnahme || mongoose.model('Abnahme', schema);
+module.exports.createAbnahmeSchema = createAbnahmeSchema;

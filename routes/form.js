@@ -5,6 +5,7 @@ const express = require('express');
 const multer = require('multer');
 
 const Abnahme = require('../models/Abnahme');
+const Entwurf = require('../models/Entwurf');
 
 const router = express.Router();
 const uploadsDir = path.join(__dirname, '..', 'uploads');
@@ -46,6 +47,18 @@ function pickPayload(body = {}) {
   return payload;
 }
 
+function sanitizeDocumentForCreate(document = {}) {
+  const payload = { ...document };
+
+  delete payload._id;
+  delete payload.id;
+  delete payload.__v;
+  delete payload.createdAt;
+  delete payload.updatedAt;
+
+  return payload;
+}
+
 function mergeUploadedFiles(payload, files = []) {
   const groupedFiles = files.reduce((acc, file) => {
     if (!acc[file.fieldname]) acc[file.fieldname] = [];
@@ -70,8 +83,68 @@ function buildSuccessResponse(form) {
   };
 }
 
+function buildDraftSearchQuery(search = '') {
+  const value = String(search || '').trim();
+  if (!value) return { status: 'draft' };
+
+  const regex = new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+
+  return {
+    status: 'draft',
+    $or: [
+      { terminId: regex },
+      { kundennummer: regex },
+      { auftragsNummer: regex },
+      { vorname: regex },
+      { nachname: regex },
+      { name: regex },
+    ],
+  };
+}
+
 router.get('/health', (_req, res) => {
   res.json({ ok: true });
+});
+
+router.get('/drafts', async (req, res) => {
+  try {
+    const drafts = await Entwurf.find(buildDraftSearchQuery(req.query.q))
+      .sort({ updatedAt: -1 })
+      .limit(20)
+      .lean();
+
+    return res.json({
+      success: true,
+      drafts: drafts.map(draft => ({
+        _id: draft._id,
+        shareToken: draft.shareToken,
+        terminId: draft.terminId,
+        kundennummer: draft.kundennummer,
+        auftragsNummer: draft.auftragsNummer,
+        vorname: draft.vorname,
+        nachname: draft.nachname,
+        name: draft.name,
+        status: draft.status,
+        updatedAt: draft.updatedAt,
+      })),
+    });
+  } catch (error) {
+    return res.status(400).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/drafts/:id', async (req, res) => {
+  try {
+    const draft = await Entwurf.findById(req.params.id);
+
+    if (!draft) {
+      return res.status(404).json({ success: false, error: 'Entwurf nicht gefunden' });
+    }
+
+    return res.json({ success: true, data: draft });
+  } catch (error) {
+    return res.status(400).json({ success: false, error: error.message });
+  }
 });
 
 router.post('/save', upload.any(), async (req, res) => {
@@ -81,7 +154,7 @@ router.post('/save', upload.any(), async (req, res) => {
     const formId = parsed._id || parsed.id;
 
     if (formId) {
-      const existing = await Abnahme.findById(formId);
+      const existing = await Entwurf.findById(formId);
 
       if (!existing) {
         return res.status(404).json({ success: false, error: 'Formular nicht gefunden' });
@@ -93,7 +166,7 @@ router.post('/save', upload.any(), async (req, res) => {
       return res.json(buildSuccessResponse(existing));
     }
 
-    const form = await Abnahme.create({
+    const form = await Entwurf.create({
       ...payload,
       shareToken: createShareToken(),
       status: 'draft',
@@ -107,7 +180,9 @@ router.post('/save', upload.any(), async (req, res) => {
 
 router.get('/token/:token', async (req, res) => {
   try {
-    const form = await Abnahme.findOne({ shareToken: req.params.token });
+    const form =
+      await Entwurf.findOne({ shareToken: req.params.token }) ||
+      await Abnahme.findOne({ shareToken: req.params.token });
 
     if (!form) {
       return res.status(404).json({ success: false, error: 'Formular nicht gefunden' });
@@ -126,7 +201,28 @@ router.post('/submit', upload.any(), async (req, res) => {
     const formId = parsed._id || parsed.id;
 
     if (!formId) {
-      return res.status(400).json({ success: false, error: 'Formular-ID fehlt' });
+      const form = await Abnahme.create({
+        ...payload,
+        shareToken: createShareToken(),
+        status: 'submitted',
+      });
+
+      return res.status(201).json(buildSuccessResponse(form));
+    }
+
+    const draft = await Entwurf.findById(formId);
+
+    if (draft) {
+      const submitted = await Abnahme.create({
+        ...sanitizeDocumentForCreate(draft.toObject()),
+        ...payload,
+        shareToken: draft.shareToken || createShareToken(),
+        status: 'submitted',
+      });
+
+      await draft.deleteOne();
+
+      return res.json(buildSuccessResponse(submitted));
     }
 
     const form = await Abnahme.findById(formId);

@@ -18,12 +18,19 @@
   const btnSubmit     = $('#btnSubmit');
   const devModeToggle = $('#devModeToggle');
   const devToolsPanel = $('#devToolsPanel');
+  const devModeBadge  = $('#devModeBadge');
+  const bitrixTestActions = $('#bitrixTestActions');
   const btnBitrixAutofill = $('#btnBitrixAutofill');
   const btnBitrixRefresh = $('#btnBitrixRefresh');
+  const btnDemoPrefill = $('#btnDemoPrefill');
+  const bitrixSearch  = $('#bitrixSearch');
   const bitrixDealList = $('#bitrixDealList');
+  const draftSearch = $('#draftSearch');
+  const btnDraftRefresh = $('#btnDraftRefresh');
+  const draftList = $('#draftList');
   const toast         = $('#toast');
 
-  const TOTAL_STEPS = 7;
+  const TOTAL_STEPS = 9;
   const BITRIX_TEST_ENTITY_TYPE_ID = 2;
   const BITRIX_STAGE_ID = 'C22:UC_T5EXSL';
   let currentStep   = 1;
@@ -34,6 +41,10 @@
   let devMode       = localStorage.getItem('bauFormularDevMode') === 'true';
   let bitrixDeals   = [];
   let activeBitrixDealId = null;
+  let bitrixSearchTerm = '';
+  let drafts = [];
+  let activeDraftId = null;
+  let draftSearchTerm = '';
 
   function buildFullName(data) {
     return [data.anrede, data.vorname, data.nachname]
@@ -67,10 +78,13 @@
     bindConditionalFields();
     bindAuftragsNrSync();
     bindBitrixAutofill();
+    bindDraftLookup();
     initSignaturePads();
     initDevModeToggle();
     loadDraftIfNeeded();
     showStep(1);
+    fetchBitrixDeals();
+    fetchDrafts();
   }
 
   // ── Step Indicator Dots ────────────────────────────────
@@ -104,9 +118,9 @@
     stepCounter.textContent = `${n}/${TOTAL_STEPS}`;
 
     // Button visibility
-    btnBack.style.display   = n === 1 ? 'none' : '';
-    btnNext.style.display   = n === TOTAL_STEPS ? 'none' : '';
-    btnSubmit.style.display = n === TOTAL_STEPS ? '' : 'none';
+    btnBack.style.display   = n === 1 ? 'none' : 'inline-flex';
+    btnNext.style.display   = n === TOTAL_STEPS ? 'none' : 'inline-flex';
+    btnSubmit.style.display = n === TOTAL_STEPS ? 'inline-flex' : 'none';
 
     // Re-init signature pads when step becomes visible (canvas resize)
     requestAnimationFrame(() => resizeAllSignatureCanvases());
@@ -164,8 +178,8 @@
     devModeToggle.classList.toggle('active', devMode);
     devModeToggle.setAttribute('aria-pressed', String(devMode));
     devModeToggle.textContent = `Testmodus: ${devMode ? 'An' : 'Aus'}`;
-    if (devToolsPanel) devToolsPanel.classList.toggle('hidden', !devMode);
-    if (devMode && !bitrixDeals.length) fetchBitrixDeals();
+    if (devModeBadge) devModeBadge.classList.toggle('hidden', !devMode);
+    if (bitrixTestActions) bitrixTestActions.classList.toggle('hidden', !devMode);
   }
 
   function bindBitrixAutofill() {
@@ -173,11 +187,35 @@
       btnBitrixRefresh.addEventListener('click', fetchBitrixDeals);
     }
 
+    if (bitrixSearch) {
+      bitrixSearch.addEventListener('input', () => {
+        bitrixSearchTerm = bitrixSearch.value.trim().toLowerCase();
+        renderBitrixDeals(getFilteredBitrixDeals());
+      });
+    }
+
     if (btnBitrixAutofill) {
       btnBitrixAutofill.addEventListener('click', async () => {
         if (!bitrixDeals.length) await fetchBitrixDeals();
         if (bitrixDeals.length) loadBitrixDeal(bitrixDeals[0]);
       });
+    }
+
+    if (btnDemoPrefill) {
+      btnDemoPrefill.addEventListener('click', prefillDemoData);
+    }
+  }
+
+  function bindDraftLookup() {
+    if (draftSearch) {
+      draftSearch.addEventListener('input', () => {
+        draftSearchTerm = draftSearch.value.trim();
+        fetchDrafts();
+      });
+    }
+
+    if (btnDraftRefresh) {
+      btnDraftRefresh.addEventListener('click', fetchDrafts);
     }
   }
 
@@ -201,7 +239,7 @@
       }
 
       bitrixDeals = await enrichBitrixDeals(items);
-      renderBitrixDeals(bitrixDeals);
+      renderBitrixDeals(getFilteredBitrixDeals());
       showToast('Bitrix-Deals geladen.', 'success');
     } catch (error) {
       bitrixDeals = [];
@@ -247,11 +285,31 @@
             ${dateLabel ? `<span class="bitrix-chip">${escapeHtml(formatShortDate(dateLabel))}</span>` : ''}
           </div>
         </div>
-        <button type="button" class="bitrix-deal-action">In Auftrag laden</button>
+        <button type="button" class="bitrix-deal-action">In Formular laden</button>
       `;
 
       $('.bitrix-deal-action', card).addEventListener('click', () => loadBitrixDeal(deal));
       bitrixDealList.appendChild(card);
+    });
+  }
+
+  function getFilteredBitrixDeals() {
+    if (!bitrixSearchTerm) return bitrixDeals;
+
+    return bitrixDeals.filter(deal => {
+      const haystack = [
+        deal.id,
+        deal.title,
+        deal.stageId,
+        deal.contactId,
+        deal._contact?.NAME,
+        deal._contact?.LAST_NAME,
+        buildBitrixOfferType(deal),
+      ]
+        .map(value => String(value || '').toLowerCase())
+        .join(' ');
+
+      return haystack.includes(bitrixSearchTerm);
     });
   }
 
@@ -278,6 +336,102 @@
     }
   }
 
+  async function fetchDrafts() {
+    if (!draftList) return;
+
+    if (btnDraftRefresh) btnDraftRefresh.disabled = true;
+    renderDrafts([], 'Entwürfe werden geladen...');
+
+    try {
+      const query = draftSearchTerm ? `?q=${encodeURIComponent(draftSearchTerm)}` : '';
+      const res = await fetch(`/api/form/drafts${query}`);
+      const json = await res.json();
+
+      if (!json.success) throw new Error(json.error || 'Entwürfe konnten nicht geladen werden');
+
+      drafts = json.drafts || [];
+      renderDrafts(drafts, draftSearchTerm ? 'Keine passenden Entwürfe gefunden.' : 'Noch keine Entwürfe gespeichert.');
+    } catch (error) {
+      drafts = [];
+      renderDrafts([], 'Fehler beim Laden der Entwürfe.');
+      showToast('Fehler beim Laden der Entwürfe: ' + error.message, 'error');
+    } finally {
+      if (btnDraftRefresh) btnDraftRefresh.disabled = false;
+    }
+  }
+
+  function renderDrafts(items, emptyMessage = 'Noch keine Entwürfe gespeichert.') {
+    if (!draftList) return;
+
+    if (!items.length) {
+      draftList.innerHTML = `<p class="bitrix-empty">${emptyMessage}</p>`;
+      return;
+    }
+
+    draftList.innerHTML = '';
+
+    items.forEach(item => {
+      const card = document.createElement('article');
+      const isActive = String(item._id) === String(activeDraftId || formId || '');
+      card.className = 'draft-card';
+      if (isActive) card.classList.add('active');
+
+      const displayTitle = buildDraftTitle(item);
+      const subtitle = buildDraftSubtitle(item);
+      const updatedAt = item.updatedAt ? formatShortDate(item.updatedAt) : '';
+
+      card.innerHTML = `
+        <div class="draft-card-top">
+          <div>
+            <div class="draft-card-title">${escapeHtml(displayTitle)}</div>
+            ${subtitle ? `<div class="draft-card-subtitle">${escapeHtml(subtitle)}</div>` : ''}
+            <div class="draft-card-meta">ID ${escapeHtml(String(item._id || ''))}${updatedAt ? ` · aktualisiert ${escapeHtml(updatedAt)}` : ''}</div>
+          </div>
+          ${item.terminId ? `<span class="bitrix-chip">${escapeHtml(item.terminId)}</span>` : ''}
+        </div>
+        <button type="button" class="draft-card-action">Entwurf laden</button>
+      `;
+
+      $('.draft-card-action', card).addEventListener('click', () => loadDraftById(item._id));
+      draftList.appendChild(card);
+    });
+  }
+
+  function buildDraftTitle(item) {
+    return [item.vorname, item.nachname]
+      .map(value => String(value || '').trim())
+      .filter(Boolean)
+      .join(' ') || item.name || item.kundennummer || item.auftragsNummer || 'Unbenannter Entwurf';
+  }
+
+  function buildDraftSubtitle(item) {
+    return item.auftragsNummer || item.kundennummer || '';
+  }
+
+  async function loadDraftById(id) {
+    if (!id) return;
+
+    try {
+      const res = await fetch(`/api/form/drafts/${id}`);
+      const json = await res.json();
+
+      if (!json.success) throw new Error(json.error || 'Entwurf konnte nicht geladen werden');
+
+      const data = json.data;
+      formId = data._id;
+      shareToken = data.shareToken || null;
+      activeDraftId = data._id;
+
+      resetFormState();
+      populateForm(data);
+      renderDrafts(drafts);
+      showStep(1);
+      showToast('Entwurf geladen.', 'success');
+    } catch (error) {
+      showToast('Fehler beim Laden des Entwurfs: ' + error.message, 'error');
+    }
+  }
+
   function setFieldValue(name, value) {
     const input = $(`[name="${name}"]`, form);
     if (!input || value === undefined || value === null) return;
@@ -295,6 +449,147 @@
 
     radio.checked = true;
     radio.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  function setCheckboxValue(name, checked) {
+    const input = $(`input[type="checkbox"][name="${name}"]`, form);
+    if (!input) return;
+
+    input.checked = Boolean(checked);
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  function setSelectValue(name, value) {
+    const input = $(`select[name="${name}"]`, form);
+    if (!input) return;
+
+    input.value = value;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  function prefillDemoData() {
+    const today = new Date();
+    const todayStr = today.toISOString().slice(0, 10);
+
+    const textValues = {
+      terminId: 'MUSTER-2026-001',
+      kundennummer: '12398',
+      hinweiseAnFinance: 'Musterhinweis für Finance zur internen Prüfung.',
+      vorname: 'Max',
+      nachname: 'Mustermann',
+      'adresse.strasse': 'Musterstraße 42',
+      'adresse.adresszeile2': '2. OG links',
+      'adresse.stadt': 'Leipzig',
+      'adresse.plz': '04109',
+      auftragsNummer: 'A-AN-MUSTER-001',
+      warenpruefungKommentar: 'Musterprüfung durchgeführt, leichte Kratzer an der Verpackung dokumentiert.',
+      checklistGratisHaltegriffKommentar: 'Mustertext: Montage erfolgt nach Rücksprache beim Folgetermin.',
+      sonstigeBemerkungenBaustelle: 'Musterbemerkung: Baustelle sauber verlassen, Kunde eingewiesen.',
+      zusaetzlicheArbeiten: 'Mustertext für zusätzliche Arbeiten vor Ort.',
+      nichtErledigteArbeiten: 'Mustertext: Silikonfuge im Bereich Türanschluss offen, Nacharbeit erforderlich.',
+      zusaetzlicheArbeitenNB: 'Mustertext für Nachbesserung.',
+      nichtErledigteArbeitenNB: 'Mustertext: Restarbeiten in Abstimmung mit Kunde verschoben.',
+      hinweiseBuero: 'Musterhinweis für das Büro: Bitte Unterlagen archivieren und Rückruf einplanen.',
+    };
+
+    const numberValues = {
+      preisZusaetzlich: '249.90',
+      preisZusaetzlichNB: '89.50',
+    };
+
+    Object.entries(textValues).forEach(([name, value]) => setFieldValue(name, value));
+    Object.entries(numberValues).forEach(([name, value]) => setFieldValue(name, value));
+
+    [
+      'warenpruefungDatum',
+      'unterschriftMonteurDatum',
+      'abgeschlossenAm',
+      'maengelAbgeschlossenAm',
+      'nachbesserungAbgeschlossenAm',
+    ].forEach(name => setFieldValue(name, todayStr));
+
+    setSelectValue('artDesTermins', 'Umbau');
+    setSelectValue('terminStatus', 'Erfolgreich beendet');
+
+    setRadioValue('anrede', 'Herr');
+    setRadioValue('checklistFotoUebermittlung', 'WhatsApp');
+    setRadioValue('alleArbeitenErledigt', 'Nein');
+    setRadioValue('alleArbeitenNB', 'Nein');
+
+    [
+      'checklistFotosWaerendUmsetzung',
+      'checklistFinaleFotos',
+      'checklistFotosHandwerkskoordination',
+      'checklistVerbrauchsmaterialErfasst',
+      'checklistWarenkorbGeschickt',
+      'checklistDokumentWarenpruefung',
+      'checklistArbeitszeitenErfasst',
+      'checklistBestaetigungKasse',
+      'checklistDokumentArbeitsbericht',
+      'checklistFlyerBadewannentuer',
+      'checklistFlyerBadumbau',
+      'checklistFlyerHaltegriffe',
+      'checklistBroschuerePflegehinweise',
+      'checklistSilikonDuschabzieher',
+      'checklistHinweisSilikonfugen',
+      'checklistGratisHaltegriffMontiert',
+      'abschlusskontrolleBaustelleSauber',
+      'abschlusskontrolleVerpackungEntsorgt',
+      'abschlusskontrolleFunktionstest',
+      'abschlusskontrolleKundeEingewiesen',
+      'abschlusskontrolleWerkzeugeMitgenommen',
+      'grossesVideoNachgang',
+    ].forEach(name => setCheckboxValue(name, true));
+
+    const inspectionStatus = {
+      wareWandverkleidungenStatus: 'io',
+      wareDuschabtrennungenStatus: 'io',
+      wareDuschwanneStatus: 'io',
+      wareBadewannentuerStatus: 'nicht-io',
+      wareWaschtischStatus: 'io',
+      wareToiletteStatus: 'io',
+      wareHaltegriffStatus: 'io',
+      wareBoedenStatus: 'io',
+      wareGelaenderStatus: 'io',
+      wareSonstigesStatus: 'nicht-io',
+    };
+
+    Object.entries(inspectionStatus).forEach(([name, value]) => setRadioValue(name, value));
+
+    [
+      'unterschriftWarenpruefung',
+      'unterschriftMonteur1',
+      'unterschriftMonteur2',
+      'unterschriftKunde',
+      'unterschriftMaengel',
+      'unterschriftNB',
+    ].forEach(drawDemoSignature);
+
+    showToast('Musterdaten eingefüllt. Dateiuploads müssen weiterhin manuell gewählt werden.', 'success');
+  }
+
+  function drawDemoSignature(name) {
+    const pad = signaturePads[name];
+    if (!pad) return;
+
+    const canvas = pad.canvas;
+    const width = canvas.clientWidth || 300;
+    const height = canvas.clientHeight || 150;
+    const now = Date.now();
+
+    pad.clear();
+    pad.fromData([
+      {
+        color: '#253a75',
+        points: [
+          { x: width * 0.12, y: height * 0.68, time: now },
+          { x: width * 0.26, y: height * 0.38, time: now + 10 },
+          { x: width * 0.41, y: height * 0.62, time: now + 20 },
+          { x: width * 0.56, y: height * 0.34, time: now + 30 },
+          { x: width * 0.74, y: height * 0.57, time: now + 40 },
+        ],
+      },
+    ]);
   }
 
   function normalizeSalutation(value) {
@@ -538,12 +833,16 @@
 
       formId     = json.id;
       shareToken = json.shareToken;
+      activeDraftId = json.id;
 
       if (action === 'save') {
         // Show draft link modal
         $('#draftLink').value = json.shareLink;
         $('#draftModal').classList.add('open');
+        fetchDrafts();
+        showToast('Entwurf gespeichert.', 'success');
       } else {
+        fetchDrafts();
         showToast('Erfolgreich übermittelt! ✓', 'success');
         // Clear file store after successful submit
         fileStore = {};
@@ -572,12 +871,33 @@
       const data = json.data;
       formId     = data._id;
       shareToken = data.shareToken;
+      activeDraftId = data._id;
 
+      resetFormState();
       populateForm(data);
+      fetchDrafts();
       showToast('Entwurf geladen', 'success');
     } catch (err) {
       console.error('Load draft error:', err);
     }
+  }
+
+  function resetFormState() {
+    form.reset();
+    fileStore = {};
+
+    $$('input.invalid, select.invalid, textarea.invalid', form).forEach(el => {
+      el.classList.remove('invalid');
+    });
+
+    $$('.file-preview', form).forEach(preview => {
+      preview.innerHTML = '';
+    });
+
+    Object.values(signaturePads).forEach(pad => pad.clear());
+    $$('.signature-wrapper', form).forEach(wrapper => {
+      wrapper.style.borderColor = '';
+    });
   }
 
   function populateForm(data) {
