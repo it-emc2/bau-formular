@@ -74,6 +74,24 @@ describe('server module', () => {
     expect(middlewareNames).toContain('corsMiddleware');
   });
 
+  it('allows the angebotskonfigurator fly origin via cors', async () => {
+    await expect(new Promise((resolve, reject) => {
+      serverModule.corsOrigin('https://angebotskonfigurator-emc2-v2.fly.dev', err => {
+        if (err) reject(err);
+        else resolve();
+      });
+    })).resolves.toBeUndefined();
+  });
+
+  it('allows the bau-formular fly origin via cors', async () => {
+    await expect(new Promise((resolve, reject) => {
+      serverModule.corsOrigin('https://bau-formular.fly.dev', err => {
+        if (err) reject(err);
+        else resolve();
+      });
+    })).resolves.toBeUndefined();
+  });
+
   it('connects to mongoose and starts listening when startServer is called', async () => {
     const listen = jest.fn((port, callback) => {
       callback();

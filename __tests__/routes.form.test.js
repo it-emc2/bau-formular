@@ -12,8 +12,18 @@ jest.mock('../models/Entwurf', () => ({
   findOne: jest.fn(),
 }));
 
+jest.mock('nodemailer', () => ({
+  createTransport: jest.fn(),
+}));
+
+jest.mock('../services/bitrix', () => ({
+  postTimelineComment: jest.fn(),
+}));
+
 const Abnahme = require('../models/Abnahme');
 const Entwurf = require('../models/Entwurf');
+const nodemailer = require('nodemailer');
+const { postTimelineComment } = require('../services/bitrix');
 const router = require('../routes/form');
 
 function findRouteHandlers(routePath, method) {
@@ -54,8 +64,21 @@ async function runHandlers(handlers, req) {
 }
 
 describe('form routes', () => {
+  const originalFetch = global.fetch;
+
   beforeEach(() => {
     jest.resetAllMocks();
+    delete process.env.SMTP_HOST;
+    delete process.env.SMTP_FROM;
+    delete process.env.SMTP_PORT;
+    delete process.env.SMTP_SECURE;
+    delete process.env.SMTP_USER;
+    delete process.env.SMTP_PASS;
+    delete process.env.ARBEITSBERICHT_PDF_URL;
+  });
+
+  afterAll(() => {
+    global.fetch = originalFetch;
   });
 
   it('returns health status', async () => {
@@ -218,6 +241,219 @@ describe('form routes', () => {
       success: true,
       data: { _id: 'form-1', shareToken: 'abc123' },
     });
+  });
+
+  it('renders a confirmation document from form data', async () => {
+    const handlers = findRouteHandlers('/document/render', 'post');
+    const req = {
+      body: {
+        formData: {
+          vorname: 'Cornelia',
+          nachname: 'Müller',
+          auftragsNummer: 'A-AN-1000',
+          adresse: {
+            strasse: 'Breisigau 45',
+            stadt: 'Leipzig',
+            plz: '04209',
+          },
+        },
+      },
+    };
+
+    const res = await runHandlers(handlers, req);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(res.body.document.fileName).toBe('bestaetigung-a-an-1000.doc');
+    expect(res.body.document.text).toContain('Cornelia Müller');
+    expect(res.body.document.html).toContain('Breisigau 45');
+  });
+
+  it('falls back to mailto when smtp is not configured', async () => {
+    const handlers = findRouteHandlers('/document/email', 'post');
+    const req = {
+      body: {
+        to: 'kunde@example.com',
+        formData: {
+          vorname: 'Cornelia',
+          nachname: 'Müller',
+          auftragsNummer: 'A-AN-1000',
+        },
+      },
+    };
+
+    const res = await runHandlers(handlers, req);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual(
+      expect.objectContaining({
+        success: true,
+        delivery: 'mailto',
+        mailtoUrl: expect.stringContaining('mailto:kunde%40example.com'),
+      })
+    );
+    expect(nodemailer.createTransport).not.toHaveBeenCalled();
+  });
+
+  it('sends the document via smtp when configured', async () => {
+    process.env.SMTP_HOST = 'smtp.example.com';
+    process.env.SMTP_FROM = 'bau@example.com';
+
+    const sendMail = jest.fn().mockResolvedValue({ messageId: '1' });
+    nodemailer.createTransport.mockReturnValue({ sendMail });
+
+    const handlers = findRouteHandlers('/document/email', 'post');
+    const req = {
+      body: {
+        to: 'kunde@example.com',
+        formData: {
+          vorname: 'Cornelia',
+          nachname: 'Müller',
+          auftragsNummer: 'A-AN-1000',
+        },
+      },
+    };
+
+    const res = await runHandlers(handlers, req);
+
+    expect(res.statusCode).toBe(200);
+    expect(nodemailer.createTransport).toHaveBeenCalled();
+    expect(sendMail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        from: 'bau@example.com',
+        to: 'kunde@example.com',
+        attachments: [
+          expect.objectContaining({
+            filename: 'bestaetigung-a-an-1000.doc',
+          }),
+        ],
+      })
+    );
+    expect(res.body).toEqual(expect.objectContaining({ success: true, delivery: 'smtp' }));
+  });
+
+  it('posts the generated document text to bitrix', async () => {
+    postTimelineComment.mockResolvedValue({ result: 123 });
+    const handlers = findRouteHandlers('/document/bitrix', 'post');
+    const req = {
+      body: {
+        entityId: 55,
+        formData: {
+          vorname: 'Cornelia',
+          nachname: 'Müller',
+          auftragsNummer: 'A-AN-1000',
+        },
+      },
+    };
+
+    const res = await runHandlers(handlers, req);
+
+    expect(res.statusCode).toBe(200);
+    expect(postTimelineComment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entityType: 'deal',
+        entityId: 55,
+        comment: expect.stringContaining('Bestaetigung erfolgreicher Umbau'),
+      })
+    );
+    expect(res.body).toEqual(expect.objectContaining({ success: true }));
+  });
+
+  it('submits a form and automatically sends the document to bitrix when bitrixAuftragId is present', async () => {
+    const handlers = findRouteHandlers('/submit', 'post');
+    postTimelineComment.mockResolvedValue({ result: 999 });
+    Abnahme.create.mockImplementation(async payload => ({
+      _id: 'submitted-22',
+      ...payload,
+      toObject: () => ({ _id: 'submitted-22', ...payload }),
+    }));
+
+    const req = {
+      body: {
+        formData: JSON.stringify({
+          terminId: 'UT-1000',
+          vorname: 'Cornelia',
+          nachname: 'Müller',
+          auftragsNummer: 'A-AN-1000',
+          bitrixAuftragId: '55',
+        }),
+      },
+    };
+
+    const res = await runHandlers(handlers, req);
+
+    expect(res.statusCode).toBe(201);
+    expect(postTimelineComment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        entityType: 'deal',
+        entityId: 55,
+      })
+    );
+    expect(res.body).toEqual(
+      expect.objectContaining({
+        success: true,
+        bitrixSync: expect.objectContaining({
+          attempted: true,
+          sent: true,
+          entityId: 55,
+        }),
+      })
+    );
+  });
+
+  it('proxies arbeitsbericht pdf generation through the other node app', async () => {
+    const handlers = findRouteHandlers('/arbeitsbericht/pdf', 'post');
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      headers: {
+        get(name) {
+          const values = {
+            'content-type': 'application/pdf',
+            'content-disposition': 'attachment; filename="Arbeitsbericht-Test.pdf"',
+          };
+          return values[name] || null;
+        },
+      },
+      arrayBuffer: async () => Uint8Array.from([1, 2, 3, 4]).buffer,
+    });
+
+    const res = {
+      statusCode: 200,
+      headers: {},
+      body: null,
+      setHeader(name, value) {
+        this.headers[name] = value;
+      },
+      status(code) {
+        this.statusCode = code;
+        return this;
+      },
+      send(payload) {
+        this.body = payload;
+        return this;
+      },
+      json(payload) {
+        this.body = payload;
+        return this;
+      },
+    };
+
+    for (const handler of handlers) {
+      await handler({ body: { formData: { vorname: 'Cornelia' } } }, res);
+    }
+
+    expect(global.fetch).toHaveBeenCalledWith(
+      'https://angebotskonfigurator-emc2-v2.fly.dev/api/arbeitsbericht/pdf',
+      expect.objectContaining({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vorname: 'Cornelia' }),
+      })
+    );
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['Content-Type']).toBe('application/pdf');
+    expect(res.headers['Content-Disposition']).toBe('attachment; filename="Arbeitsbericht-Test.pdf"');
+    expect(Buffer.isBuffer(res.body)).toBe(true);
   });
 
   it('returns 404 when a form token does not exist', async () => {

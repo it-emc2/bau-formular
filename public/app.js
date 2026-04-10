@@ -28,9 +28,30 @@
   const draftSearch = $('#draftSearch');
   const btnDraftRefresh = $('#btnDraftRefresh');
   const draftList = $('#draftList');
+  const arbeitsberichtSearch = $('#arbeitsberichtSearch');
+  const btnArbeitsberichtSearch = $('#btnArbeitsberichtSearch');
+  const arbeitsberichtResultList = $('#arbeitsberichtResultList');
+  const arbeitsberichtStatus = $('#arbeitsberichtStatus');
+  const arbeitsberichtLoading = $('#arbeitsberichtLoading');
+  const arbeitsberichtLoadingTimer = $('#arbeitsberichtLoadingTimer');
+  const arbeitsberichtPreview = $('#arbeitsberichtPreview');
+  const arbeitsberichtPreviewFrame = $('#arbeitsberichtPreviewFrame');
+  const arbeitsberichtPreviewDownload = $('#arbeitsberichtPreviewDownload');
+  const emailEmpfaenger = $('#emailEmpfaenger');
+  const bitrixAuftragId = $('#bitrixAuftragId');
+  const btnPreviewDocument = $('#btnPreviewDocument');
+  const btnDownloadDocument = $('#btnDownloadDocument');
+  const btnEmailDocument = $('#btnEmailDocument');
+  const btnBitrixDocument = $('#btnBitrixDocument');
+  const documentStatus = $('#documentStatus');
+  const documentPreview = $('#documentPreview');
+  const documentPreviewFrame = $('#documentPreviewFrame');
+  const documentPreviewOpen = $('#documentPreviewOpen');
+  const documentPreviewDownload = $('#documentPreviewDownload');
   const toast         = $('#toast');
+  const EXTERNAL_APP_BASE_URL = 'https://angebotskonfigurator-emc2-v2.fly.dev';
 
-  const TOTAL_STEPS = 9;
+  const TOTAL_STEPS = 10;
   const BITRIX_TEST_ENTITY_TYPE_ID = 2;
   const BITRIX_STAGE_ID = 'C22:UC_T5EXSL';
   let currentStep   = 1;
@@ -45,6 +66,16 @@
   let drafts = [];
   let activeDraftId = null;
   let draftSearchTerm = '';
+  let arbeitsberichtResults = [];
+  let activeArbeitsberichtSelection = null;
+  let arbeitsberichtSearchTerm = '';
+  let arbeitsberichtSearchDebounceId = null;
+  let arbeitsberichtPreviewUrl = null;
+  let arbeitsberichtLoadingIntervalId = null;
+  let arbeitsberichtLoadingStartedAt = null;
+  let documentPreviewUrl = null;
+  let documentDownloadUrl = null;
+  let documentDownloadFilename = null;
 
   function buildFullName(data) {
     return [data.anrede, data.vorname, data.nachname]
@@ -79,12 +110,15 @@
     bindAuftragsNrSync();
     bindBitrixAutofill();
     bindDraftLookup();
+    bindArbeitsberichtLookup();
+    bindDocumentActions();
     initSignaturePads();
     initDevModeToggle();
     loadDraftIfNeeded();
     showStep(1);
     fetchBitrixDeals();
     fetchDrafts();
+    renderArbeitsberichtResults([], 'Noch keine externen Treffer geladen.');
   }
 
   // ── Step Indicator Dots ────────────────────────────────
@@ -219,6 +253,76 @@
     }
   }
 
+  function bindDocumentActions() {
+    if (btnPreviewDocument) {
+      btnPreviewDocument.addEventListener('click', () => previewDocument());
+    }
+
+    if (btnDownloadDocument) {
+      btnDownloadDocument.addEventListener('click', () => downloadDocument());
+    }
+
+    if (btnEmailDocument) {
+      btnEmailDocument.addEventListener('click', () => emailDocument());
+    }
+
+    if (btnBitrixDocument) {
+      btnBitrixDocument.addEventListener('click', () => sendDocumentToBitrix());
+    }
+
+    if (documentPreviewOpen) {
+      documentPreviewOpen.addEventListener('click', event => {
+        if (!documentPreviewUrl) {
+          event.preventDefault();
+        }
+      });
+    }
+
+    if (documentPreviewDownload) {
+      documentPreviewDownload.addEventListener('click', event => {
+        if (!documentDownloadUrl) {
+          event.preventDefault();
+        }
+      });
+    }
+  }
+
+  function bindArbeitsberichtLookup() {
+    if (btnArbeitsberichtSearch) {
+      btnArbeitsberichtSearch.addEventListener('click', searchArbeitsberichtRecords);
+    }
+
+    if (arbeitsberichtPreviewDownload) {
+      arbeitsberichtPreviewDownload.addEventListener('click', event => {
+        if (!arbeitsberichtPreviewUrl) {
+          event.preventDefault();
+        }
+      });
+    }
+
+    if (arbeitsberichtSearch) {
+      arbeitsberichtSearch.addEventListener('input', () => {
+        arbeitsberichtSearchTerm = arbeitsberichtSearch.value.trim();
+        window.clearTimeout(arbeitsberichtSearchDebounceId);
+
+        if (!arbeitsberichtSearchTerm) {
+          arbeitsberichtResults = [];
+          renderArbeitsberichtResults([], 'Noch keine externen Treffer geladen.');
+          return;
+        }
+
+        arbeitsberichtSearchDebounceId = window.setTimeout(searchArbeitsberichtRecords, 250);
+      });
+
+      arbeitsberichtSearch.addEventListener('keydown', event => {
+        if (event.key !== 'Enter') return;
+        event.preventDefault();
+        window.clearTimeout(arbeitsberichtSearchDebounceId);
+        searchArbeitsberichtRecords();
+      });
+    }
+  }
+
   async function fetchBitrixDeals() {
     if (!bitrixDealList) return;
 
@@ -334,6 +438,160 @@
     } catch (error) {
       showToast('Fehler beim Laden des Deals: ' + error.message, 'error');
     }
+  }
+
+  async function searchArbeitsberichtRecords() {
+    if (!arbeitsberichtResultList) return;
+
+    const query = String(arbeitsberichtSearchTerm || arbeitsberichtSearch?.value || '').trim();
+
+    if (!query) {
+      arbeitsberichtResults = [];
+      renderArbeitsberichtResults([], 'Noch keine externen Treffer geladen.');
+      clearArbeitsberichtPreview();
+      return;
+    }
+
+    if (btnArbeitsberichtSearch) btnArbeitsberichtSearch.disabled = true;
+    setArbeitsberichtStatus('Externe Treffer werden geladen...');
+    renderArbeitsberichtResults([], 'Externe Treffer werden geladen...');
+    clearArbeitsberichtPreview();
+
+    try {
+      const json = await fetchExternalJson(
+        `${EXTERNAL_APP_BASE_URL}/api/offers/external/search?q=${encodeURIComponent(query)}&limit=20`
+      );
+
+      arbeitsberichtResults = json.results || [];
+      renderArbeitsberichtResults(
+        arbeitsberichtResults,
+        arbeitsberichtResults.length ? '' : 'Keine passenden externen Treffer gefunden.'
+      );
+      setArbeitsberichtStatus(
+        arbeitsberichtResults.length
+          ? 'Treffer gefunden. Waehle den passenden Eintrag fuer den PDF-Abruf.'
+          : 'Keine passenden externen Treffer gefunden.',
+        arbeitsberichtResults.length ? 'success' : ''
+      );
+    } catch (error) {
+      arbeitsberichtResults = [];
+      renderArbeitsberichtResults([], 'Fehler bei der externen Suche.');
+      setArbeitsberichtStatus(`Fehler bei der externen Suche: ${error.message}`, 'error');
+      showToast('Fehler bei der externen Suche: ' + error.message, 'error');
+    } finally {
+      if (btnArbeitsberichtSearch) btnArbeitsberichtSearch.disabled = false;
+    }
+  }
+
+  function renderArbeitsberichtResults(items, emptyMessage = 'Noch keine externen Treffer geladen.') {
+    if (!arbeitsberichtResultList) return;
+
+    if (!items.length) {
+      arbeitsberichtResultList.innerHTML = `<p class="bitrix-empty">${emptyMessage}</p>`;
+      return;
+    }
+
+    arbeitsberichtResultList.innerHTML = '';
+
+    items.forEach(item => {
+      const card = document.createElement('article');
+      const identifier = getArbeitsberichtIdentifier(item);
+      const meta = [
+        item.kind === 'draft' ? 'Entwurf' : 'Angebot',
+        identifier ? `${item.kind === 'draft' ? 'ID' : 'Nr.'} ${identifier}` : '',
+        item.updatedAt ? `aktualisiert ${formatShortDate(item.updatedAt)}` : '',
+      ].filter(Boolean);
+
+      card.className = 'bitrix-deal-card';
+      if (isActiveArbeitsberichtSelection(item)) card.classList.add('active');
+
+      card.innerHTML = `
+        <div class="bitrix-deal-top">
+          <div>
+            <div class="bitrix-deal-title">${escapeHtml(buildArbeitsberichtTitle(item))}</div>
+            ${buildArbeitsberichtSubtitle(item) ? `<div class="bitrix-deal-offer">${escapeHtml(buildArbeitsberichtSubtitle(item))}</div>` : ''}
+            <div class="bitrix-deal-sub">${escapeHtml(meta.join(' · '))}</div>
+            ${buildArbeitsberichtMetaLine(item) ? `<div class="bitrix-deal-contact">${escapeHtml(buildArbeitsberichtMetaLine(item))}</div>` : ''}
+          </div>
+          <div class="bitrix-deal-meta">
+            ${item.offerType ? `<span class="bitrix-chip">${escapeHtml(String(item.offerType).toUpperCase())}</span>` : ''}
+            ${item.city ? `<span class="bitrix-chip">${escapeHtml(item.city)}</span>` : ''}
+          </div>
+        </div>
+        <button type="button" class="bitrix-deal-action">Arbeitsbericht laden</button>
+      `;
+
+      $('.bitrix-deal-action', card).addEventListener('click', () => downloadArbeitsberichtPdf(item));
+      arbeitsberichtResultList.appendChild(card);
+    });
+  }
+
+  function getArbeitsberichtIdentifier(item = {}) {
+    if (item.kind === 'draft') return String(item.id || '').trim();
+    return String(item.offerNumber || item.angNumber || '').trim();
+  }
+
+  function buildArbeitsberichtTitle(item = {}) {
+    return [item.firstName, item.lastName]
+      .map(value => String(value || '').trim())
+      .filter(Boolean)
+      .join(' ') || item.title || item.email || 'Unbenannter Treffer';
+  }
+
+  function buildArbeitsberichtSubtitle(item = {}) {
+    return [
+      item.angNumber || item.offerNumber || '',
+      item.customerNumber ? `Kunde ${item.customerNumber}` : '',
+    ].filter(Boolean).join(' · ');
+  }
+
+  function buildArbeitsberichtMetaLine(item = {}) {
+    return [
+      item.email || '',
+      item.phone || '',
+      [item.postalCode, item.city].filter(Boolean).join(' '),
+    ].filter(Boolean).join(' · ');
+  }
+
+  function isActiveArbeitsberichtSelection(item = {}) {
+    if (!activeArbeitsberichtSelection?.kind) return false;
+    if (activeArbeitsberichtSelection.kind !== item.kind) return false;
+    return activeArbeitsberichtSelection.identifier === getArbeitsberichtIdentifier(item);
+  }
+
+  function setArbeitsberichtStatus(message, tone = '') {
+    if (!arbeitsberichtStatus) return;
+    arbeitsberichtStatus.textContent = message;
+    arbeitsberichtStatus.dataset.tone = tone;
+  }
+
+  async function fetchExternalJson(url) {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+      },
+      credentials: 'include',
+    });
+
+    const rawBody = await response.text();
+    let json = null;
+
+    try {
+      json = rawBody ? JSON.parse(rawBody) : null;
+    } catch (_error) {
+      json = null;
+    }
+
+    if (!response.ok) {
+      throw new Error(json?.error || json?.message || `External request failed: ${response.status}`);
+    }
+
+    if (!json || typeof json !== 'object') {
+      throw new Error('External app did not return valid JSON');
+    }
+
+    return json;
   }
 
   async function fetchDrafts() {
@@ -605,6 +863,7 @@
     setFieldValue('terminId', `BITRIX-${item.id}`);
     setFieldValue('auftragsNummer', item.title || `Bitrix ${item.id}`);
     setFieldValue('kundennummer', item.contactId || item.id);
+    setFieldValue('bitrixAuftragId', item.id);
   }
 
   function applyBitrixContactToForm(contact) {
@@ -811,6 +1070,281 @@
     return data;
   }
 
+  async function requestDocument(endpoint, extraPayload = {}) {
+    const response = await fetch(`/api/form/document/${endpoint}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...extraPayload,
+        formData: collectFormData(),
+      }),
+    });
+
+    const responseText = await response.text();
+    let json;
+
+    try {
+      json = responseText ? JSON.parse(responseText) : {};
+    } catch (_error) {
+      throw new Error(responseText.slice(0, 200) || 'Unerwartete Server-Antwort');
+    }
+
+    if (!json.success) {
+      throw new Error(json.error || 'Dokument konnte nicht verarbeitet werden');
+    }
+
+    return json;
+  }
+
+  function setDocumentStatus(message, tone = '') {
+    if (!documentStatus) return;
+    documentStatus.textContent = message;
+    documentStatus.dataset.tone = tone;
+  }
+
+  async function previewDocument() {
+    try {
+      setDocumentStatus('Vorschau wird erstellt...');
+
+      const json = await requestDocument('render');
+      setDocumentPreviewContent(json.document);
+      setDocumentStatus('Vorschau im Formular angezeigt.', 'success');
+      showToast('Vorschau geladen.', 'success');
+    } catch (error) {
+      clearDocumentPreview();
+      setDocumentStatus(`Fehler bei der Vorschau: ${error.message}`, 'error');
+      showToast('Fehler bei der Vorschau: ' + error.message, 'error');
+    }
+  }
+
+  function setDocumentPreviewContent(document) {
+    if (!documentPreview || !documentPreviewFrame || !documentPreviewOpen || !documentPreviewDownload) return;
+
+    if (documentPreviewUrl) {
+      URL.revokeObjectURL(documentPreviewUrl);
+    }
+    if (documentDownloadUrl) {
+      URL.revokeObjectURL(documentDownloadUrl);
+    }
+
+    const previewBlob = new Blob([document.html], { type: 'text/html;charset=utf-8' });
+    const downloadBlob = new Blob([document.html], { type: 'application/msword' });
+
+    documentPreviewUrl = URL.createObjectURL(previewBlob);
+    documentDownloadUrl = URL.createObjectURL(downloadBlob);
+    documentDownloadFilename = document.fileName || 'bestaetigung.doc';
+
+    documentPreviewFrame.src = documentPreviewUrl;
+    documentPreviewOpen.href = documentPreviewUrl;
+    documentPreviewOpen.target = '_blank';
+    documentPreviewOpen.rel = 'noopener noreferrer';
+    documentPreviewDownload.href = documentDownloadUrl;
+    documentPreviewDownload.download = documentDownloadFilename;
+    documentPreview.classList.remove('hidden');
+  }
+
+  function clearDocumentPreview() {
+    if (!documentPreview || !documentPreviewFrame || !documentPreviewOpen || !documentPreviewDownload) return;
+
+    if (documentPreviewUrl) {
+      URL.revokeObjectURL(documentPreviewUrl);
+      documentPreviewUrl = null;
+    }
+    if (documentDownloadUrl) {
+      URL.revokeObjectURL(documentDownloadUrl);
+      documentDownloadUrl = null;
+    }
+    documentDownloadFilename = null;
+
+    documentPreviewFrame.removeAttribute('src');
+    documentPreviewOpen.setAttribute('href', '#');
+    documentPreviewOpen.removeAttribute('target');
+    documentPreviewOpen.removeAttribute('rel');
+    documentPreviewDownload.setAttribute('href', '#');
+    documentPreviewDownload.removeAttribute('download');
+    documentPreview.classList.add('hidden');
+  }
+
+  async function downloadDocument() {
+    try {
+      setDocumentStatus('Dokument wird vorbereitet...');
+      const json = await requestDocument('render');
+      const blob = new Blob([json.document.html], { type: 'application/msword' });
+      const href = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = href;
+      link.download = json.document.fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(href);
+      setDocumentStatus(`Dokument heruntergeladen: ${json.document.fileName}`, 'success');
+      showToast('Dokument heruntergeladen.', 'success');
+    } catch (error) {
+      setDocumentStatus(`Fehler beim Download: ${error.message}`, 'error');
+      showToast('Fehler beim Download: ' + error.message, 'error');
+    }
+  }
+
+  async function downloadArbeitsberichtPdf(item) {
+    try {
+      const selectedItem = item || activeArbeitsberichtSelection;
+      const kind = String(selectedItem?.kind || '').trim();
+      const identifier = String(selectedItem?.identifier || getArbeitsberichtIdentifier(selectedItem || {})).trim();
+
+      if (!kind || !identifier) {
+        throw new Error('Bitte zuerst einen externen Entwurf oder ein Angebot auswaehlen');
+      }
+
+      activeArbeitsberichtSelection = {
+        kind,
+        identifier,
+      };
+      renderArbeitsberichtResults(arbeitsberichtResults);
+      setArbeitsberichtStatus('Arbeitsbericht PDF wird erstellt...');
+      setDocumentStatus('Arbeitsbericht PDF wird erstellt...');
+      clearArbeitsberichtPreview();
+      setArbeitsberichtLoading(true);
+
+      const detailUrl = kind === 'draft'
+        ? `${EXTERNAL_APP_BASE_URL}/api/offers/external/drafts/${encodeURIComponent(identifier)}`
+        : `${EXTERNAL_APP_BASE_URL}/api/offers/external/offers/${encodeURIComponent(identifier)}`;
+      const detailJson = await fetchExternalJson(detailUrl);
+      const response = await fetch(`${EXTERNAL_APP_BASE_URL}/api/arbeitsbericht/pdf`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/pdf',
+        },
+        body: JSON.stringify(detailJson.payload || {}),
+        credentials: 'include',
+      });
+
+      if (!response.ok) {
+        const errorBody = await response.json().catch(() => ({}));
+        throw new Error(
+          errorBody.error || `Arbeitsbericht PDF generation failed: ${response.status}`
+        );
+      }
+
+      const contentDisposition = response.headers.get('content-disposition') || '';
+      const filenameMatch = contentDisposition.match(/filename="?(.*?)"?$/i);
+      const filename = filenameMatch?.[1] || 'Arbeitsbericht.pdf';
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+
+      setArbeitsberichtPreviewBlob(url, filename);
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+
+      setArbeitsberichtStatus(`Arbeitsbericht heruntergeladen: ${filename}`, 'success');
+      setDocumentStatus(`Arbeitsbericht heruntergeladen: ${filename}`, 'success');
+      showToast('Arbeitsbericht PDF heruntergeladen.', 'success');
+    } catch (error) {
+      setArbeitsberichtStatus(`Fehler beim Arbeitsbericht PDF: ${error.message}`, 'error');
+      setDocumentStatus(`Fehler beim Arbeitsbericht PDF: ${error.message}`, 'error');
+      showToast('Fehler beim Arbeitsbericht PDF: ' + error.message, 'error');
+    } finally {
+      setArbeitsberichtLoading(false);
+    }
+  }
+
+  function setArbeitsberichtLoading(isLoading) {
+    if (!arbeitsberichtLoading) return;
+
+    if (isLoading) {
+      arbeitsberichtLoading.classList.remove('hidden');
+      arbeitsberichtLoadingStartedAt = Date.now();
+
+      if (arbeitsberichtLoadingTimer) {
+        arbeitsberichtLoadingTimer.textContent = '0s';
+      }
+
+      window.clearInterval(arbeitsberichtLoadingIntervalId);
+      arbeitsberichtLoadingIntervalId = window.setInterval(() => {
+        if (!arbeitsberichtLoadingStartedAt || !arbeitsberichtLoadingTimer) return;
+        const seconds = Math.max(0, Math.floor((Date.now() - arbeitsberichtLoadingStartedAt) / 1000));
+        arbeitsberichtLoadingTimer.textContent = `${seconds}s`;
+      }, 250);
+      return;
+    }
+
+    arbeitsberichtLoading.classList.add('hidden');
+    arbeitsberichtLoadingStartedAt = null;
+    window.clearInterval(arbeitsberichtLoadingIntervalId);
+    arbeitsberichtLoadingIntervalId = null;
+  }
+
+  function setArbeitsberichtPreviewBlob(url, filename) {
+    if (!arbeitsberichtPreview || !arbeitsberichtPreviewFrame || !arbeitsberichtPreviewDownload) return;
+
+    if (arbeitsberichtPreviewUrl) {
+      URL.revokeObjectURL(arbeitsberichtPreviewUrl);
+    }
+
+    arbeitsberichtPreviewUrl = url;
+    arbeitsberichtPreviewFrame.src = url;
+    arbeitsberichtPreviewDownload.href = url;
+    arbeitsberichtPreviewDownload.download = filename || 'Arbeitsbericht.pdf';
+    arbeitsberichtPreview.classList.remove('hidden');
+  }
+
+  function clearArbeitsberichtPreview() {
+    if (!arbeitsberichtPreview || !arbeitsberichtPreviewFrame || !arbeitsberichtPreviewDownload) return;
+
+    if (arbeitsberichtPreviewUrl) {
+      URL.revokeObjectURL(arbeitsberichtPreviewUrl);
+      arbeitsberichtPreviewUrl = null;
+    }
+
+    arbeitsberichtPreviewFrame.removeAttribute('src');
+    arbeitsberichtPreviewDownload.setAttribute('href', '#');
+    arbeitsberichtPreviewDownload.removeAttribute('download');
+    arbeitsberichtPreview.classList.add('hidden');
+  }
+
+  async function emailDocument() {
+    try {
+      const to = emailEmpfaenger?.value.trim();
+      if (!to) throw new Error('Bitte eine E-Mail-Adresse eintragen');
+
+      setDocumentStatus('E-Mail wird vorbereitet...');
+      const json = await requestDocument('email', { to });
+
+      if (json.delivery === 'mailto' && json.mailtoUrl) {
+        window.location.href = json.mailtoUrl;
+        setDocumentStatus('Lokales E-Mail-Programm wurde mit dem Schreiben vorbereitet.', 'success');
+        showToast('E-Mail-Entwurf geöffnet.', 'success');
+        return;
+      }
+
+      setDocumentStatus('Dokument wurde per E-Mail versendet.', 'success');
+      showToast('Dokument wurde per E-Mail versendet.', 'success');
+    } catch (error) {
+      setDocumentStatus(`Fehler beim E-Mail-Versand: ${error.message}`, 'error');
+      showToast('Fehler beim E-Mail-Versand: ' + error.message, 'error');
+    }
+  }
+
+  async function sendDocumentToBitrix() {
+    try {
+      const entityId = bitrixAuftragId?.value.trim();
+      if (!entityId) throw new Error('Bitte eine Bitrix-Auftrag-ID eintragen');
+
+      setDocumentStatus('Dokument wird an Bitrix gesendet...');
+      await requestDocument('bitrix', { entityId });
+      setDocumentStatus(`Dokumenttext wurde an Bitrix-Auftrag ${entityId} gesendet.`, 'success');
+      showToast('Dokument an Bitrix gesendet.', 'success');
+    } catch (error) {
+      setDocumentStatus(`Fehler beim Bitrix-Versand: ${error.message}`, 'error');
+      showToast('Fehler beim Bitrix-Versand: ' + error.message, 'error');
+    }
+  }
+
   // ── Save / Submit ──────────────────────────────────────
   async function saveForm(action) {
     const data = collectFormData();
@@ -843,7 +1377,15 @@
         showToast('Entwurf gespeichert.', 'success');
       } else {
         fetchDrafts();
-        showToast('Erfolgreich übermittelt! ✓', 'success');
+        if (json.bitrixSync?.attempted && json.bitrixSync?.sent) {
+          setDocumentStatus(`Dokumenttext wurde automatisch an Bitrix-Auftrag ${json.bitrixSync.entityId} gesendet.`, 'success');
+          showToast('Erfolgreich übermittelt und an Bitrix gesendet! ✓', 'success');
+        } else if (json.bitrixSync?.attempted && !json.bitrixSync?.sent) {
+          setDocumentStatus(`Formular übermittelt, Bitrix-Sendung fehlgeschlagen: ${json.bitrixSync.error}`, 'error');
+          showToast('Formular übermittelt, aber Bitrix konnte nicht aktualisiert werden.', 'error');
+        } else {
+          showToast('Erfolgreich übermittelt! ✓', 'success');
+        }
         // Clear file store after successful submit
         fileStore = {};
         setTimeout(() => {

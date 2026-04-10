@@ -10,10 +10,19 @@ const bitrixRoutes = require('./routes/bitrix');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
+const externalOffersOrigin = process.env.EXTERNAL_OFFERS_API_BASE_URL || 'https://angebotskonfigurator-emc2-v2.fly.dev';
+const defaultAllowedOrigins = [
+  'https://bau-formular.fly.dev',
+  'https://angebotskonfigurator-emc2-v2.fly.dev',
+  'http://localhost:3000',
+];
+const allowedOrigins = [...new Set([
+  ...defaultAllowedOrigins,
+  ...(process.env.ALLOWED_ORIGINS || '')
   .split(',')
   .map(origin => origin.trim())
-  .filter(Boolean);
+  .filter(Boolean),
+])];
 
 function corsOrigin(origin, callback) {
   if (!origin) return callback(null, true);
@@ -28,7 +37,8 @@ app.use(helmet({
     useDefaults: true,
     directives: {
       "script-src": ["'self'", "https://cdn.jsdelivr.net"],
-      "connect-src": ["'self'"],
+      "connect-src": ["'self'", externalOffersOrigin],
+      "frame-src": ["'self'", "blob:"],
       "img-src": ["'self'", "data:", "blob:"],
       "media-src": ["'self'", "blob:"],
     },
@@ -46,6 +56,28 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 // ── Routes ─────────────────────────────────────────────────
 app.use('/api/form', formRoutes);
 app.use('/api/bitrix', bitrixRoutes);
+
+app.use((err, req, res, next) => {
+  if (!err) return next();
+
+  console.error('API error:', {
+    method: req.method,
+    path: req.path,
+    message: err.message,
+    stack: err.stack,
+  });
+
+  if (req.path.startsWith('/api/')) {
+    const status = err.status || err.statusCode || 500;
+    return res.status(status).json({
+      success: false,
+      error: err.message || 'Internal Server Error',
+      ...(process.env.NODE_ENV === 'production' ? {} : { stack: err.stack }),
+    });
+  }
+
+  return next(err);
+});
 
 // Serve the SPA for root and shareable links
 app.get('/', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
@@ -73,4 +105,4 @@ if (require.main === module) {
   startServer();
 }
 
-module.exports = { app, startServer };
+module.exports = { app, startServer, corsOrigin };

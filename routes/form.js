@@ -3,9 +3,12 @@ const path = require('path');
 const fs = require('fs');
 const express = require('express');
 const multer = require('multer');
+const nodemailer = require('nodemailer');
 
 const Abnahme = require('../models/Abnahme');
 const Entwurf = require('../models/Entwurf');
+const { buildDocumentPackage } = require('../services/documentLetter');
+const { postTimelineComment } = require('../services/bitrix');
 
 const router = express.Router();
 const uploadsDir = path.join(__dirname, '..', 'uploads');
@@ -27,11 +30,72 @@ function createShareToken() {
 }
 
 function parsePayload(req) {
-  if (req.body?.formData) {
+  if (typeof req.body?.formData === 'string') {
     return JSON.parse(req.body.formData);
   }
 
+  if (req.body?.formData && typeof req.body.formData === 'object') {
+    return { ...req.body.formData };
+  }
+
   return { ...req.body };
+}
+
+function createMailtoUrl({ to, subject, text }) {
+  const params = new URLSearchParams({
+    subject,
+    body: text,
+  });
+
+  return `mailto:${encodeURIComponent(to)}?${params.toString()}`;
+}
+
+function isSmtpConfigured() {
+  return Boolean(process.env.SMTP_HOST && process.env.SMTP_FROM);
+}
+
+async function sendDocumentEmail({ to, subject, document }) {
+  if (!isSmtpConfigured()) {
+    return {
+      delivery: 'mailto',
+      mailtoUrl: createMailtoUrl({
+        to,
+        subject,
+        text: document.text,
+      }),
+    };
+  }
+
+  const port = Number(process.env.SMTP_PORT || 587);
+  const secure = String(process.env.SMTP_SECURE || '').toLowerCase() === 'true' || port === 465;
+  const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port,
+    secure,
+    auth: process.env.SMTP_USER
+      ? {
+          user: process.env.SMTP_USER,
+          pass: process.env.SMTP_PASS || '',
+        }
+      : undefined,
+  });
+
+  await transporter.sendMail({
+    from: process.env.SMTP_FROM,
+    to,
+    subject,
+    text: document.text,
+    html: document.html,
+    attachments: [
+      {
+        filename: document.fileName,
+        content: document.html,
+        contentType: 'application/msword',
+      },
+    ],
+  });
+
+  return { delivery: 'smtp' };
 }
 
 function pickPayload(body = {}) {
@@ -83,6 +147,38 @@ function buildSuccessResponse(form) {
   };
 }
 
+async function trySendDocumentToBitrix(data = {}) {
+  const entityId = Number(data.bitrixAuftragId || 0);
+
+  if (!Number.isFinite(entityId) || entityId <= 0) {
+    return { attempted: false, sent: false };
+  }
+
+  const document = buildDocumentPackage(data);
+  const comment = [document.title, '', document.text].join('\n');
+
+  try {
+    await postTimelineComment({
+      entityType: 'deal',
+      entityId,
+      comment,
+    });
+
+    return {
+      attempted: true,
+      sent: true,
+      entityId,
+    };
+  } catch (error) {
+    return {
+      attempted: true,
+      sent: false,
+      entityId,
+      error: error.message,
+    };
+  }
+}
+
 function buildDraftSearchQuery(search = '') {
   const value = String(search || '').trim();
   if (!value) return { status: 'draft' };
@@ -99,6 +195,34 @@ function buildDraftSearchQuery(search = '') {
       { nachname: regex },
       { name: regex },
     ],
+  };
+}
+
+async function proxyArbeitsberichtPdf(payload = {}) {
+  const endpoint = process.env.ARBEITSBERICHT_PDF_URL ||
+    'https://angebotskonfigurator-emc2-v2.fly.dev/api/arbeitsbericht/pdf';
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.json().catch(() => ({}));
+    throw new Error(
+      errorBody.error || `Arbeitsbericht PDF generation failed: ${response.status}`
+    );
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+
+  return {
+    buffer: Buffer.from(arrayBuffer),
+    contentType: response.headers.get('content-type') || 'application/pdf',
+    contentDisposition: response.headers.get('content-disposition') || 'attachment; filename="Arbeitsbericht.pdf"',
   };
 }
 
@@ -194,11 +318,79 @@ router.get('/token/:token', async (req, res) => {
   }
 });
 
+router.post('/document/render', async (req, res) => {
+  try {
+    const document = buildDocumentPackage(parsePayload(req));
+    return res.json({ success: true, document });
+  } catch (error) {
+    return res.status(400).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/document/email', async (req, res) => {
+  try {
+    const parsed = parsePayload(req);
+    const to = String(req.body?.to || parsed.emailEmpfaenger || '').trim();
+
+    if (!to) {
+      return res.status(400).json({ success: false, error: 'E-Mail-Adresse fehlt' });
+    }
+
+    const document = buildDocumentPackage(parsed);
+    const result = await sendDocumentEmail({
+      to,
+      subject: String(req.body?.subject || document.subject).trim(),
+      document,
+    });
+
+    return res.json({ success: true, ...result, document });
+  } catch (error) {
+    return res.status(400).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/document/bitrix', async (req, res) => {
+  try {
+    const parsed = parsePayload(req);
+    const entityId = Number(req.body?.entityId || parsed.bitrixAuftragId || 0);
+
+    if (!Number.isFinite(entityId) || entityId <= 0) {
+      return res.status(400).json({ success: false, error: 'Gueltige Bitrix-Auftrag-ID fehlt' });
+    }
+
+    const document = buildDocumentPackage(parsed);
+    const comment = [document.title, '', document.text].join('\n');
+
+    const result = await postTimelineComment({
+      entityType: 'deal',
+      entityId,
+      comment,
+    });
+
+    return res.json({ success: true, result, document });
+  } catch (error) {
+    return res.status(400).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/arbeitsbericht/pdf', async (req, res) => {
+  try {
+    const pdf = await proxyArbeitsberichtPdf(parsePayload(req));
+
+    res.setHeader('Content-Type', pdf.contentType);
+    res.setHeader('Content-Disposition', pdf.contentDisposition);
+    return res.status(200).send(pdf.buffer);
+  } catch (error) {
+    return res.status(400).json({ success: false, error: error.message });
+  }
+});
+
 router.post('/submit', upload.any(), async (req, res) => {
   try {
     const parsed = parsePayload(req);
     const payload = mergeUploadedFiles(pickPayload(parsed), req.files);
     const formId = parsed._id || parsed.id;
+    let response;
 
     if (!formId) {
       const form = await Abnahme.create({
@@ -207,7 +399,12 @@ router.post('/submit', upload.any(), async (req, res) => {
         status: 'submitted',
       });
 
-      return res.status(201).json(buildSuccessResponse(form));
+      response = buildSuccessResponse(form);
+      const bitrixSync = await trySendDocumentToBitrix({ ...parsed, ...payload, ...form.toObject?.() });
+      return res.status(201).json({
+        ...response,
+        bitrixSync,
+      });
     }
 
     const draft = await Entwurf.findById(formId);
@@ -222,7 +419,17 @@ router.post('/submit', upload.any(), async (req, res) => {
 
       await draft.deleteOne();
 
-      return res.json(buildSuccessResponse(submitted));
+      response = buildSuccessResponse(submitted);
+      const bitrixSync = await trySendDocumentToBitrix({
+        ...sanitizeDocumentForCreate(draft.toObject()),
+        ...parsed,
+        ...payload,
+        ...submitted.toObject?.(),
+      });
+      return res.json({
+        ...response,
+        bitrixSync,
+      });
     }
 
     const form = await Abnahme.findById(formId);
@@ -234,7 +441,17 @@ router.post('/submit', upload.any(), async (req, res) => {
     Object.assign(form, payload, { status: 'submitted' });
     await form.save();
 
-    return res.json(buildSuccessResponse(form));
+    response = buildSuccessResponse(form);
+    const bitrixSync = await trySendDocumentToBitrix({
+      ...parsed,
+      ...payload,
+      ...form.toObject?.(),
+    });
+
+    return res.json({
+      ...response,
+      bitrixSync,
+    });
   } catch (error) {
     return res.status(400).json({ success: false, error: error.message });
   }

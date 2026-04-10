@@ -1,49 +1,13 @@
 const express = require('express');
+const { bxGet, postTimelineComment } = require('../services/bitrix');
 
 const router = express.Router();
 
-const BITRIX_WEBHOOK_BASE = process.env.BITRIX_WEBHOOK_BASE || '';
 const OWNER_TYPE = { contact: 3, company: 4 };
 const DEFAULT_STAGE_ID = 'C22:UC_T5EXSL';
 
 function isEmpty(value) {
   return value === null || value === undefined || String(value).trim() === '';
-}
-
-function buildQS(paramsObj) {
-  const sp = new URLSearchParams();
-
-  const add = (key, value) => {
-    if (value !== undefined && value !== null) sp.append(key, String(value));
-  };
-
-  for (const [key, value] of Object.entries(paramsObj || {})) {
-    if (Array.isArray(value)) {
-      value.forEach(item => add(`${key}[]`, item));
-    } else if (typeof value === 'object' && value !== null) {
-      Object.entries(value).forEach(([nestedKey, nestedValue]) => add(`${key}[${nestedKey}]`, nestedValue));
-    } else {
-      add(key, value);
-    }
-  }
-
-  return sp.toString();
-}
-
-async function bxGet(method, paramsObj = {}) {
-  if (!BITRIX_WEBHOOK_BASE) {
-    throw new Error('BITRIX_WEBHOOK_BASE is not configured.');
-  }
-
-  const qs = buildQS(paramsObj);
-  const url = `${BITRIX_WEBHOOK_BASE}/${method}.json${qs ? `?${qs}` : ''}`;
-  const response = await fetch(url, { method: 'GET' });
-  const data = await response.json().catch(() => null);
-
-  if (!data) throw new Error('Invalid JSON response from Bitrix');
-  if (data.error) throw new Error(data.error_description || data.error);
-
-  return data;
 }
 
 async function getRequisiteIdForContact(contactId) {
@@ -133,12 +97,10 @@ router.post('/timeline/comment', express.json({ limit: '1mb' }), async (req, res
       return res.status(400).json({ error: 'entityId must be a positive number' });
     }
 
-    const data = await bxGet('crm.timeline.comment.add', {
-      fields: {
-        ENTITY_ID: entityId,
-        ENTITY_TYPE: entityType,
-        COMMENT: comment,
-      },
+    const data = await postTimelineComment({
+      entityType,
+      entityId,
+      comment,
     });
 
     return res.json(data);

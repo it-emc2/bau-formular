@@ -566,10 +566,106 @@
         <input type="hidden" name="unterschriftNBZeitpunkt" />
       </section>
 
-      <!-- ────────── STEP 9 ─ Hinweise ────────── -->
+      <!-- ────────── STEP 9 ─ Arbeitsbericht ────────── -->
       <section class="form-step" data-step="9">
+        <h2>Arbeitsbericht</h2>
+        <p class="intro">Suche nach einem externen Angebot oder Entwurf und lade daraus den Arbeitsbericht als PDF.</p>
+
+        <div class="arbeitsbericht-panel">
+          <div class="document-panel-head">
+            <div>
+              <h3>Externe Suche</h3>
+              <p>Suche nach Name, Angebotsnummer, E-Mail oder Ort. Beim Auswählen wird der passende Arbeitsbericht als PDF geladen.</p>
+            </div>
+          </div>
+
+          <div class="bitrix-toolbar">
+            <input type="text" id="arbeitsberichtSearch" class="bitrix-search" placeholder="Suche nach Name, Angebotsnummer, E-Mail oder Ort" />
+            <button type="button" class="btn btn-bitrix" id="btnArbeitsberichtSearch">
+              Suchen
+            </button>
+          </div>
+
+          <div class="bitrix-deal-list arbeitsbericht-results" id="arbeitsberichtResultList">
+            <p class="bitrix-empty">Noch keine externen Treffer geladen.</p>
+          </div>
+
+          <p class="document-status" id="arbeitsberichtStatus">
+            Waehle einen Treffer aus, um den Arbeitsbericht aus der externen App als PDF abzurufen.
+          </p>
+
+          <div class="arbeitsbericht-loading hidden" id="arbeitsberichtLoading" aria-live="polite">
+            <div class="arbeitsbericht-loading-spinner" aria-hidden="true"></div>
+            <div class="arbeitsbericht-loading-copy">
+              <strong>PDF wird erstellt...</strong>
+              <span id="arbeitsberichtLoadingTimer">0s</span>
+            </div>
+          </div>
+
+          <div class="arbeitsbericht-preview hidden" id="arbeitsberichtPreview">
+            <div class="arbeitsbericht-preview-head">
+              <h3>PDF-Vorschau</h3>
+              <a href="#" class="btn btn-doc-secondary arbeitsbericht-preview-download" id="arbeitsberichtPreviewDownload">PDF herunterladen</a>
+            </div>
+            <iframe
+              id="arbeitsberichtPreviewFrame"
+              class="arbeitsbericht-preview-frame"
+              title="Arbeitsbericht PDF Vorschau"
+            ></iframe>
+          </div>
+        </div>
+      </section>
+
+      <!-- ────────── STEP 10 ─ Hinweise ────────── -->
+      <section class="form-step" data-step="10">
         <h2>Hinweise für das Büro</h2>
         <textarea name="hinweiseBuero" rows="6" placeholder="Optionale Hinweise für das Büro…"></textarea>
+
+        <div class="document-panel">
+          <div class="document-panel-head">
+            <div>
+              <h3>Bestätigungsschreiben</h3>
+              <p>Am Ende des Formulars kannst du das Schreiben ansehen, herunterladen, per E-Mail vorbereiten oder in Bitrix als Kommentar hinterlegen.</p>
+            </div>
+          </div>
+
+          <div class="row-2">
+            <div>
+              <label class="field-label">E-Mail-Empfänger</label>
+              <input type="email" name="emailEmpfaenger" id="emailEmpfaenger" placeholder="kunde@beispiel.de" />
+            </div>
+            <div>
+              <label class="field-label">Bitrix-Auftrag-ID</label>
+              <input type="text" name="bitrixAuftragId" id="bitrixAuftragId" placeholder="z.B. 12345" />
+            </div>
+          </div>
+
+          <div class="document-actions">
+            <button type="button" class="btn btn-doc-secondary" id="btnPreviewDocument">Vorschau</button>
+            <button type="button" class="btn btn-doc-secondary" id="btnDownloadDocument">Herunterladen</button>
+            <button type="button" class="btn btn-doc-secondary" id="btnEmailDocument">Per E-Mail</button>
+            <button type="button" class="btn btn-doc-secondary" id="btnBitrixDocument">Zu Bitrix</button>
+          </div>
+
+          <p class="document-status" id="documentStatus">
+            Das Schreiben wird automatisch aus Kundendaten, Adresse, Auftrag und Unterschrift aufgebaut.
+          </p>
+
+          <div class="document-preview hidden" id="documentPreview">
+            <div class="document-preview-head">
+              <h3>Vorschau im Formular</h3>
+              <div class="document-preview-actions">
+                <a href="#" class="btn btn-doc-secondary document-preview-download" id="documentPreviewOpen">Im neuen Tab öffnen</a>
+                <a href="#" class="btn btn-doc-secondary document-preview-download" id="documentPreviewDownload">Herunterladen</a>
+              </div>
+            </div>
+            <iframe
+              id="documentPreviewFrame"
+              class="document-preview-frame"
+              title="Bestaetigungsschreiben Vorschau"
+            ></iframe>
+          </div>
+        </div>
       </section>
 
     </form>
@@ -582,7 +678,7 @@
       <button type="button" class="btn btn-submit" id="btnSubmit">Absenden</button>
     </div>
 
-    <div class="step-counter" id="stepCounter">1/9</div>
+    <div class="step-counter" id="stepCounter">1/10</div>
   </div>
 </div>
 
