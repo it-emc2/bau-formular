@@ -16,24 +16,21 @@
   const btnNext       = $('#btnNext');
   const btnDraft      = $('#btnDraft');
   const btnSubmit     = $('#btnSubmit');
-  const checklistTitle = $('#checklistTitle');
-  const bitrixOrderMetaField = $('#bitrixOrderMetaField');
-  const bitrixOrderMeta = $('#bitrixOrderMeta');
-  const bitrixExecutionActivitiesField = $('#bitrixExecutionActivitiesField');
-  const bitrixExecutionActivities = $('#bitrixExecutionActivities');
   const devModeToggle = $('#devModeToggle');
-  const devOnlyFields = $$('[data-dev-only]');
   const devToolsPanel = $('#devToolsPanel');
   const devModeBadge  = $('#devModeBadge');
   const bitrixTestActions = $('#bitrixTestActions');
   const btnBitrixAutofill = $('#btnBitrixAutofill');
   const btnBitrixRefresh = $('#btnBitrixRefresh');
   const btnDemoPrefill = $('#btnDemoPrefill');
+  const btnHeaderDemoPrefill = $('#btnHeaderDemoPrefill');
   const bitrixSearch  = $('#bitrixSearch');
   const bitrixDealList = $('#bitrixDealList');
   const draftSearch = $('#draftSearch');
   const btnDraftRefresh = $('#btnDraftRefresh');
   const draftList = $('#draftList');
+  const bitrixSidebar = $('.bitrix-sidebar');
+  const draftsPanel = $('.drafts-panel');
   const arbeitsberichtSearch = $('#arbeitsberichtSearch');
   const btnArbeitsberichtSearch = $('#btnArbeitsberichtSearch');
   const arbeitsberichtResultList = $('#arbeitsberichtResultList');
@@ -45,6 +42,9 @@
   const arbeitsberichtPreviewDownload = $('#arbeitsberichtPreviewDownload');
   const emailEmpfaenger = $('#emailEmpfaenger');
   const bitrixAuftragId = $('#bitrixAuftragId');
+  const checklistStepTitle = $('#checklistStepTitle');
+  const checklistStepIntro = $('#checklistStepIntro');
+  const bitrixDebugFields = $('#bitrixDebugFields');
   const btnPreviewDocument = $('#btnPreviewDocument');
   const btnDownloadDocument = $('#btnDownloadDocument');
   const btnEmailDocument = $('#btnEmailDocument');
@@ -60,42 +60,6 @@
   const TOTAL_STEPS = 10;
   const BITRIX_TEST_ENTITY_TYPE_ID = 2;
   const BITRIX_STAGE_ID = 'C22:UC_T5EXSL';
-  const BITRIX_ORDER_META_FIELD = 'UF_CRM_1776156870205';
-  const BITRIX_EXECUTION_ACTIVITIES_FIELD = 'UF_CRM_1725521281342';
-  const BITRIX_EXECUTION_ACTIVITY_LABELS = {
-    '5666': '[HMS] Objektbetreuung',
-    '8162': '[HMS] Gartenarbeiten',
-    '4564': '[AH] Alltagsbegleitung',
-    '4566': '[AH] Haushaltsnahe Dienstleistungen',
-    '4024': '[HD] Umbau Dusche zu Dusche',
-    '4026': '[HD] Umbau Wanne zu Dusche',
-    '4706': '[HD] Badrenovierung',
-    '4704': '[HD] Badewannentüre',
-    '7730': '[HD] Badumbau',
-    '4032': '[HD] Haltegriffe',
-    '4034': '[HD] Handläufe',
-    '6820': '[HD] Entrümpelung',
-    '4052': '[HD] Winterdienst',
-    '7030': '[KFZ] Autoreparatur',
-    '4158': 'Sonstige',
-  };
-  const CHECKLIST_VARIANTS = {
-    badumbau: {
-      title: 'Checkliste Badumbau',
-      documentTitle: '06-Checkliste-Badumbau',
-      documentFileNamePrefix: '06-checkliste-badumbau',
-    },
-    handlaeufe: {
-      title: 'Checkliste Handläufe',
-      documentTitle: '06-Checkliste-Handlaeufe',
-      documentFileNamePrefix: '06-checkliste-handlaeufe',
-    },
-    badewannentuer: {
-      title: 'Checkliste Badewannentür',
-      documentTitle: '06-Checkliste-Badewannentuer',
-      documentFileNamePrefix: '06-checkliste-badewannentuer',
-    },
-  };
   let currentStep   = 1;
   let formId        = null;     // Mongo _id once saved
   let shareToken    = null;
@@ -118,6 +82,26 @@
   let documentPreviewUrl = null;
   let documentDownloadUrl = null;
   let documentDownloadFilename = null;
+  let currentChecklistVariant = 'badumbau';
+
+  const BITRIX_ACTIVITY_FIELD_KEYS = ['UF_CRM_1725521281342', 'ufCrm_1725521281342'];
+  const BITRIX_AUSZUFUEHRENDE_TAETIGKEITEN_MAP = {
+    '5666': '[HMS] Objektbetreuung',
+    '8162': '[HMS] Gartenarbeiten',
+    '4564': '[AH] Alltagsbegleitung',
+    '4566': '[AH] Haushaltsnahe Dienstleistungen',
+    '4024': '[HD] Umbau Dusche zu Dusche',
+    '4026': '[HD] Umbau Wanne zu Dusche',
+    '4706': '[HD] Badrenovierung',
+    '4704': '[HD] Badewannentüre',
+    '7730': '[HD] Badumbau',
+    '4032': '[HD] Haltegriffe',
+    '4034': '[HD] Handläufe',
+    '6820': '[HD] Entrümpelung',
+    '4052': '[HD] Winterdienst',
+    '7030': '[KFZ] Autoreparatur',
+    '4158': 'Sonstige',
+  };
 
   function buildFullName(data) {
     return [data.anrede, data.vorname, data.nachname]
@@ -125,6 +109,17 @@
       .filter(Boolean)
       .join(' ');
   }
+
+  function setAuszufuehrendeTaetigkeitenValue(value) {
+    const field = fields?.auszufuehrendeTaetigkeiten || $('[name="auszufuehrendeTaetigkeiten"]');
+    if (!field) return;
+    if (Array.isArray(value)) {
+      field.value = value.filter(Boolean).join(', ');
+      return;
+    }
+    field.value = value ? String(value) : '';
+  }
+
 
   function splitLegacyName(fullName = '') {
     const parts = fullName.trim().split(/\s+/).filter(Boolean);
@@ -143,48 +138,15 @@
     return parsed;
   }
 
-  function normalizeChecklistSourceValue(value) {
-    return String(value || '')
-      .toLowerCase()
-      .normalize('NFD')
-      .replace(/[\u0300-\u036f]/g, '');
-  }
-
-  function resolveChecklistVariantFromValues(values = []) {
-    const normalizedValues = values
-      .map(normalizeChecklistSourceValue)
-      .filter(Boolean);
-
-    if (normalizedValues.some(value => value.includes('handlaufe'))) return 'handlaeufe';
-    if (normalizedValues.some(value => value.includes('badewannenture') || value.includes('badewannentur'))) {
-      return 'badewannentuer';
-    }
-
-    return 'badumbau';
-  }
-
-  function getChecklistVariant() {
-    const values = String(bitrixExecutionActivities?.value || '')
-      .split(',')
-      .map(value => value.trim())
-      .filter(Boolean);
-
-    return resolveChecklistVariantFromValues(values);
-  }
-
-  function renderChecklistVariant() {
-    if (!checklistTitle) return;
-    const variant = CHECKLIST_VARIANTS[getChecklistVariant()] || CHECKLIST_VARIANTS.badumbau;
-    checklistTitle.textContent = variant.title;
-  }
-
   // ── Initialisation ─────────────────────────────────────
   function init() {
+    syncDevOnlySteps();
     buildStepDots();
     bindNavigation();
     bindFileUploads();
     bindConditionalFields();
     bindAuftragsNrSync();
+    bindConfirmationLetterSync();
     bindBitrixAutofill();
     bindDraftLookup();
     bindArbeitsberichtLookup();
@@ -192,47 +154,121 @@
     initSignaturePads();
     initDevModeToggle();
     loadDraftIfNeeded();
-    showStep(1);
-    renderChecklistVariant();
-    if (devMode) fetchBitrixDeals();
-    if (devMode) fetchDrafts();
+    showStep(getFirstVisibleStep());
+    fetchBitrixDeals();
+    fetchDrafts();
     renderArbeitsberichtResults([], 'Noch keine externen Treffer geladen.');
   }
 
   // ── Step Indicator Dots ────────────────────────────────
+  function getAllStepSections() {
+    return $$('.form-step', form);
+  }
+
+  function isStepVisible(stepNumber) {
+    const section = $(`.form-step[data-step="${stepNumber}"]`, form);
+    if (!section) return false;
+    return !section.classList.contains('hidden');
+  }
+
+  function getVisibleStepNumbers() {
+    return getAllStepSections()
+      .filter(section => !section.classList.contains('hidden'))
+      .map(section => Number(section.dataset.step))
+      .sort((a, b) => a - b);
+  }
+
+  function getFirstVisibleStep() {
+    return getVisibleStepNumbers()[0] || 1;
+  }
+
+  function getLastVisibleStep() {
+    const steps = getVisibleStepNumbers();
+    return steps[steps.length - 1] || TOTAL_STEPS;
+  }
+
+  function getNextVisibleStep(stepNumber) {
+    const steps = getVisibleStepNumbers();
+    return steps.find(step => step > stepNumber) || stepNumber;
+  }
+
+  function getPreviousVisibleStep(stepNumber) {
+    const steps = getVisibleStepNumbers().filter(step => step < stepNumber);
+    return steps[steps.length - 1] || stepNumber;
+  }
+
   function buildStepDots() {
+    const steps = getVisibleStepNumbers();
     stepIndicator.innerHTML = '';
-    for (let i = 1; i <= TOTAL_STEPS; i++) {
+    steps.forEach((step, index) => {
       const dot = document.createElement('div');
       dot.className = 'step-dot';
-      dot.textContent = i;
-      dot.dataset.step = i;
+      dot.textContent = index + 1;
+      dot.dataset.step = step;
       stepIndicator.appendChild(dot);
-    }
+    });
   }
 
   function updateStepDots() {
-    $$('.step-dot', stepIndicator).forEach(dot => {
-      const s = +dot.dataset.step;
+    const visibleSteps = getVisibleSteps();
+    const currentVisibleIndex = getCurrentVisibleIndex();
+    $$('.step-dot', stepIndicator).forEach((dot, idx) => {
       dot.classList.remove('active', 'completed');
-      if (s < currentStep)  dot.classList.add('completed');
-      if (s === currentStep) dot.classList.add('active');
+      if (idx < currentVisibleIndex) dot.classList.add('completed');
+      if (idx === currentVisibleIndex) dot.classList.add('active');
     });
   }
 
+  function getVisibleSteps() {
+    return $$('.form-step', form).filter(step => {
+      if (step.classList.contains('dev-only-step') && !devMode) return false;
+      return true;
+    });
+  }
+
+  function getVisibleStepNumber(stepEl) {
+    return getVisibleSteps().indexOf(stepEl) + 1;
+  }
+
+  function getCurrentVisibleIndex() {
+    const visibleSteps = getVisibleSteps();
+    const current = visibleSteps.findIndex(step => +step.dataset.step === currentStep);
+    return current >= 0 ? current : 0;
+  }
+
+  function syncDevOnlySteps() {
+    $$('.dev-only-step', form).forEach(step => {
+      step.classList.toggle('hidden', !devMode);
+    });
+
+    const visibleSteps = getVisibleSteps();
+    TOTAL_STEPS = visibleSteps.length;
+
+    const currentVisible = visibleSteps.some(step => +step.dataset.step === currentStep);
+    if (!currentVisible && visibleSteps.length) {
+      currentStep = +visibleSteps[0].dataset.step;
+    }
+  }
+
+
   // ── Show / Hide Steps ─────────────────────────────────
   function showStep(n) {
-    currentStep = n;
+    const visibleSteps = getVisibleStepNumbers();
+    const targetStep = visibleSteps.includes(Number(n)) ? Number(n) : getFirstVisibleStep();
+
+    currentStep = targetStep;
     $$('.form-step', form).forEach(sec => {
-      sec.classList.toggle('active', +sec.dataset.step === n);
+      sec.classList.toggle('active', Number(sec.dataset.step) === targetStep);
     });
     updateStepDots();
-    stepCounter.textContent = `${n}/${TOTAL_STEPS}`;
+
+    const currentIndex = visibleSteps.indexOf(targetStep);
+    stepCounter.textContent = `${currentIndex + 1}/${visibleSteps.length}`;
 
     // Button visibility
-    btnBack.style.display   = n === 1 ? 'none' : 'inline-flex';
-    btnNext.style.display   = n === TOTAL_STEPS ? 'none' : 'inline-flex';
-    btnSubmit.style.display = n === TOTAL_STEPS ? 'inline-flex' : 'none';
+    btnBack.style.display   = targetStep === getFirstVisibleStep() ? 'none' : 'inline-flex';
+    btnNext.style.display   = targetStep === getLastVisibleStep() ? 'none' : 'inline-flex';
+    btnSubmit.style.display = targetStep === getLastVisibleStep() ? 'inline-flex' : 'none';
 
     // Re-init signature pads when step becomes visible (canvas resize)
     requestAnimationFrame(() => resizeAllSignatureCanvases());
@@ -245,12 +281,12 @@
   function bindNavigation() {
     btnNext.addEventListener('click', () => {
       if (devMode || validateStep(currentStep)) {
-        showStep(Math.min(currentStep + 1, TOTAL_STEPS));
+        showStep(getNextVisibleStep(currentStep));
       }
     });
 
     btnBack.addEventListener('click', () => {
-      showStep(Math.max(currentStep - 1, 1));
+      showStep(getPreviousVisibleStep(currentStep));
     });
 
     btnDraft.addEventListener('click', () => saveForm('save'));
@@ -290,11 +326,78 @@
     devModeToggle.classList.toggle('active', devMode);
     devModeToggle.setAttribute('aria-pressed', String(devMode));
     devModeToggle.textContent = `Testmodus: ${devMode ? 'An' : 'Aus'}`;
-    devOnlyFields.forEach(field => field.classList.toggle('hidden', !devMode));
     if (devModeBadge) devModeBadge.classList.toggle('hidden', !devMode);
     if (bitrixTestActions) bitrixTestActions.classList.toggle('hidden', !devMode);
-    if (devMode && !bitrixDeals.length) fetchBitrixDeals();
-    if (devMode && !drafts.length) fetchDrafts();
+    if (btnHeaderDemoPrefill) btnHeaderDemoPrefill.classList.toggle('hidden', !devMode);
+    if (bitrixDebugFields) bitrixDebugFields.classList.toggle('hidden', !devMode);
+
+    // Hide Bitrix-Aufträge + Entwürfe completely when Testmodus is off
+    if (devToolsPanel) {
+      const dealTitle = devToolsPanel.querySelector('.bitrix-panel-title');
+      const dealSubtitle = devToolsPanel.querySelector('.bitrix-panel-subtitle');
+      if (dealTitle) dealTitle.closest('.dev-tools-head')?.classList.toggle('hidden', !devMode);
+      if (bitrixSearch) bitrixSearch.closest('.bitrix-toolbar')?.classList.toggle('hidden', !devMode);
+      if (bitrixDealList) bitrixDealList.classList.toggle('hidden', !devMode);
+      if (draftsPanel) draftsPanel.classList.toggle('hidden', !devMode);
+      if (btnBitrixAutofill) btnBitrixAutofill.classList.toggle('hidden', !devMode);
+    syncDevSidebarVisibility();
+    }
+
+function syncDevSidebarVisibility() {
+  const sidebar = document.querySelector('.bitrix-sidebar');
+  const step1Layout = document.querySelector('.step1-layout');
+
+  if (sidebar) {
+    sidebar.classList.toggle('hidden', !devMode);
+    syncDevOnlySteps();
+    buildStepDots();
+    updateStepDots();
+    const visibleSteps = getVisibleSteps();
+    const currentVisible = visibleSteps.some(step => +step.dataset.step === currentStep);
+    if (!currentVisible && visibleSteps.length) {
+      currentStep = +visibleSteps[0].dataset.step;
+    }
+    showStep(currentStep);
+  }
+
+  if (step1Layout) {
+    step1Layout.classList.toggle('sidebar-hidden', !devMode);
+  }
+}
+
+
+    const emptyStateId = 'demoSidebarState';
+    const existingState = document.getElementById(emptyStateId);
+    if (existingState && !devMode) {
+      existingState.remove();
+    }
+  }
+
+  function setSidebarSourcesHidden(hidden) {
+    const shouldHide = Boolean(hidden);
+
+    if (bitrixSearch) {
+      const toolbar = bitrixSearch.closest('.bitrix-toolbar');
+      if (toolbar) toolbar.classList.toggle('hidden', shouldHide);
+    }
+
+    if (bitrixDealList) bitrixDealList.classList.toggle('hidden', shouldHide);
+    if (draftsPanel) draftsPanel.classList.toggle('hidden', shouldHide);
+
+    const emptyStateId = 'demoSidebarState';
+    let state = document.getElementById(emptyStateId);
+    if (shouldHide) {
+      if (!state && devToolsPanel) {
+        state = document.createElement('div');
+        state.id = emptyStateId;
+        state.className = 'bitrix-empty';
+        state.style.marginTop = '12px';
+        state.textContent = 'Musterdaten aktiv – Bitrix-Aufträge und Entwürfe sind ausgeblendet.';
+        devToolsPanel.appendChild(state);
+      }
+    } else if (state) {
+      state.remove();
+    }
   }
 
   function bindBitrixAutofill() {
@@ -318,6 +421,10 @@
 
     if (btnDemoPrefill) {
       btnDemoPrefill.addEventListener('click', prefillDemoData);
+    }
+
+    if (btnHeaderDemoPrefill) {
+      btnHeaderDemoPrefill.addEventListener('click', prefillDemoData);
     }
   }
 
@@ -412,7 +519,7 @@
 
     try {
       const itemRes = await fetch(
-        `/api/bitrix/items/by-stage?entityTypeId=${BITRIX_TEST_ENTITY_TYPE_ID}&stageId=${encodeURIComponent(BITRIX_STAGE_ID)}&useOriginalUfNames=N&select=id,title,stageId,contactId,opportunity,assignedById,createdTime,begindate,closeDate,UF_CRM_1776156870205,UF_CRM_1725521281342`
+        `/api/bitrix/items/by-stage?entityTypeId=${BITRIX_TEST_ENTITY_TYPE_ID}&stageId=${encodeURIComponent(BITRIX_STAGE_ID)}&useOriginalUfNames=N&select=id,title,stageId,contactId,opportunity,assignedById,createdTime,begindate,closeDate,UF_CRM_1725521281342,ufCrm_1725521281342`
       );
       const itemJson = await itemRes.json();
       const items = itemJson?.result?.items || itemJson?.result || [];
@@ -423,7 +530,7 @@
         return;
       }
 
-      bitrixDeals = await enrichBitrixDeals(items.map(item => normalizeBitrixItem(item)));
+      bitrixDeals = await enrichBitrixDeals(items);
       renderBitrixDeals(getFilteredBitrixDeals());
       showToast('Bitrix-Deals geladen.', 'success');
     } catch (error) {
@@ -503,17 +610,21 @@
     renderBitrixDeals(bitrixDeals);
 
     try {
-      const fullItem = await fetchBitrixDeal(item.id);
-      const hydratedItem = {
-        ...item,
-        ...(fullItem || {}),
-        _contact: item._contact || fullItem?._contact || null,
-      };
+      let hydratedItem = item;
+      try {
+        const detailRes = await fetch(`/api/bitrix/items/${encodeURIComponent(item.id)}`);
+        const detailJson = await detailRes.json();
+        hydratedItem = detailJson?.result || detailJson || item;
+      } catch (_error) {
+        hydratedItem = item;
+      }
 
       applyBitrixItemToForm(hydratedItem);
+      setSidebarSourcesHidden(false);
 
-      if (hydratedItem.contactId) {
-        const contact = hydratedItem._contact || await fetchBitrixContact(hydratedItem.contactId);
+      const contactId = hydratedItem.contactId || item.contactId;
+      if (contactId) {
+        const contact = hydratedItem._contact || item._contact || await fetchBitrixContact(contactId);
         if (contact) {
           applyBitrixContactToForm(contact);
         } else {
@@ -764,6 +875,7 @@
       if (!json.success) throw new Error(json.error || 'Entwurf konnte nicht geladen werden');
 
       const data = json.data;
+      setSidebarSourcesHidden(false);
       formId = data._id;
       shareToken = data.shareToken || null;
       activeDraftId = data._id;
@@ -771,7 +883,7 @@
       resetFormState();
       populateForm(data);
       renderDrafts(drafts);
-      showStep(1);
+      showStep(getFirstVisibleStep());
       showToast('Entwurf geladen.', 'success');
     } catch (error) {
       showToast('Fehler beim Laden des Entwurfs: ' + error.message, 'error');
@@ -836,6 +948,9 @@
       zusaetzlicheArbeitenNB: 'Mustertext für Nachbesserung.',
       nichtErledigteArbeitenNB: 'Mustertext: Restarbeiten in Abstimmung mit Kunde verschoben.',
       hinweiseBuero: 'Musterhinweis für das Büro: Bitte Unterlagen archivieren und Rückruf einplanen.',
+      bitrixZusatzfeld: 'DBG-ANG-2026-001',
+      bitrixAuszufuehrendeTaetigkeiten: '[HD] Badumbau',
+      bitrixAuftragId: '90001',
     };
 
     const numberValues = {
@@ -911,7 +1026,150 @@
       'unterschriftNB',
     ].forEach(drawDemoSignature);
 
-    showToast('Musterdaten eingefüllt. Dateiuploads müssen weiterhin manuell gewählt werden.', 'success');
+    prefillDemoUploads();
+    updateChecklistVariant(textValues.bitrixAuszufuehrendeTaetigkeiten);
+    updateConfirmationLetterPreview();
+    setSidebarSourcesHidden(true);
+    showToast('Musterdaten komplett eingefüllt – inklusive Signaturen, Testfotos und Testvideo.', 'success');
+  }
+
+  function clearUploadField(fieldName) {
+    const wrapper = $(`.file-upload[data-name="${fieldName}"]`);
+    if (!wrapper) return null;
+    const preview = $('.file-preview', wrapper);
+    fileStore[fieldName] = [];
+    if (preview) preview.innerHTML = '';
+    return preview;
+  }
+
+  function createDemoImageFile(label = 'Musterfoto') {
+    const svg = `
+      <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900" viewBox="0 0 1200 900">
+        <rect width="1200" height="900" fill="#f5f7fb"/>
+        <rect x="60" y="60" width="1080" height="780" rx="44" fill="#ffffff" stroke="#253a75" stroke-width="10"/>
+        <text x="600" y="380" text-anchor="middle" font-size="72" font-family="Segoe UI, Arial, sans-serif" fill="#253a75">emc2 Musterdaten</text>
+        <text x="600" y="500" text-anchor="middle" font-size="42" font-family="Segoe UI, Arial, sans-serif" fill="#4a4a4a">${label}</text>
+      </svg>
+    `.trim();
+    return new File([svg], `${slugify(label)}.svg`, { type: 'image/svg+xml' });
+  }
+
+  function createDemoVideoFile(label = 'Testvideo') {
+    const content = `emc2 Musterdaten – ${label}`;
+    return new File([content], `${slugify(label)}.webm`, { type: 'video/webm' });
+  }
+
+  function slugify(value = '') {
+    return String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .toLowerCase() || 'datei';
+  }
+
+  function prefillDemoUploads() {
+    const fertigerUmbauPreview = clearUploadField('bilderFertigerUmbau');
+    if (fertigerUmbauPreview) {
+      addFiles('bilderFertigerUmbau', [
+        createDemoImageFile('Fertiger Umbau 1'),
+        createDemoImageFile('Fertiger Umbau 2'),
+      ], fertigerUmbauPreview, true);
+    }
+
+    const videoPreview = clearUploadField('videoDesAblaufs');
+    if (videoPreview) {
+      addFiles('videoDesAblaufs', [createDemoVideoFile('Video des Ablaufs')], videoPreview, false);
+    }
+
+    const abdichtungPreview = clearUploadField('fotosAbdichtung');
+    if (abdichtungPreview) {
+      addFiles('fotosAbdichtung', [createDemoImageFile('Fotos der Abdichtung')], abdichtungPreview, true);
+    }
+  }
+
+  function resolveBitrixActivities(item = {}) {
+    const rawValues = [];
+
+    BITRIX_ACTIVITY_FIELD_KEYS.forEach(key => {
+      const value = item?.[key];
+      if (Array.isArray(value)) rawValues.push(...value);
+      else if (value !== undefined && value !== null && value !== '') rawValues.push(value);
+    });
+
+    const normalized = rawValues
+      .flatMap(value => String(value || '').split(','))
+      .map(value => String(value || '').trim())
+      .filter(Boolean)
+      .map(value => BITRIX_AUSZUFUEHRENDE_TAETIGKEITEN_MAP[value] || value);
+
+    return [...new Set(normalized)].join(', ');
+  }
+
+  function deriveChecklistVariant(value = '') {
+    const normalized = String(value || '').toLowerCase();
+    if (normalized.includes('handläufe') || normalized.includes('handlaeufe')) return 'handlaeufe';
+    if (normalized.includes('badewannentür') || normalized.includes('badewannentuer') || normalized.includes('badewannentüre') || normalized.includes('badewannentuere')) return 'badewannentuer';
+    return 'badumbau';
+  }
+
+  function updateChecklistVariant(value = '') {
+    currentChecklistVariant = deriveChecklistVariant(value);
+
+    if (checklistStepTitle) {
+      checklistStepTitle.textContent = currentChecklistVariant === 'handlaeufe'
+        ? 'Checkliste Handläufe'
+        : currentChecklistVariant === 'badewannentuer'
+          ? 'Checkliste Badewannentür'
+          : 'Checkliste Badumbau';
+    }
+
+    if (checklistStepIntro) {
+      checklistStepIntro.textContent = currentChecklistVariant === 'badumbau'
+        ? 'Bitte alle Punkte abhaken, sobald sie erledigt oder geprüft wurden.'
+        : 'Bitte die zur Ausführung passende Checkliste vollständig prüfen und abhaken.';
+    }
+
+    $$('[data-checklist-only]', form).forEach(el => {
+      const only = String(el.dataset.checklistOnly || '').trim().toLowerCase();
+      el.classList.toggle('hidden', Boolean(only) && only !== currentChecklistVariant);
+    });
+  }
+
+  function bindConfirmationLetterSync() {
+    [
+      'anrede','vorname','nachname','adresse.strasse','adresse.adresszeile2','adresse.plz','adresse.stadt','bitrixZusatzfeld','auftragsNummer','bitrixAuszufuehrendeTaetigkeiten'
+    ].forEach(name => {
+      const input = form.querySelector(`[name="${name}"]`);
+      if (!input) return;
+      input.addEventListener('input', updateConfirmationLetterPreview);
+      input.addEventListener('change', updateConfirmationLetterPreview);
+    });
+    updateConfirmationLetterPreview();
+  }
+
+  function updateConfirmationLetterPreview() {
+    const getValue = name => (form.querySelector(`[name="${name}"]`)?.value || '').trim();
+    const anrede = getValue('anrede');
+    const vorname = getValue('vorname');
+    const nachname = getValue('nachname');
+    const customerName = anrede === 'Familie' && nachname ? `Familie ${nachname}` : [vorname, nachname].filter(Boolean).join(' ') || 'Max Mustermann';
+    const street = getValue('adresse.strasse') || 'Musterstraße 42';
+    const line2 = getValue('adresse.adresszeile2') || '2. OG links';
+    const plz = getValue('adresse.plz') || '04109';
+    const city = getValue('adresse.stadt') || 'Leipzig';
+    const orderId = getValue('bitrixZusatzfeld') || getValue('auftragsNummer') || 'DBG-ANG-2026-001';
+    const now = new Date();
+    const monthYear = new Intl.DateTimeFormat('de-DE', { month: 'long', year: 'numeric' }).format(now);
+    const monthYearCapitalized = monthYear.charAt(0).toUpperCase() + monthYear.slice(1);
+
+    $$('.kunde-name-display').forEach(el => { el.textContent = customerName; });
+    const streetEl = $('.adresse-strasse-display'); if (streetEl) streetEl.textContent = street;
+    const line2El = $('.adresse-adresszeile2-display'); if (line2El) line2El.textContent = line2;
+    const plzEl = $('.adresse-plz-display'); if (plzEl) plzEl.textContent = plz;
+    $$('.adresse-stadt-display').forEach(el => { el.textContent = city; });
+    const monthEl = $('.brief-monat-jahr-display'); if (monthEl) monthEl.textContent = monthYearCapitalized;
+    const orderEl = $('.auftrag-nr-display'); if (orderEl) orderEl.textContent = orderId;
   }
 
   function drawDemoSignature(name) {
@@ -948,11 +1206,16 @@
   }
 
   function applyBitrixItemToForm(item) {
+    const resolvedActivities = resolveBitrixActivities(item);
     setFieldValue('terminId', `BITRIX-${item.id}`);
     setFieldValue('auftragsNummer', item.title || `Bitrix ${item.id}`);
     setFieldValue('kundennummer', item.contactId || item.id);
     setFieldValue('bitrixAuftragId', item.id);
-    renderBitrixOrderMeta(item);
+    setFieldValue('bitrixZusatzfeld', item.title || `Bitrix ${item.id}`);
+          setAuszufuehrendeTaetigkeitenValue(record.auszufuehrendeTaetigkeiten || record.auszufuehrende_taetigkeiten || record.resolvedAuszufuehrendeTaetigkeiten || record.ufCrm_1725521281342Resolved || record.UF_CRM_1725521281342_RESOLVED || '');
+setFieldValue('bitrixAuszufuehrendeTaetigkeiten', resolvedActivities);
+    updateChecklistVariant(resolvedActivities);
+    updateConfirmationLetterPreview();
   }
 
   function applyBitrixContactToForm(contact) {
@@ -962,91 +1225,6 @@
     setFieldValue('adresse.strasse', contact.ADDRESS || '');
     setFieldValue('adresse.stadt', contact.ADDRESS_CITY || '');
     setFieldValue('adresse.plz', contact.ADDRESS_POSTAL_CODE || '');
-  }
-
-  function normalizeBitrixItem(rawItem = {}) {
-    const orderMetaFieldKey = Object.keys(rawItem).find(key =>
-      String(key).replace(/[^a-z0-9]/gi, '').toLowerCase() === 'ufcrm1776156870205'
-    );
-    const executionActivitiesFieldKey = Object.keys(rawItem).find(key =>
-      String(key).replace(/[^a-z0-9]/gi, '').toLowerCase() === 'ufcrm1725521281342'
-    );
-
-    return {
-      ...rawItem,
-      id: rawItem.id || rawItem.ID || '',
-      title: rawItem.title || rawItem.TITLE || '',
-      stageId: rawItem.stageId || rawItem.STAGE_ID || '',
-      contactId: rawItem.contactId || rawItem.CONTACT_ID || '',
-      opportunity: rawItem.opportunity || rawItem.OPPORTUNITY || '',
-      assignedById: rawItem.assignedById || rawItem.ASSIGNED_BY_ID || '',
-      createdTime: rawItem.createdTime || rawItem.CREATED_TIME || '',
-      begindate: rawItem.begindate || rawItem.BEGINDATE || '',
-      closeDate: rawItem.closeDate || rawItem.CLOSEDATE || '',
-      [BITRIX_ORDER_META_FIELD]: orderMetaFieldKey ? rawItem[orderMetaFieldKey] : '',
-      [BITRIX_EXECUTION_ACTIVITIES_FIELD]: executionActivitiesFieldKey ? rawItem[executionActivitiesFieldKey] : [],
-    };
-  }
-
-  function getBitrixCustomFieldRawValue(item = {}, fieldName = '') {
-    const normalizedTarget = String(fieldName || '').replace(/[^a-z0-9]/gi, '').toLowerCase();
-    if (!normalizedTarget) return '';
-
-    const directValue = item[fieldName];
-    if (directValue !== undefined && directValue !== null) {
-      if (Array.isArray(directValue)) {
-        if (directValue.length) return directValue;
-      } else if (String(directValue).trim()) {
-        return directValue;
-      }
-    }
-
-    const matchingKey = Object.keys(item).find(key =>
-      String(key).replace(/[^a-z0-9]/gi, '').toLowerCase() === normalizedTarget
-    );
-
-    if (!matchingKey) return '';
-    return item[matchingKey];
-  }
-
-  function getBitrixCustomFieldValue(item = {}, fieldName = '') {
-    const value = getBitrixCustomFieldRawValue(item, fieldName);
-    if (value === undefined || value === null) return '';
-    if (Array.isArray(value)) return value.map(entry => String(entry || '').trim()).filter(Boolean).join(', ');
-    return String(value).trim();
-  }
-
-  function getBitrixCustomFieldValues(item = {}, fieldName = '') {
-    const value = getBitrixCustomFieldRawValue(item, fieldName);
-    if (value === undefined || value === null || value === '') return [];
-    if (Array.isArray(value)) return value.map(entry => String(entry || '').trim()).filter(Boolean);
-    return String(value)
-      .split(',')
-      .map(entry => entry.trim())
-      .filter(Boolean);
-  }
-
-  function resolveBitrixExecutionActivities(item = {}) {
-    return getBitrixCustomFieldValues(item, BITRIX_EXECUTION_ACTIVITIES_FIELD)
-      .map(value => BITRIX_EXECUTION_ACTIVITY_LABELS[String(value)] || String(value))
-      .filter(Boolean);
-  }
-
-  function renderBitrixOrderMeta(item = {}) {
-    const metaValue = getBitrixCustomFieldValue(item, BITRIX_ORDER_META_FIELD);
-    const executionActivitiesValue = resolveBitrixExecutionActivities(item).join(', ');
-
-    if (bitrixOrderMeta && bitrixOrderMetaField) {
-      bitrixOrderMeta.value = metaValue;
-      bitrixOrderMetaField.classList.toggle('hidden', !devMode || !metaValue);
-    }
-
-    if (bitrixExecutionActivities && bitrixExecutionActivitiesField) {
-      bitrixExecutionActivities.value = executionActivitiesValue;
-      bitrixExecutionActivitiesField.classList.toggle('hidden', !devMode || !executionActivitiesValue);
-    }
-
-    renderChecklistVariant();
   }
 
   async function enrichBitrixDeals(items) {
@@ -1066,16 +1244,6 @@
     const contactRes = await fetch(`/api/bitrix/contact/${contactId}`);
     const contactJson = await contactRes.json();
     return contactJson?.result || null;
-  }
-
-  async function fetchBitrixDeal(itemId) {
-    const res = await fetch(
-      `/api/bitrix/items/${encodeURIComponent(itemId)}?entityTypeId=${BITRIX_TEST_ENTITY_TYPE_ID}&useOriginalUfNames=N`
-    );
-    const json = await res.json();
-
-    if (!res.ok) throw new Error(json.error || 'Bitrix lead could not be loaded');
-    return normalizeBitrixItem(json?.result?.item || json?.result || {});
   }
 
   function buildBitrixContactLine(deal) {
@@ -1194,9 +1362,9 @@
   }
 
   function validateAllSteps() {
-    for (let i = 1; i <= TOTAL_STEPS; i++) {
-      if (!validateStep(i)) {
-        showStep(i);
+    for (const step of getVisibleStepNumbers()) {
+      if (!validateStep(step)) {
+        showStep(step);
         return false;
       }
     }
@@ -1611,8 +1779,6 @@
   function resetFormState() {
     form.reset();
     fileStore = {};
-    renderBitrixOrderMeta({});
-    renderChecklistVariant();
 
     $$('input.invalid, select.invalid, textarea.invalid', form).forEach(el => {
       el.classList.remove('invalid');
@@ -1663,22 +1829,6 @@
     $$('input[type="checkbox"]', form).forEach(el => {
       if (data[el.name]) el.checked = true;
     });
-
-    if (data.bitrixExecutionActivities) {
-      if (bitrixExecutionActivities) bitrixExecutionActivities.value = data.bitrixExecutionActivities;
-      if (bitrixExecutionActivitiesField) {
-        bitrixExecutionActivitiesField.classList.toggle('hidden', !devMode || !String(data.bitrixExecutionActivities).trim());
-      }
-    }
-
-    if (data.bitrixOrderMeta) {
-      if (bitrixOrderMeta) bitrixOrderMeta.value = data.bitrixOrderMeta;
-      if (bitrixOrderMetaField) {
-        bitrixOrderMetaField.classList.toggle('hidden', !devMode || !String(data.bitrixOrderMeta).trim());
-      }
-    }
-
-    renderChecklistVariant();
 
     // Signatures – draw base64 onto pads
     for (const [name, pad] of Object.entries(signaturePads)) {
@@ -1981,12 +2131,11 @@
   // ── Auftrags-Nr Sync ───────────────────────────────────
   function bindAuftragsNrSync() {
     const auftragsInput = $('input[name="auftragsNummer"]');
-    const display       = $('.auftrag-nr-display');
-    if (!auftragsInput || !display) return;
-
-    auftragsInput.addEventListener('input', () => {
-      display.textContent = auftragsInput.value || 'A-___';
-    });
+    const bitrixZusatzfeldInput = $('input[name="bitrixZusatzfeld"]');
+    const sync = () => updateConfirmationLetterPreview();
+    if (auftragsInput) auftragsInput.addEventListener('input', sync);
+    if (bitrixZusatzfeldInput) bitrixZusatzfeldInput.addEventListener('input', sync);
+    sync();
   }
 
   // ── Toast Notifications ────────────────────────────────

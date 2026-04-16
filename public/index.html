@@ -17,9 +17,14 @@
       <h1 class="logo">emc2 Bauformular</h1>
       <p class="subtitle">Digitale Baustellenabnahme</p>
     </div>
-    <button type="button" class="dev-toggle" id="devModeToggle" aria-pressed="false">
-      Testmodus: Aus
-    </button>
+    <div class="app-header-actions pill-group">
+      <button type="button" class="dev-toggle pill-btn" id="devModeToggle" aria-pressed="false">
+        Testmodus: Aus
+      </button>
+      <button type="button" class="pill-btn hidden" id="btnHeaderDemoPrefill">
+        Musterdaten komplett
+      </button>
+    </div>
   </header>
 
   <!-- ══════════ FORM CARD ══════════ -->
@@ -113,13 +118,13 @@
 
             <label class="field-label">Auftrags-Nummer</label>
             <input type="text" name="auftragsNummer" placeholder="A-AN-XXXXX" />
-            <div class="hidden" id="bitrixOrderMetaField" data-dev-only>
+
+            <div class="bitrix-debug-fields hidden" id="bitrixDebugFields">
               <label class="field-label">Bitrix Zusatzfeld</label>
-              <input type="text" name="bitrixOrderMeta" id="bitrixOrderMeta" readonly />
-            </div>
-            <div class="hidden" id="bitrixExecutionActivitiesField" data-dev-only>
+              <input type="text" name="bitrixZusatzfeld" readonly placeholder="Wird nur im Testmodus angezeigt" />
+
               <label class="field-label">Auszuführende Tätigkeiten</label>
-              <input type="text" name="bitrixExecutionActivities" id="bitrixExecutionActivities" readonly />
+              <input type="text" name="auszufuehrendeTaetigkeiten" readonly placeholder="Wird nur im Testmodus angezeigt" />
             </div>
           </div>
 
@@ -256,101 +261,8 @@
         <input type="hidden" name="unterschriftWarenpruefung" />
       </section>
 
-      <!-- ────────── STEP 3 ─ Montage-Checkliste ────────── -->
+      <!-- ────────── STEP 3 ────────── -->
       <section class="form-step" data-step="3">
-        <h2 id="checklistTitle">Checkliste Badumbau</h2>
-        <p class="intro">Bitte alle Punkte abhaken, sobald sie erledigt oder geprüft wurden.</p>
-
-        <div class="checklist-group">
-          <h3>1. Fotodokumentation</h3>
-          <label class="check-item"><input type="checkbox" name="checklistFotosWaerendUmsetzung" /> Regelmäßige Fotos während der Umsetzung gemacht?</label>
-          <label class="check-item"><input type="checkbox" name="checklistFinaleFotos" /> Finale Fotos nach Abschluss gemacht?</label>
-          <label class="check-item"><input type="checkbox" name="checklistFotosHandwerkskoordination" /> Fotos an Handwerkskoordination übermittelt?</label>
-
-          <label class="field-label">Übermittlungsweg</label>
-          <div class="choice-group choice-group-3">
-            <label class="choice-pill"><input type="radio" name="checklistFotoUebermittlung" value="iMessage" /><span>iMessage<br /><small>an 0157 37994273</small></span></label>
-            <label class="choice-pill"><input type="radio" name="checklistFotoUebermittlung" value="WhatsApp" /><span>WhatsApp<br /><small>an 0157 37994273</small></span></label>
-            <label class="choice-pill"><input type="radio" name="checklistFotoUebermittlung" value="FortyTools" /><span>FortyTools</span></label>
-          </div>
-        </div>
-
-        <div class="checklist-group">
-          <h3>2. Verbrauchsmaterial</h3>
-          <label class="check-item"><input type="checkbox" name="checklistVerbrauchsmaterialErfasst" /> Verbrauchsmaterial über GC-App separat erfasst? (Fittinge, Rohre, etc.)</label>
-          <label class="check-item"><input type="checkbox" name="checklistWarenkorbGeschickt" /> Warenkorb über GC-App an Handwerkskoordination geschickt?</label>
-        </div>
-
-        <div class="checklist-group">
-          <h3>3. Warenprüfung</h3>
-          <label class="check-item"><input type="checkbox" name="checklistDokumentWarenpruefung" /> Dokument „Warenprüfung“ vom Monteur ausgefüllt und unterschrieben?</label>
-        </div>
-
-        <div class="checklist-group">
-          <h3>4. Arbeitszeiterfassung</h3>
-          <label class="check-item"><input type="checkbox" name="checklistArbeitszeitenErfasst" /> Arbeitszeiten in FortyTools erfasst und vom Kunden unterschreiben lassen?</label>
-        </div>
-
-        <div class="checklist-group">
-          <h3>5. Bestätigung &amp; Arbeitsbericht</h3>
-          <label class="check-item"><input type="checkbox" name="checklistBestaetigungKasse" /> Dokument „Bestätigung für erfolgreichen Umbau Kasse“ vom Kunden unterschrieben?</label>
-          <label class="check-item"><input type="checkbox" name="checklistDokumentArbeitsbericht" /> Dokument „Arbeitsbericht“ vom Kunden unterschrieben?</label>
-        </div>
-
-        <div class="checklist-group">
-          <h3>6. Kundeninformation</h3>
-          <label class="check-item"><input type="checkbox" name="checklistFlyerBadewannentuer" /> 2 x EmC2-Flyer „Badewannentür“ an Kunden übergeben?</label>
-          <label class="check-item"><input type="checkbox" name="checklistFlyerBadumbau" /> 2 x EmC2-Flyer „Badumbau“ an Kunden übergeben?</label>
-          <label class="check-item"><input type="checkbox" name="checklistFlyerHaltegriffe" /> 2 x EmC2-Flyer „Haltegriffe &amp; Handläufe“ an Kunden übergeben?</label>
-          <label class="check-item"><input type="checkbox" name="checklistBroschuerePflegehinweise" /> Broschüre „Pflegehinweise“ an Kunden übergeben?</label>
-          <label class="check-item"><input type="checkbox" name="checklistSilikonDuschabzieher" /> Silikon-Duschabzieher an Kunden übergeben?</label>
-          <label class="check-item"><input type="checkbox" name="checklistHinweisSilikonfugen" /> Hinweis zu Silikonfugen beim Kunden hinterlassen?</label>
-        </div>
-
-        <div class="checklist-group">
-          <h3>7. Gratisaktion</h3>
-          <label class="check-item"><input type="checkbox" name="checklistGratisHaltegriffMontiert" /> Gratis Haltegriff montiert?</label>
-          <label class="field-label">Wenn nein, weil</label>
-          <textarea name="checklistGratisHaltegriffKommentar" rows="3" placeholder="Grund / Bemerkung"></textarea>
-        </div>
-
-        <div class="checklist-group">
-          <h3>8. Abschlusskontrolle vor Verlassen der Baustelle</h3>
-          <label class="check-item"><input type="checkbox" name="abschlusskontrolleBaustelleSauber" /> Baustelle sauber und besenrein hinterlassen?</label>
-          <label class="check-item"><input type="checkbox" name="abschlusskontrolleVerpackungEntsorgt" /> Verpackungen &amp; Müll entfernt und entsorgt?</label>
-          <label class="check-item"><input type="checkbox" name="abschlusskontrolleFunktionstest" /> Funktionstest Armaturen, Duschabtrennung, Abläufe durchgeführt?</label>
-          <label class="check-item"><input type="checkbox" name="abschlusskontrolleKundeEingewiesen" /> Kunde kurz in die neue Anlage eingewiesen?</label>
-          <label class="check-item"><input type="checkbox" name="abschlusskontrolleWerkzeugeMitgenommen" /> Alle Werkzeuge und Materialien mitgenommen?</label>
-        </div>
-
-        <div class="checklist-group">
-          <h3>9. Sonstige Bemerkungen</h3>
-          <textarea name="sonstigeBemerkungenBaustelle" rows="6" placeholder="Weitere Hinweise oder Besonderheiten"></textarea>
-        </div>
-
-        <div class="checklist-group">
-          <h3>10. Unterschriften</h3>
-          <label class="field-label">Unterschrift Monteur 1</label>
-          <div class="signature-wrapper" data-name="unterschriftMonteur1">
-            <canvas class="signature-canvas" width="600" height="200"></canvas>
-            <button type="button" class="btn-clear-sig">Löschen</button>
-          </div>
-          <input type="hidden" name="unterschriftMonteur1" />
-
-          <label class="field-label">Unterschrift Monteur 2</label>
-          <div class="signature-wrapper" data-name="unterschriftMonteur2">
-            <canvas class="signature-canvas" width="600" height="200"></canvas>
-            <button type="button" class="btn-clear-sig">Löschen</button>
-          </div>
-          <input type="hidden" name="unterschriftMonteur2" />
-
-          <label class="field-label">Datum</label>
-          <input type="date" name="unterschriftMonteurDatum" />
-        </div>
-      </section>
-
-      <!-- ────────── STEP 4 ────────── -->
-      <section class="form-step" data-step="4">
         <h2>Fotos &amp; Video</h2>
 
         <label class="field-label required">Bilder des fertigen Umbaus</label>
@@ -415,8 +327,8 @@
         </div>
       </section>
 
-      <!-- ────────── STEP 5 ────────── -->
-      <section class="form-step" data-step="5">
+      <!-- ────────── STEP 4 ────────── -->
+      <section class="form-step" data-step="4">
         <h2>Weitere Bilder</h2>
 
         <label class="field-label">Weitere Bilder</label>
@@ -459,46 +371,39 @@
         </div>
       </section>
 
-      <!-- ────────── STEP 6 ─ Umbau-Abschluss ────────── -->
-      <section class="form-step" data-step="6">
-        <h2>Abschluss &amp; Unterschrift</h2>
+      <!-- ────────── STEP 9 ─ Bestätigung erfolgreicher Umbau ────────── -->
+      <section class="form-step" data-step="9">
+        <h2>Bestätigung erfolgreicher Umbau</h2>
+        <p class="intro">Dieses Schreiben wird automatisch aus den Kundendaten aufgebaut und direkt vor der finalen Checkliste vom Kunden unterschrieben.</p>
 
-        <div class="kva-section">
-          <h3>KVA</h3>
-          <label class="field-label">Zusätzlich zur Beauftragung durchgeführte Arbeiten</label>
-          <textarea name="zusaetzlicheArbeiten" rows="3" placeholder="Beschreibung der Zusatzarbeiten"></textarea>
+        <div class="bestaetigung-letter">
+          <div class="bestaetigung-address">
+            <div class="bestaetigung-name"><span class="kunde-name-display">Max Mustermann</span></div>
+            <div><span class="adresse-strasse-display">Musterstraße 42</span></div>
+            <div><span class="adresse-adresszeile2-display">2. OG links</span></div>
+            <div><span class="adresse-plz-display">04109</span> <span class="adresse-stadt-display">Leipzig</span></div>
+          </div>
 
-          <label class="field-label">Preis der zusätzlich durchgeführten Arbeiten</label>
-          <div class="input-euro">
-            <input type="number" name="preisZusaetzlich" min="0" step="0.01" placeholder="0,00" />
-            <span class="euro-suffix">€</span>
+          <div class="bestaetigung-date-line">
+            <span class="adresse-stadt-display">Leipzig</span>, im <span class="brief-monat-jahr-display">April 2026</span>
+          </div>
+
+          <div class="bestaetigung-body">
+            <p>Sehr geehrte Damen und Herren,</p>
+            <p>
+              hiermit bestätige ich den durch die Fa. EmC2 erfolgreich durchgeführten barrierearmen Umbau
+              gemäß Auftrag <strong class="auftrag-nr-display">DBG-ANG-2026-001</strong>
+              mit Hilfe der mir genehmigten Förderung nach §40 SGB XI Abs. 4.
+            </p>
+            <p>Mit freundlichen Grüßen</p>
+          </div>
+
+          <div class="bestaetigung-signoff">
+            <div class="kunde-name-display">Max Mustermann</div>
           </div>
         </div>
 
-        <label class="field-label required">Die Arbeiten wurden vollständig abgeschlossen am</label>
-        <input type="date" name="abgeschlossenAm" required />
-
-        <label class="field-label required">Wurden alle Arbeiten durchgeführt?</label>
-        <div class="radio-group">
-          <label><input type="radio" name="alleArbeitenErledigt" value="Ja" /> Ja</label>
-          <label><input type="radio" name="alleArbeitenErledigt" value="Nein" /> Nein</label>
-        </div>
-
-        <div class="conditional-field" data-show-when="alleArbeitenErledigt" data-show-value="Nein">
-          <label class="field-label required">Welche Arbeiten wurden nicht durchgeführt?</label>
-          <textarea name="nichtErledigteArbeiten" rows="3" placeholder="Bitte beschreiben…"></textarea>
-        </div>
-
-        <div class="legal-text">
-          <p>Mit meiner Unterschrift bestätige ich den ordnungsgemäßen Abschluss der beauftragten
-          Arbeiten gemäß des Auftrags <strong class="auftrag-nr-display">A-___</strong>
-          unter Einbezug der eventuell oben festgehaltenen Abweichungen.</p>
-          <p>Falls eine Kostenübernahme durch die Pflegekasse zugesagt wurde, erkläre ich mich damit
-          einverstanden, dass die Seniovo Bau GmbH im Rahmen des Kostenerstattungsverfahren für
-          wohnumfeldverbessernde Maßnahmen direkt mit meiner Krankenkasse abrechnen darf.</p>
-        </div>
-
-        <label class="field-label required">Unterschrift</label>
+        <label class="field-label required">Unterschrift Kunde</label>
         <div class="signature-wrapper" data-name="unterschriftKunde">
           <canvas class="signature-canvas" width="600" height="200"></canvas>
           <button type="button" class="btn-clear-sig">Löschen</button>
@@ -507,8 +412,8 @@
         <input type="hidden" name="unterschriftZeitpunkt" />
       </section>
 
-      <!-- ────────── STEP 7 ─ Mängelbeseitigung ────────── -->
-      <section class="form-step" data-step="7">
+      <!-- ────────── STEP 5 ─ Mängelbeseitigung ────────── -->
+      <section class="form-step dev-only-step" data-step="5">
         <h2>Mängelbeseitigung</h2>
 
         <label class="field-label required">Die Mängelbeseitigung wurde vollständig abgeschlossen am</label>
@@ -527,8 +432,8 @@
         <input type="hidden" name="unterschriftMaengelZeitpunkt" />
       </section>
 
-      <!-- ────────── STEP 8 ─ Nachbesserung ────────── -->
-      <section class="form-step" data-step="8">
+      <!-- ────────── STEP 6 ─ Nachbesserung ────────── -->
+      <section class="form-step dev-only-step" data-step="6">
         <h2>Nachbesserung</h2>
 
         <label class="field-label required">Die Nachlieferung der noch offenen Arbeiten wurde vollständig abgeschlossen am</label>
@@ -574,8 +479,8 @@
         <input type="hidden" name="unterschriftNBZeitpunkt" />
       </section>
 
-      <!-- ────────── STEP 9 ─ Arbeitsbericht ────────── -->
-      <section class="form-step" data-step="9">
+      <!-- ────────── STEP 7 ─ Arbeitsbericht ────────── -->
+      <section class="form-step dev-only-step" data-step="7">
         <h2>Arbeitsbericht</h2>
         <p class="intro">Suche nach einem externen Angebot oder Entwurf und lade daraus den Arbeitsbericht als PDF.</p>
 
@@ -624,8 +529,8 @@
         </div>
       </section>
 
-      <!-- ────────── STEP 10 ─ Hinweise ────────── -->
-      <section class="form-step" data-step="10">
+      <!-- ────────── STEP 8 ─ Hinweise ────────── -->
+      <section class="form-step" data-step="8">
         <h2>Hinweise für das Büro</h2>
         <textarea name="hinweiseBuero" rows="6" placeholder="Optionale Hinweise für das Büro…"></textarea>
 
@@ -673,6 +578,100 @@
               title="Bestaetigungsschreiben Vorschau"
             ></iframe>
           </div>
+        </div>
+      </section>
+
+
+      <!-- ────────── STEP 10 ─ Montage-Checkliste ────────── -->
+      <section class="form-step" data-step="10">
+        <h2>Checkliste Badumbau</h2>
+        <p class="intro">Bitte alle Punkte abhaken, sobald sie erledigt oder geprüft wurden.</p>
+
+        <div class="checklist-group">
+          <h3>1. Fotodokumentation</h3>
+          <label class="check-item"><input type="checkbox" name="checklistFotosWaerendUmsetzung" /> Regelmäßige Fotos während der Umsetzung gemacht?</label>
+          <label class="check-item"><input type="checkbox" name="checklistFinaleFotos" /> Finale Fotos nach Abschluss gemacht?</label>
+          <label class="check-item"><input type="checkbox" name="checklistFotosHandwerkskoordination" /> Fotos an Handwerkskoordination übermittelt?</label>
+
+          <label class="field-label">Übermittlungsweg</label>
+          <div class="choice-group choice-group-3">
+            <label class="choice-pill"><input type="radio" name="checklistFotoUebermittlung" value="iMessage" /><span>iMessage<br /><small>an 0157 37994273</small></span></label>
+            <label class="choice-pill"><input type="radio" name="checklistFotoUebermittlung" value="WhatsApp" /><span>WhatsApp<br /><small>an 0157 37994273</small></span></label>
+            <label class="choice-pill"><input type="radio" name="checklistFotoUebermittlung" value="FortyTools" /><span>FortyTools</span></label>
+          </div>
+        </div>
+
+        <div class="checklist-group">
+          <h3>2. Verbrauchsmaterial</h3>
+          <label class="check-item"><input type="checkbox" name="checklistVerbrauchsmaterialErfasst" /> Verbrauchsmaterial über GC-App separat erfasst? (Fittinge, Rohre, etc.)</label>
+          <label class="check-item"><input type="checkbox" name="checklistWarenkorbGeschickt" /> Warenkorb über GC-App an Handwerkskoordination geschickt?</label>
+        </div>
+
+        <div class="checklist-group">
+          <h3>3. Warenprüfung</h3>
+          <label class="check-item"><input type="checkbox" name="checklistDokumentWarenpruefung" /> Dokument „Warenprüfung“ vom Monteur ausgefüllt und unterschrieben?</label>
+        </div>
+
+        <div class="checklist-group">
+          <h3>4. Arbeitszeiterfassung</h3>
+          <label class="check-item"><input type="checkbox" name="checklistArbeitszeitenErfasst" /> Arbeitszeiten in FortyTools erfasst und vom Kunden unterschrieben?</label>
+        </div>
+
+        <div class="checklist-group">
+          <h3>5. Bestätigung &amp; Arbeitsbericht</h3>
+          <label class="check-item"><input type="checkbox" name="checklistBestaetigungKasse" /> Dokument „Bestätigung für erfolgreichen Umbau Kasse“ vom Kunden unterschrieben?</label>
+          <label class="check-item"><input type="checkbox" name="checklistDokumentArbeitsbericht" /> Dokument „Arbeitsbericht“ vom Kunden unterschrieben?</label>
+        </div>
+
+        <div class="checklist-group">
+          <h3>6. Kundeninformation</h3>
+          <label class="check-item"><input type="checkbox" name="checklistFlyerBadewannentuer" /> 2 x EmC2-Flyer „Badewannentür“ an Kunden übergeben?</label>
+          <label class="check-item"><input type="checkbox" name="checklistFlyerBadumbau" /> 2 x EmC2-Flyer „Badumbau“ an Kunden übergeben?</label>
+          <label class="check-item"><input type="checkbox" name="checklistFlyerHaltegriffe" /> 2 x EmC2-Flyer „Haltegriffe &amp; Handläufe“ an Kunden übergeben?</label>
+          <label class="check-item"><input type="checkbox" name="checklistBroschuerePflegehinweise" /> Broschüre „Pflegehinweise“ an Kunden übergeben?</label>
+          <label class="check-item"><input type="checkbox" name="checklistSilikonDuschabzieher" /> Silikon-Duschabzieher an Kunden übergeben?</label>
+          <label class="check-item"><input type="checkbox" name="checklistHinweisSilikonfugen" /> Hinweis zu Silikonfugen beim Kunden hinterlassen?</label>
+        </div>
+
+        <div class="checklist-group">
+          <h3>7. Gratisaktion</h3>
+          <label class="check-item"><input type="checkbox" name="checklistGratisHaltegriffMontiert" /> Gratis Haltegriff montiert?</label>
+          <label class="field-label">Wenn nein, weil</label>
+          <textarea name="checklistGratisHaltegriffKommentar" rows="3" placeholder="Grund / Bemerkung"></textarea>
+        </div>
+
+        <div class="checklist-group">
+          <h3>8. Abschlusskontrolle vor Verlassen der Baustelle</h3>
+          <label class="check-item"><input type="checkbox" name="abschlusskontrolleBaustelleSauber" /> Baustelle sauber und besenrein hinterlassen?</label>
+          <label class="check-item"><input type="checkbox" name="abschlusskontrolleVerpackungEntsorgt" /> Verpackungen &amp; Müll entfernt und entsorgt?</label>
+          <label class="check-item"><input type="checkbox" name="abschlusskontrolleFunktionstest" /> Funktionstest Armaturen, Duschabtrennung, Abläufe durchgeführt?</label>
+          <label class="check-item"><input type="checkbox" name="abschlusskontrolleKundeEingewiesen" /> Kunde kurz in die neue Anlage eingewiesen?</label>
+          <label class="check-item"><input type="checkbox" name="abschlusskontrolleWerkzeugeMitgenommen" /> Alle Werkzeuge und Materialien mitgenommen?</label>
+        </div>
+
+        <div class="checklist-group">
+          <h3>9. Sonstige Bemerkungen</h3>
+          <textarea name="sonstigeBemerkungenBaustelle" rows="6" placeholder="Weitere Hinweise oder Besonderheiten"></textarea>
+        </div>
+
+        <div class="checklist-group">
+          <h3>10. Unterschriften</h3>
+          <label class="field-label">Unterschrift Monteur 1</label>
+          <div class="signature-wrapper" data-name="unterschriftMonteur1">
+            <canvas class="signature-canvas" width="600" height="200"></canvas>
+            <button type="button" class="btn-clear-sig">Löschen</button>
+          </div>
+          <input type="hidden" name="unterschriftMonteur1" />
+
+          <label class="field-label">Unterschrift Monteur 2</label>
+          <div class="signature-wrapper" data-name="unterschriftMonteur2">
+            <canvas class="signature-canvas" width="600" height="200"></canvas>
+            <button type="button" class="btn-clear-sig">Löschen</button>
+          </div>
+          <input type="hidden" name="unterschriftMonteur2" />
+
+          <label class="field-label">Datum</label>
+          <input type="date" name="unterschriftMonteurDatum" />
         </div>
       </section>
 
