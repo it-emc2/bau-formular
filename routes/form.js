@@ -9,6 +9,7 @@ const Abnahme = require('../models/Abnahme');
 const Entwurf = require('../models/Entwurf');
 const { buildDocumentPackage } = require('../services/documentLetter');
 const { postTimelineComment } = require('../services/bitrix');
+const { buildStepDocumentAttachments } = require('../services/stepDocuments');
 
 const router = express.Router();
 const uploadsDir = path.join(__dirname, '..', 'uploads');
@@ -156,12 +157,16 @@ async function trySendDocumentToBitrix(data = {}) {
 
   const document = buildDocumentPackage(data);
   const comment = [document.title, '', document.text].join('\n');
+  const attachments = await buildStepDocumentAttachments(data, {
+    includeDebug: String(data.debugMode || '').toLowerCase() === 'true',
+  });
 
   try {
     await postTimelineComment({
       entityType: 'deal',
       entityId,
       comment,
+      attachments,
     });
 
     return {
@@ -360,11 +365,15 @@ router.post('/document/bitrix', async (req, res) => {
 
     const document = buildDocumentPackage(parsed);
     const comment = [document.title, '', document.text].join('\n');
+    const attachments = await buildStepDocumentAttachments(parsed, {
+      includeDebug: String(parsed.debugMode || '').toLowerCase() === 'true',
+    });
 
     const result = await postTimelineComment({
       entityType: 'deal',
       entityId,
       comment,
+      attachments,
     });
 
     return res.json({ success: true, result, document });

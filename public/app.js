@@ -16,7 +16,13 @@
   const btnNext       = $('#btnNext');
   const btnDraft      = $('#btnDraft');
   const btnSubmit     = $('#btnSubmit');
+  const checklistTitle = $('#checklistTitle');
+  const bitrixOrderMetaField = $('#bitrixOrderMetaField');
+  const bitrixOrderMeta = $('#bitrixOrderMeta');
+  const bitrixExecutionActivitiesField = $('#bitrixExecutionActivitiesField');
+  const bitrixExecutionActivities = $('#bitrixExecutionActivities');
   const devModeToggle = $('#devModeToggle');
+  const devOnlyFields = $$('[data-dev-only]');
   const devToolsPanel = $('#devToolsPanel');
   const devModeBadge  = $('#devModeBadge');
   const bitrixTestActions = $('#bitrixTestActions');
@@ -54,6 +60,42 @@
   const TOTAL_STEPS = 10;
   const BITRIX_TEST_ENTITY_TYPE_ID = 2;
   const BITRIX_STAGE_ID = 'C22:UC_T5EXSL';
+  const BITRIX_ORDER_META_FIELD = 'UF_CRM_1776156870205';
+  const BITRIX_EXECUTION_ACTIVITIES_FIELD = 'UF_CRM_1725521281342';
+  const BITRIX_EXECUTION_ACTIVITY_LABELS = {
+    '5666': '[HMS] Objektbetreuung',
+    '8162': '[HMS] Gartenarbeiten',
+    '4564': '[AH] Alltagsbegleitung',
+    '4566': '[AH] Haushaltsnahe Dienstleistungen',
+    '4024': '[HD] Umbau Dusche zu Dusche',
+    '4026': '[HD] Umbau Wanne zu Dusche',
+    '4706': '[HD] Badrenovierung',
+    '4704': '[HD] Badewannentüre',
+    '7730': '[HD] Badumbau',
+    '4032': '[HD] Haltegriffe',
+    '4034': '[HD] Handläufe',
+    '6820': '[HD] Entrümpelung',
+    '4052': '[HD] Winterdienst',
+    '7030': '[KFZ] Autoreparatur',
+    '4158': 'Sonstige',
+  };
+  const CHECKLIST_VARIANTS = {
+    badumbau: {
+      title: 'Checkliste Badumbau',
+      documentTitle: '06-Checkliste-Badumbau',
+      documentFileNamePrefix: '06-checkliste-badumbau',
+    },
+    handlaeufe: {
+      title: 'Checkliste Handläufe',
+      documentTitle: '06-Checkliste-Handlaeufe',
+      documentFileNamePrefix: '06-checkliste-handlaeufe',
+    },
+    badewannentuer: {
+      title: 'Checkliste Badewannentür',
+      documentTitle: '06-Checkliste-Badewannentuer',
+      documentFileNamePrefix: '06-checkliste-badewannentuer',
+    },
+  };
   let currentStep   = 1;
   let formId        = null;     // Mongo _id once saved
   let shareToken    = null;
@@ -101,6 +143,41 @@
     return parsed;
   }
 
+  function normalizeChecklistSourceValue(value) {
+    return String(value || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+  }
+
+  function resolveChecklistVariantFromValues(values = []) {
+    const normalizedValues = values
+      .map(normalizeChecklistSourceValue)
+      .filter(Boolean);
+
+    if (normalizedValues.some(value => value.includes('handlaufe'))) return 'handlaeufe';
+    if (normalizedValues.some(value => value.includes('badewannenture') || value.includes('badewannentur'))) {
+      return 'badewannentuer';
+    }
+
+    return 'badumbau';
+  }
+
+  function getChecklistVariant() {
+    const values = String(bitrixExecutionActivities?.value || '')
+      .split(',')
+      .map(value => value.trim())
+      .filter(Boolean);
+
+    return resolveChecklistVariantFromValues(values);
+  }
+
+  function renderChecklistVariant() {
+    if (!checklistTitle) return;
+    const variant = CHECKLIST_VARIANTS[getChecklistVariant()] || CHECKLIST_VARIANTS.badumbau;
+    checklistTitle.textContent = variant.title;
+  }
+
   // ── Initialisation ─────────────────────────────────────
   function init() {
     buildStepDots();
@@ -116,8 +193,9 @@
     initDevModeToggle();
     loadDraftIfNeeded();
     showStep(1);
-    fetchBitrixDeals();
-    fetchDrafts();
+    renderChecklistVariant();
+    if (devMode) fetchBitrixDeals();
+    if (devMode) fetchDrafts();
     renderArbeitsberichtResults([], 'Noch keine externen Treffer geladen.');
   }
 
@@ -212,8 +290,11 @@
     devModeToggle.classList.toggle('active', devMode);
     devModeToggle.setAttribute('aria-pressed', String(devMode));
     devModeToggle.textContent = `Testmodus: ${devMode ? 'An' : 'Aus'}`;
+    devOnlyFields.forEach(field => field.classList.toggle('hidden', !devMode));
     if (devModeBadge) devModeBadge.classList.toggle('hidden', !devMode);
     if (bitrixTestActions) bitrixTestActions.classList.toggle('hidden', !devMode);
+    if (devMode && !bitrixDeals.length) fetchBitrixDeals();
+    if (devMode && !drafts.length) fetchDrafts();
   }
 
   function bindBitrixAutofill() {
@@ -331,7 +412,7 @@
 
     try {
       const itemRes = await fetch(
-        `/api/bitrix/items/by-stage?entityTypeId=${BITRIX_TEST_ENTITY_TYPE_ID}&stageId=${encodeURIComponent(BITRIX_STAGE_ID)}&useOriginalUfNames=N&select=id,title,stageId,contactId,opportunity,assignedById,createdTime,begindate,closeDate`
+        `/api/bitrix/items/by-stage?entityTypeId=${BITRIX_TEST_ENTITY_TYPE_ID}&stageId=${encodeURIComponent(BITRIX_STAGE_ID)}&useOriginalUfNames=N&select=id,title,stageId,contactId,opportunity,assignedById,createdTime,begindate,closeDate,UF_CRM_1776156870205,UF_CRM_1725521281342`
       );
       const itemJson = await itemRes.json();
       const items = itemJson?.result?.items || itemJson?.result || [];
@@ -342,7 +423,7 @@
         return;
       }
 
-      bitrixDeals = await enrichBitrixDeals(items);
+      bitrixDeals = await enrichBitrixDeals(items.map(item => normalizeBitrixItem(item)));
       renderBitrixDeals(getFilteredBitrixDeals());
       showToast('Bitrix-Deals geladen.', 'success');
     } catch (error) {
@@ -422,10 +503,17 @@
     renderBitrixDeals(bitrixDeals);
 
     try {
-      applyBitrixItemToForm(item);
+      const fullItem = await fetchBitrixDeal(item.id);
+      const hydratedItem = {
+        ...item,
+        ...(fullItem || {}),
+        _contact: item._contact || fullItem?._contact || null,
+      };
 
-      if (item.contactId) {
-        const contact = item._contact || await fetchBitrixContact(item.contactId);
+      applyBitrixItemToForm(hydratedItem);
+
+      if (hydratedItem.contactId) {
+        const contact = hydratedItem._contact || await fetchBitrixContact(hydratedItem.contactId);
         if (contact) {
           applyBitrixContactToForm(contact);
         } else {
@@ -864,6 +952,7 @@
     setFieldValue('auftragsNummer', item.title || `Bitrix ${item.id}`);
     setFieldValue('kundennummer', item.contactId || item.id);
     setFieldValue('bitrixAuftragId', item.id);
+    renderBitrixOrderMeta(item);
   }
 
   function applyBitrixContactToForm(contact) {
@@ -873,6 +962,91 @@
     setFieldValue('adresse.strasse', contact.ADDRESS || '');
     setFieldValue('adresse.stadt', contact.ADDRESS_CITY || '');
     setFieldValue('adresse.plz', contact.ADDRESS_POSTAL_CODE || '');
+  }
+
+  function normalizeBitrixItem(rawItem = {}) {
+    const orderMetaFieldKey = Object.keys(rawItem).find(key =>
+      String(key).replace(/[^a-z0-9]/gi, '').toLowerCase() === 'ufcrm1776156870205'
+    );
+    const executionActivitiesFieldKey = Object.keys(rawItem).find(key =>
+      String(key).replace(/[^a-z0-9]/gi, '').toLowerCase() === 'ufcrm1725521281342'
+    );
+
+    return {
+      ...rawItem,
+      id: rawItem.id || rawItem.ID || '',
+      title: rawItem.title || rawItem.TITLE || '',
+      stageId: rawItem.stageId || rawItem.STAGE_ID || '',
+      contactId: rawItem.contactId || rawItem.CONTACT_ID || '',
+      opportunity: rawItem.opportunity || rawItem.OPPORTUNITY || '',
+      assignedById: rawItem.assignedById || rawItem.ASSIGNED_BY_ID || '',
+      createdTime: rawItem.createdTime || rawItem.CREATED_TIME || '',
+      begindate: rawItem.begindate || rawItem.BEGINDATE || '',
+      closeDate: rawItem.closeDate || rawItem.CLOSEDATE || '',
+      [BITRIX_ORDER_META_FIELD]: orderMetaFieldKey ? rawItem[orderMetaFieldKey] : '',
+      [BITRIX_EXECUTION_ACTIVITIES_FIELD]: executionActivitiesFieldKey ? rawItem[executionActivitiesFieldKey] : [],
+    };
+  }
+
+  function getBitrixCustomFieldRawValue(item = {}, fieldName = '') {
+    const normalizedTarget = String(fieldName || '').replace(/[^a-z0-9]/gi, '').toLowerCase();
+    if (!normalizedTarget) return '';
+
+    const directValue = item[fieldName];
+    if (directValue !== undefined && directValue !== null) {
+      if (Array.isArray(directValue)) {
+        if (directValue.length) return directValue;
+      } else if (String(directValue).trim()) {
+        return directValue;
+      }
+    }
+
+    const matchingKey = Object.keys(item).find(key =>
+      String(key).replace(/[^a-z0-9]/gi, '').toLowerCase() === normalizedTarget
+    );
+
+    if (!matchingKey) return '';
+    return item[matchingKey];
+  }
+
+  function getBitrixCustomFieldValue(item = {}, fieldName = '') {
+    const value = getBitrixCustomFieldRawValue(item, fieldName);
+    if (value === undefined || value === null) return '';
+    if (Array.isArray(value)) return value.map(entry => String(entry || '').trim()).filter(Boolean).join(', ');
+    return String(value).trim();
+  }
+
+  function getBitrixCustomFieldValues(item = {}, fieldName = '') {
+    const value = getBitrixCustomFieldRawValue(item, fieldName);
+    if (value === undefined || value === null || value === '') return [];
+    if (Array.isArray(value)) return value.map(entry => String(entry || '').trim()).filter(Boolean);
+    return String(value)
+      .split(',')
+      .map(entry => entry.trim())
+      .filter(Boolean);
+  }
+
+  function resolveBitrixExecutionActivities(item = {}) {
+    return getBitrixCustomFieldValues(item, BITRIX_EXECUTION_ACTIVITIES_FIELD)
+      .map(value => BITRIX_EXECUTION_ACTIVITY_LABELS[String(value)] || String(value))
+      .filter(Boolean);
+  }
+
+  function renderBitrixOrderMeta(item = {}) {
+    const metaValue = getBitrixCustomFieldValue(item, BITRIX_ORDER_META_FIELD);
+    const executionActivitiesValue = resolveBitrixExecutionActivities(item).join(', ');
+
+    if (bitrixOrderMeta && bitrixOrderMetaField) {
+      bitrixOrderMeta.value = metaValue;
+      bitrixOrderMetaField.classList.toggle('hidden', !devMode || !metaValue);
+    }
+
+    if (bitrixExecutionActivities && bitrixExecutionActivitiesField) {
+      bitrixExecutionActivities.value = executionActivitiesValue;
+      bitrixExecutionActivitiesField.classList.toggle('hidden', !devMode || !executionActivitiesValue);
+    }
+
+    renderChecklistVariant();
   }
 
   async function enrichBitrixDeals(items) {
@@ -892,6 +1066,16 @@
     const contactRes = await fetch(`/api/bitrix/contact/${contactId}`);
     const contactJson = await contactRes.json();
     return contactJson?.result || null;
+  }
+
+  async function fetchBitrixDeal(itemId) {
+    const res = await fetch(
+      `/api/bitrix/items/${encodeURIComponent(itemId)}?entityTypeId=${BITRIX_TEST_ENTITY_TYPE_ID}&useOriginalUfNames=N`
+    );
+    const json = await res.json();
+
+    if (!res.ok) throw new Error(json.error || 'Bitrix lead could not be loaded');
+    return normalizeBitrixItem(json?.result?.item || json?.result || {});
   }
 
   function buildBitrixContactLine(deal) {
@@ -1427,6 +1611,8 @@
   function resetFormState() {
     form.reset();
     fileStore = {};
+    renderBitrixOrderMeta({});
+    renderChecklistVariant();
 
     $$('input.invalid, select.invalid, textarea.invalid', form).forEach(el => {
       el.classList.remove('invalid');
@@ -1477,6 +1663,22 @@
     $$('input[type="checkbox"]', form).forEach(el => {
       if (data[el.name]) el.checked = true;
     });
+
+    if (data.bitrixExecutionActivities) {
+      if (bitrixExecutionActivities) bitrixExecutionActivities.value = data.bitrixExecutionActivities;
+      if (bitrixExecutionActivitiesField) {
+        bitrixExecutionActivitiesField.classList.toggle('hidden', !devMode || !String(data.bitrixExecutionActivities).trim());
+      }
+    }
+
+    if (data.bitrixOrderMeta) {
+      if (bitrixOrderMeta) bitrixOrderMeta.value = data.bitrixOrderMeta;
+      if (bitrixOrderMetaField) {
+        bitrixOrderMetaField.classList.toggle('hidden', !devMode || !String(data.bitrixOrderMeta).trim());
+      }
+    }
+
+    renderChecklistVariant();
 
     // Signatures – draw base64 onto pads
     for (const [name, pad] of Object.entries(signaturePads)) {

@@ -113,6 +113,14 @@
 
             <label class="field-label">Auftrags-Nummer</label>
             <input type="text" name="auftragsNummer" placeholder="A-AN-XXXXX" />
+            <div class="hidden" id="bitrixOrderMetaField" data-dev-only>
+              <label class="field-label">Bitrix Zusatzfeld</label>
+              <input type="text" name="bitrixOrderMeta" id="bitrixOrderMeta" readonly />
+            </div>
+            <div class="hidden" id="bitrixExecutionActivitiesField" data-dev-only>
+              <label class="field-label">Auszuführende Tätigkeiten</label>
+              <input type="text" name="bitrixExecutionActivities" id="bitrixExecutionActivities" readonly />
+            </div>
           </div>
 
           <aside class="bitrix-sidebar">
@@ -250,7 +258,7 @@
 
       <!-- ────────── STEP 3 ─ Montage-Checkliste ────────── -->
       <section class="form-step" data-step="3">
-        <h2>Checkliste Badumbau</h2>
+        <h2 id="checklistTitle">Checkliste Badumbau</h2>
         <p class="intro">Bitte alle Punkte abhaken, sobald sie erledigt oder geprüft wurden.</p>
 
         <div class="checklist-group">
