@@ -367,6 +367,7 @@
     bindDocumentActions();
     bindChecklistRules();
     initSignaturePads();
+    initWarenpruefungDatum();
     initDevModeToggle();
     bindDemoPresetSelection();
     const draftLoaded = await loadDraftIfNeeded();
@@ -1588,10 +1589,10 @@ function syncDevSidebarVisibility() {
       item.UF_CRM_1725521281342_RESOLVED ||
       '';
     setFieldValue('terminId', item.id);
-    setFieldValue('auftragsNummer', item.title || `Bitrix ${item.id}`);
+    setFieldValue('bitrixZusatzfeld', item.title || `Bitrix ${item.id}`);
     setFieldValue('kundennummer', item.contactId || item.id);
     setFieldValue('bitrixAuftragId', item.id);
-    setFieldValue('bitrixZusatzfeld', item.UF_CRM_1776156870205 || item.ufCrm_1776156870205 || item.title || `Bitrix ${item.id}`);
+    setFieldValue('auftragsNummer', item.UF_CRM_1776156870205 || item.ufCrm_1776156870205 || '');
     setAuszufuehrendeTaetigkeitenValue(activityValue);
     updateChecklistVariant(activityValue);
     updateConfirmationLetterPreview();
@@ -1601,9 +1602,30 @@ function syncDevSidebarVisibility() {
     setRadioValue('anrede', normalizeSalutation(contact.HONORIFIC || contact.POST));
     setFieldValue('vorname', contact.NAME || '');
     setFieldValue('nachname', contact.LAST_NAME || contact.SECOND_NAME || '');
-    setFieldValue('adresse.strasse', contact.ADDRESS || '');
-    setFieldValue('adresse.stadt', contact.ADDRESS_CITY || '');
-    setFieldValue('adresse.plz', contact.ADDRESS_POSTAL_CODE || '');
+
+    let street = contact.ADDRESS || '';
+    let city = contact.ADDRESS_CITY || '';
+    let plz = contact.ADDRESS_POSTAL_CODE || '';
+
+    if (!street && !city && !plz && contact.ADDRESS_2) {
+      const parsed = parseAddress2(contact.ADDRESS_2);
+      street = parsed.street;
+      city = parsed.city;
+      plz = parsed.plz;
+    }
+
+    setFieldValue('adresse.strasse', street);
+    setFieldValue('adresse.stadt', city);
+    setFieldValue('adresse.plz', plz);
+  }
+
+  function parseAddress2(raw) {
+    const value = String(raw || '').trim();
+    const match = value.match(/^(.+?)\s+(?:DE-)?(\d{5})\s+(.+)$/);
+    if (match) {
+      return { street: match[1].trim(), plz: match[2], city: match[3].trim() };
+    }
+    return { street: value, plz: '', city: '' };
   }
 
   async function enrichBitrixDeals(items) {
@@ -1656,9 +1678,15 @@ function syncDevSidebarVisibility() {
   }
 
   function applyBitrixDealToForm(deal) {
-    if (deal.TITLE) setFieldValue('auftragsNummer', deal.TITLE);
-    if (deal.UF_CRM_1776156870205) setFieldValue('bitrixZusatzfeld', deal.UF_CRM_1776156870205);
+    if (deal.TITLE) setFieldValue('bitrixZusatzfeld', deal.TITLE);
+    if (deal.UF_CRM_1776156870205) setFieldValue('auftragsNummer', deal.UF_CRM_1776156870205);
     setFieldValue('bitrixAuftragId', deal.ID);
+
+    const activityValue = resolveBitrixActivities(deal);
+    if (activityValue) {
+      setAuszufuehrendeTaetigkeitenValue(activityValue);
+      updateChecklistVariant(activityValue);
+    }
 
     const contactId = deal.CONTACT_ID;
     if (contactId) {
@@ -1794,6 +1822,38 @@ function syncDevSidebarVisibility() {
         wrapper.style.borderColor = '';
       }
     });
+
+    if (n === 3) {
+      const inspectionTable = $('.inspection-table', section);
+      const inspectionRadios = $$('.inspection-row:not(.inspection-head) input[type="radio"]', section);
+      const anyChecked = inspectionRadios.some(r => r.checked);
+      if (inspectionTable) {
+        if (!anyChecked) {
+          inspectionTable.style.borderColor = '#e53935';
+          inspectionTable.style.boxShadow = '0 0 0 2px rgba(229,57,53,.18)';
+          showToast('Bitte mindestens eine Ware prüfen (I.O. oder Nicht I.O.).', 'error');
+          valid = false;
+        } else {
+          inspectionTable.style.borderColor = '';
+          inspectionTable.style.boxShadow = '';
+        }
+      }
+
+      const sigWrapper = $('.signature-wrapper', section);
+      if (sigWrapper) {
+        const sigName = sigWrapper.dataset.name;
+        const pad = signaturePads[sigName];
+        if (pad && pad.isEmpty()) {
+          sigWrapper.style.borderColor = '#e53935';
+          sigWrapper.style.boxShadow = '0 0 0 2px rgba(229,57,53,.18)';
+          if (valid) showToast('Bitte Unterschrift nicht vergessen.', 'error');
+          valid = false;
+        } else {
+          sigWrapper.style.borderColor = '';
+          sigWrapper.style.boxShadow = '';
+        }
+      }
+    }
 
     if (n === 11 && currentChecklistVariant === 'badumbau') {
       if (!validateChecklistBadumbau(section)) {
@@ -2545,6 +2605,13 @@ function syncDevSidebarVisibility() {
     }
     $('#cameraVideo').srcObject = null;
     $('#cameraModal').classList.remove('open');
+  }
+
+  function initWarenpruefungDatum() {
+    const datumInput = $('[name="warenpruefungDatum"]', form);
+    if (datumInput && !datumInput.value) {
+      datumInput.value = new Date().toISOString().slice(0, 10);
+    }
   }
 
   // ── Signature Pads ─────────────────────────────────────
