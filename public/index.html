@@ -18,6 +18,9 @@
       <p class="subtitle">Digitale Baustellenabnahme</p>
     </div>
     <div class="app-header-actions pill-group">
+      <button type="button" class="pill-btn hidden" id="btnBackToHome">
+        Hauptmenü
+      </button>
       <button type="button" class="dev-toggle pill-btn" id="devModeToggle" aria-pressed="false">
         Testmodus: Aus
       </button>
@@ -34,11 +37,47 @@
     <div class="step-indicator" id="stepIndicator"></div>
 
     <form id="abnahmeForm" novalidate>
+      <input type="hidden" name="formularTyp" value="" />
+
+      <!-- ────────── STEP 0 ─ Start ────────── -->
+      <section class="form-step active form-start-step" data-step="0">
+        <h2>Bitte Formulartyp auswählen</h2>
+        <p class="intro">
+          Wähle den passenden Vorgang für deinen Einsatz aus. Anschließend werden dir nur die
+          Schritte angezeigt, die für die jeweilige Dokumentation erforderlich sind.
+        </p>
+
+        <div class="formular-type-grid">
+          <button type="button" class="formular-type-card" data-formular-type="baustellenabnahme">
+            <span class="formular-type-eyebrow">Typ 1</span>
+            <strong>Baustellenabnahme</strong>
+            <span>Vollständiger Baustellenabschluss mit Prüfung, Fotos, Bestätigung und Checkliste.</span>
+          </button>
+
+          <button type="button" class="formular-type-card" data-formular-type="zusaetzliche_leistungen">
+            <span class="formular-type-eyebrow">Typ 2</span>
+            <strong>Beauftragung zusätzliche Leistungen</strong>
+            <span>Kurzer Ablauf für Grunddaten, Leistungsbeschreibung und interne Hinweise.</span>
+          </button>
+
+          <button type="button" class="formular-type-card" data-formular-type="nachbesserung">
+            <span class="formular-type-eyebrow">Typ 3</span>
+            <strong>Nachbesserung</strong>
+            <span>Eigener Ablauf für Nachlieferung, Restarbeiten und Kundenunterschrift.</span>
+          </button>
+
+          <button type="button" class="formular-type-card" data-formular-type="schadensmeldung">
+            <span class="formular-type-eyebrow">Typ 4</span>
+            <strong>Schadensmeldung</strong>
+            <span>Grunddaten, Fotodokumentation und interne Meldung für Schäden vor Ort.</span>
+          </button>
+        </div>
+      </section>
 
       <!-- ────────── STEP 1 ────────── -->
-      <section class="form-step active" data-step="1">
-        <h2>Abschluss der Baustelle</h2>
-        <p class="intro">
+      <section class="form-step" data-step="1">
+        <h2 id="step1Title">Abschluss der Baustelle</h2>
+        <p class="intro" id="step1Intro">
           Auf den folgenden Seiten wirst du Schritt für Schritt durch den Abschluss
           der Baustelle geführt. Bitte beachte, dass dieser <strong>vor Ort mit dem
           Kunden</strong> gemeinsam vorgenommen werden muss.
@@ -58,9 +97,6 @@
               <option value="Nachbesserung">Nachbesserung</option>
               <option value="Service">Service</option>
             </select>
-
-            <label class="field-label">Hinweise an Finance</label>
-            <textarea name="hinweiseAnFinance" rows="2" placeholder="Optionale Hinweise"></textarea>
 
             <div class="name-block">
               <div>
@@ -109,15 +145,30 @@
               </div>
             </fieldset>
 
-            <label class="field-label required">Konnte der Termin erfolgreich beendet werden?</label>
-            <select name="terminStatus" required>
-              <option value="">— Bitte wählen —</option>
-              <option value="Erfolgreich beendet">Erfolgreich beendet</option>
-              <option value="Nicht erfolgreich beendet">Nicht erfolgreich beendet</option>
-            </select>
+            <div data-form-type-only="baustellenabnahme,nachbesserung">
+              <label class="field-label required">Konnte der Termin erfolgreich beendet werden?</label>
+              <select name="terminStatus" required>
+                <option value="">— Bitte wählen —</option>
+                <option value="Erfolgreich beendet">Erfolgreich beendet</option>
+                <option value="Nicht erfolgreich beendet">Nicht erfolgreich beendet</option>
+              </select>
+            </div>
 
             <label class="field-label">Auftrags-Nummer</label>
             <input type="text" name="auftragsNummer" placeholder="A-AN-XXXXX" />
+
+            <div class="additional-services-box hidden" data-form-type-only="zusaetzliche_leistungen">
+              <h3>Zusätzliche Leistungen</h3>
+
+              <label class="field-label required">Welche zusätzlichen Leistungen werden beauftragt?</label>
+              <textarea name="zusaetzlicheArbeiten" rows="4" placeholder="Leistungsbeschreibung" required></textarea>
+
+              <label class="field-label">Preis der zusätzlichen Leistungen</label>
+              <div class="input-euro">
+                <input type="number" name="preisZusaetzlich" min="0" step="0.01" placeholder="0,00" />
+                <span class="euro-suffix">€</span>
+              </div>
+            </div>
 
             <div class="bitrix-debug-fields hidden" id="bitrixDebugFields">
               <label class="field-label">Bitrix Zusatzfeld</label>
@@ -146,6 +197,12 @@
               </div>
 
               <div class="bitrix-test-actions hidden" id="bitrixTestActions">
+                <label class="field-label demo-preset-label" for="demoActivityPreset">Musterdaten-Typ</label>
+                <select id="demoActivityPreset" class="demo-preset-select">
+                  <option value="badumbau">Badumbau</option>
+                  <option value="badewannentuer">Badewannentür</option>
+                  <option value="handlaeufe">Handläufe / Haltegriffe</option>
+                </select>
                 <button type="button" class="btn btn-bitrix ghost" id="btnDemoPrefill">
                   Musterdaten einfüllen
                 </button>
@@ -184,7 +241,7 @@
       </section>
 
       <!-- ────────── STEP 2 ─ Warenpruefung ────────── -->
-      <section class="form-step" data-step="2">
+      <section class="form-step" data-step="2" data-form-type-only="baustellenabnahme">
         <h2>Warenprüfung vor Baubeginn</h2>
         <p class="intro">Ware vor Baubeginn genau auf Qualität, sichtbare Schäden und Funktionsfähigkeit prüfen.</p>
 
@@ -262,7 +319,7 @@
       </section>
 
       <!-- ────────── STEP 3 ────────── -->
-      <section class="form-step" data-step="3">
+      <section class="form-step" data-step="3" data-form-type-only="baustellenabnahme,schadensmeldung">
         <h2>Fotos &amp; Video</h2>
 
         <label class="field-label required">Bilder des fertigen Umbaus</label>
@@ -328,7 +385,7 @@
       </section>
 
       <!-- ────────── STEP 4 ────────── -->
-      <section class="form-step" data-step="4">
+      <section class="form-step" data-step="4" data-form-type-only="baustellenabnahme,schadensmeldung">
         <h2>Weitere Bilder</h2>
 
         <label class="field-label">Weitere Bilder</label>
@@ -371,8 +428,8 @@
         </div>
       </section>
 
-      <!-- ────────── STEP 9 ─ Bestätigung erfolgreicher Umbau ────────── -->
-      <section class="form-step" data-step="9">
+      <!-- ────────── STEP 5 ─ Bestätigung erfolgreicher Umbau ────────── -->
+      <section class="form-step" data-step="5" data-form-type-only="baustellenabnahme">
         <h2>Bestätigung erfolgreicher Umbau</h2>
         <p class="intro">Dieses Schreiben wird automatisch aus den Kundendaten aufgebaut und direkt vor der finalen Checkliste vom Kunden unterschrieben.</p>
 
@@ -412,8 +469,8 @@
         <input type="hidden" name="unterschriftZeitpunkt" />
       </section>
 
-      <!-- ────────── STEP 5 ─ Mängelbeseitigung ────────── -->
-      <section class="form-step dev-only-step" data-step="5">
+      <!-- ────────── STEP 6 ─ Mängelbeseitigung ────────── -->
+      <section class="form-step dev-only-step" data-step="6" data-form-type-only="baustellenabnahme">
         <h2>Mängelbeseitigung</h2>
 
         <label class="field-label required">Die Mängelbeseitigung wurde vollständig abgeschlossen am</label>
@@ -432,8 +489,8 @@
         <input type="hidden" name="unterschriftMaengelZeitpunkt" />
       </section>
 
-      <!-- ────────── STEP 6 ─ Nachbesserung ────────── -->
-      <section class="form-step dev-only-step" data-step="6">
+      <!-- ────────── STEP 7 ─ Nachbesserung ────────── -->
+      <section class="form-step dev-only-step" data-step="7" data-form-type-only="baustellenabnahme,nachbesserung">
         <h2>Nachbesserung</h2>
 
         <label class="field-label required">Die Nachlieferung der noch offenen Arbeiten wurde vollständig abgeschlossen am</label>
@@ -479,8 +536,8 @@
         <input type="hidden" name="unterschriftNBZeitpunkt" />
       </section>
 
-      <!-- ────────── STEP 7 ─ Arbeitsbericht ────────── -->
-      <section class="form-step dev-only-step" data-step="7">
+      <!-- ────────── STEP 8 ─ Arbeitsbericht ────────── -->
+      <section class="form-step dev-only-step" data-step="8" data-form-type-only="baustellenabnahme">
         <h2>Arbeitsbericht</h2>
         <p class="intro">Suche nach einem externen Angebot oder Entwurf und lade daraus den Arbeitsbericht als PDF.</p>
 
@@ -529,12 +586,12 @@
         </div>
       </section>
 
-      <!-- ────────── STEP 8 ─ Hinweise ────────── -->
-      <section class="form-step" data-step="8">
+      <!-- ────────── STEP 9 ─ Hinweise ────────── -->
+      <section class="form-step" data-step="9">
         <h2>Hinweise für das Büro</h2>
         <textarea name="hinweiseBuero" rows="6" placeholder="Optionale Hinweise für das Büro…"></textarea>
 
-        <div class="document-panel">
+        <div class="document-panel hidden" id="debugDocumentPanel">
           <div class="document-panel-head">
             <div>
               <h3>Bestätigungsschreiben</h3>
@@ -583,15 +640,15 @@
 
 
       <!-- ────────── STEP 10 ─ Montage-Checkliste ────────── -->
-      <section class="form-step" data-step="10">
-        <h2>Checkliste Badumbau</h2>
-        <p class="intro">Bitte alle Punkte abhaken, sobald sie erledigt oder geprüft wurden.</p>
+      <section class="form-step" data-step="10" data-form-type-only="baustellenabnahme">
+        <h2 id="checklistStepTitle">Checkliste Badumbau</h2>
+        <p class="intro" id="checklistStepIntro">Bitte alle Punkte abhaken, sobald sie erledigt oder geprüft wurden.</p>
 
         <div class="checklist-group">
           <h3>1. Fotodokumentation</h3>
-          <label class="check-item"><input type="checkbox" name="checklistFotosWaerendUmsetzung" /> Regelmäßige Fotos während der Umsetzung gemacht?</label>
-          <label class="check-item"><input type="checkbox" name="checklistFinaleFotos" /> Finale Fotos nach Abschluss gemacht?</label>
-          <label class="check-item"><input type="checkbox" name="checklistFotosHandwerkskoordination" /> Fotos an Handwerkskoordination übermittelt?</label>
+          <label class="check-item required"><input type="checkbox" name="checklistFotosWaerendUmsetzung" /> Regelmäßige Fotos während der Umsetzung gemacht?</label>
+          <label class="check-item required"><input type="checkbox" name="checklistFinaleFotos" /> Finale Fotos nach Abschluss gemacht?</label>
+          <label class="check-item required"><input type="checkbox" name="checklistFotosHandwerkskoordination" /> Fotos an Handwerkskoordination übermittelt?</label>
 
           <label class="field-label">Übermittlungsweg</label>
           <div class="choice-group choice-group-3">
@@ -603,8 +660,8 @@
 
         <div class="checklist-group">
           <h3>2. Verbrauchsmaterial</h3>
-          <label class="check-item"><input type="checkbox" name="checklistVerbrauchsmaterialErfasst" /> Verbrauchsmaterial über GC-App separat erfasst? (Fittinge, Rohre, etc.)</label>
-          <label class="check-item"><input type="checkbox" name="checklistWarenkorbGeschickt" /> Warenkorb über GC-App an Handwerkskoordination geschickt?</label>
+          <label class="check-item required"><input type="checkbox" name="checklistVerbrauchsmaterialErfasst" /> Verbrauchsmaterial über GC-App separat erfasst? (Fittinge, Rohre, etc.)</label>
+          <label class="check-item required"><input type="checkbox" name="checklistWarenkorbGeschickt" /> Warenkorb über GC-App an Handwerkskoordination geschickt?</label>
         </div>
 
         <div class="checklist-group">
@@ -625,9 +682,9 @@
 
         <div class="checklist-group">
           <h3>6. Kundeninformation</h3>
-          <label class="check-item"><input type="checkbox" name="checklistFlyerBadewannentuer" /> 2 x EmC2-Flyer „Badewannentür“ an Kunden übergeben?</label>
-          <label class="check-item"><input type="checkbox" name="checklistFlyerBadumbau" /> 2 x EmC2-Flyer „Badumbau“ an Kunden übergeben?</label>
-          <label class="check-item"><input type="checkbox" name="checklistFlyerHaltegriffe" /> 2 x EmC2-Flyer „Haltegriffe &amp; Handläufe“ an Kunden übergeben?</label>
+          <label class="check-item required"><input type="checkbox" name="checklistFlyerBadewannentuer" /> 2 x EmC2-Flyer „Badewannentür“ an Kunden übergeben?</label>
+          <label class="check-item required"><input type="checkbox" name="checklistFlyerBadumbau" /> 2 x EmC2-Flyer „Badumbau“ an Kunden übergeben?</label>
+          <label class="check-item required"><input type="checkbox" name="checklistFlyerHaltegriffe" /> 2 x EmC2-Flyer „Haltegriffe &amp; Handläufe“ an Kunden übergeben?</label>
           <label class="check-item"><input type="checkbox" name="checklistBroschuerePflegehinweise" /> Broschüre „Pflegehinweise“ an Kunden übergeben?</label>
           <label class="check-item"><input type="checkbox" name="checklistSilikonDuschabzieher" /> Silikon-Duschabzieher an Kunden übergeben?</label>
           <label class="check-item"><input type="checkbox" name="checklistHinweisSilikonfugen" /> Hinweis zu Silikonfugen beim Kunden hinterlassen?</label>
@@ -685,7 +742,7 @@
       <button type="button" class="btn btn-submit" id="btnSubmit">Absenden</button>
     </div>
 
-    <div class="step-counter" id="stepCounter">1/10</div>
+    <div class="step-counter" id="stepCounter">1/11</div>
   </div>
 </div>
 

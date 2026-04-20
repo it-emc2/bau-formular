@@ -12,6 +12,8 @@
   const form          = $('#abnahmeForm');
   const stepIndicator = $('#stepIndicator');
   const stepCounter   = $('#stepCounter');
+  const appSubtitle   = $('.subtitle');
+  const btnBackToHome = $('#btnBackToHome');
   const btnBack       = $('#btnBack');
   const btnNext       = $('#btnNext');
   const btnDraft      = $('#btnDraft');
@@ -24,6 +26,7 @@
   const btnBitrixRefresh = $('#btnBitrixRefresh');
   const btnDemoPrefill = $('#btnDemoPrefill');
   const btnHeaderDemoPrefill = $('#btnHeaderDemoPrefill');
+  const demoActivityPresetSelect = $('#demoActivityPreset');
   const bitrixSearch  = $('#bitrixSearch');
   const bitrixDealList = $('#bitrixDealList');
   const draftSearch = $('#draftSearch');
@@ -54,13 +57,40 @@
   const documentPreviewFrame = $('#documentPreviewFrame');
   const documentPreviewOpen = $('#documentPreviewOpen');
   const documentPreviewDownload = $('#documentPreviewDownload');
+  const debugDocumentPanel = $('#debugDocumentPanel');
+  const formularTypInput = $('[name="formularTyp"]', form);
+  const formularTypeCards = $$('[data-formular-type]', form);
+  const step1Title = $('#step1Title');
+  const step1Intro = $('#step1Intro');
   const toast         = $('#toast');
   const EXTERNAL_APP_BASE_URL = 'https://angebotskonfigurator-emc2-v2.fly.dev';
 
-  const TOTAL_STEPS = 10;
+  const INITIAL_TOTAL_STEPS = 11;
+  const FORMULAR_TYPE_DEFAULT = '';
+  const FORMULAR_TYPE_PATHS = {
+    baustellenabnahme: '/AbschlussderBaustelle',
+    zusaetzliche_leistungen: '/BeauftragungzusatzlicheLeistungen',
+    nachbesserung: '/Nachbesserung',
+    schadensmeldung: '/Schadensmeldung',
+  };
+  const CHECKLIST_AUTO_CHECKBOXES = [
+    'checklistDokumentWarenpruefung',
+    'checklistBestaetigungKasse',
+    'checklistDokumentArbeitsbericht',
+  ];
+  const CHECKLIST_BADUMBAU_REQUIRED_CHECKBOXES = [
+    'checklistFotosWaerendUmsetzung',
+    'checklistFinaleFotos',
+    'checklistFotosHandwerkskoordination',
+    'checklistVerbrauchsmaterialErfasst',
+    'checklistWarenkorbGeschickt',
+    'checklistFlyerBadewannentuer',
+    'checklistFlyerBadumbau',
+    'checklistFlyerHaltegriffe',
+  ];
   const BITRIX_TEST_ENTITY_TYPE_ID = 2;
   const BITRIX_STAGE_ID = 'C22:UC_T5EXSL';
-  let currentStep   = 1;
+  let currentStep   = 0;
   let formId        = null;     // Mongo _id once saved
   let shareToken    = null;
   let fileStore     = {};       // { fieldName: File[] }
@@ -83,8 +113,12 @@
   let documentDownloadUrl = null;
   let documentDownloadFilename = null;
   let currentChecklistVariant = 'badumbau';
+  let currentFormularTyp = FORMULAR_TYPE_DEFAULT;
+  let hasUnsavedChanges = false;
+  let suppressDirtyTracking = false;
 
   const BITRIX_ACTIVITY_FIELD_KEYS = ['UF_CRM_1725521281342', 'ufCrm_1725521281342'];
+  const DEMO_PRESET_STORAGE_KEY = 'bauFormularDemoPreset';
   const BITRIX_AUSZUFUEHRENDE_TAETIGKEITEN_MAP = {
     '5666': '[HMS] Objektbetreuung',
     '8162': '[HMS] Gartenarbeiten',
@@ -102,6 +136,62 @@
     '7030': '[KFZ] Autoreparatur',
     '4158': 'Sonstige',
   };
+  const DEMO_PRESETS = {
+    badumbau: {
+      label: 'Badumbau',
+      activityValue: '[HD] Badumbau',
+      terminId: 'MUSTER-BAD-2026-001',
+      auftragsNummer: 'A-AN-BAD-2026-001',
+      bitrixZusatzfeld: 'DBG-BAD-2026-001',
+      warenpruefungKommentar: 'Musterprüfung Badumbau durchgeführt, Duschwanne und Wandverkleidung vollständig geprüft.',
+      checklistGratisHaltegriffKommentar: 'Badumbau-Muster: Gratis-Haltegriff auf Wunsch des Kunden bereits montiert.',
+      sonstigeBemerkungenBaustelle: 'Badumbau-Muster: Kunde wurde in Ablauf, Pflege und Trocknungszeiten eingewiesen.',
+      zusaetzlicheArbeiten: 'Badumbau-Muster: Sockelleiste angepasst und Silikonfuge an Bestand ergänzt.',
+      zusaetzlicheArbeitenNB: 'Badumbau-Muster: Abschlussleiste nachjustiert.',
+      nichtErledigteArbeiten: 'Badumbau-Muster: Endreinigung der Glaselemente erfolgt nach Aushärtung.',
+      nichtErledigteArbeitenNB: 'Badumbau-Muster: Restliche Silikonkontrolle beim Folgetermin.',
+      hinweiseBuero: 'Badumbau-Muster: Pflegekassen-Unterlagen und Abschlussfotos dokumentiert.',
+      flyerFieldName: 'checklistFlyerBadumbau',
+      imageLabelPrefix: 'Badumbau',
+      videoLabel: 'Badumbau Ablauf',
+    },
+    badewannentuer: {
+      label: 'Badewannentür',
+      activityValue: '[HD] Badewannentüre',
+      terminId: 'MUSTER-BWT-2026-001',
+      auftragsNummer: 'A-AN-BWT-2026-001',
+      bitrixZusatzfeld: 'DBG-BWT-2026-001',
+      warenpruefungKommentar: 'Musterprüfung Badewannentür durchgeführt, Türblatt und Dichtungen vor Montage kontrolliert.',
+      checklistGratisHaltegriffKommentar: 'Badewannentür-Muster: Gratis-Haltegriff nicht montiert, da Kunde vorhandenen Griff weiter nutzt.',
+      sonstigeBemerkungenBaustelle: 'Badewannentür-Muster: Türfunktion und Dichtigkeit mit Kunde getestet.',
+      zusaetzlicheArbeiten: 'Badewannentür-Muster: Wannenrand nachbearbeitet und Anschlussfuge erneuert.',
+      zusaetzlicheArbeitenNB: 'Badewannentür-Muster: Türverschluss feinjustiert.',
+      nichtErledigteArbeiten: 'Badewannentür-Muster: Pflegehinweis-Aufkleber wird nachgeliefert.',
+      nichtErledigteArbeitenNB: 'Badewannentür-Muster: Nachkontrolle Dichtung noch offen.',
+      hinweiseBuero: 'Badewannentür-Muster: Bitte Dichtigkeitsprotokoll im Vorgang ablegen.',
+      flyerFieldName: 'checklistFlyerBadewannentuer',
+      imageLabelPrefix: 'Badewannentuer',
+      videoLabel: 'Badewannentuer Ablauf',
+    },
+    handlaeufe: {
+      label: 'Handläufe / Haltegriffe',
+      activityValue: '[HD] Handläufe, [HD] Haltegriffe',
+      terminId: 'MUSTER-HL-2026-001',
+      auftragsNummer: 'A-AN-HL-2026-001',
+      bitrixZusatzfeld: 'DBG-HL-2026-001',
+      warenpruefungKommentar: 'Musterprüfung Handläufe durchgeführt, Befestigungspunkte und Material vollständig kontrolliert.',
+      checklistGratisHaltegriffKommentar: 'Handlauf-Muster: Gratis-Haltegriff ergänzt und gemeinsam mit Kunde positioniert.',
+      sonstigeBemerkungenBaustelle: 'Handlauf-Muster: Laufweg mit Kunde begangen und Griffhöhen bestätigt.',
+      zusaetzlicheArbeiten: 'Handlauf-Muster: Zusätzlichen Haltepunkt im Flur gesetzt.',
+      zusaetzlicheArbeitenNB: 'Handlauf-Muster: Befestigung an zweiter Wandseite ergänzt.',
+      nichtErledigteArbeiten: 'Handlauf-Muster: Zweiter Endkappen-Satz wird nachgeliefert.',
+      nichtErledigteArbeitenNB: 'Handlauf-Muster: Abschlussfoto nach Nachlieferung noch offen.',
+      hinweiseBuero: 'Handlauf-Muster: Bitte Montagepositionen in der Kundenakte ergänzen.',
+      flyerFieldName: 'checklistFlyerHaltegriffe',
+      imageLabelPrefix: 'Handlaeufe',
+      videoLabel: 'Handlaeufe Ablauf',
+    },
+  };
 
   function buildFullName(data) {
     return [data.anrede, data.vorname, data.nachname]
@@ -110,8 +200,129 @@
       .join(' ');
   }
 
+  function getDefaultSubtitle() {
+    if (currentFormularTyp === 'zusaetzliche_leistungen') return 'Beauftragung zusätzlicher Leistungen';
+    if (currentFormularTyp === 'nachbesserung') return 'Digitale Nachbesserung';
+    if (currentFormularTyp === 'schadensmeldung') return 'Digitale Schadensmeldung';
+    return 'Digitale Baustellenabnahme';
+  }
+
+  function getRouteFormularTyp() {
+    const pathname = window.location.pathname;
+    if (pathname === FORMULAR_TYPE_PATHS.baustellenabnahme) return 'baustellenabnahme';
+    if (pathname === FORMULAR_TYPE_PATHS.zusaetzliche_leistungen) return 'zusaetzliche_leistungen';
+    if (pathname === FORMULAR_TYPE_PATHS.nachbesserung) return 'nachbesserung';
+    if (pathname === FORMULAR_TYPE_PATHS.schadensmeldung) return 'schadensmeldung';
+    return '';
+  }
+
+  function getFormularTypePath(type = '') {
+    return FORMULAR_TYPE_PATHS[type] || '/home';
+  }
+
+  function markFormDirty() {
+    if (suppressDirtyTracking || currentStep === 0) return;
+    hasUnsavedChanges = true;
+  }
+
+  function clearDirtyState() {
+    hasUnsavedChanges = false;
+  }
+
+  function confirmLeaveToHome() {
+    if (!hasUnsavedChanges) return true;
+
+    return window.confirm(
+      'Wenn du zum Hauptmenü zurückgehst, werden nicht gespeicherte oder nicht abgesendete Eingaben zurückgesetzt. Möchtest du das Formular wirklich verlassen?'
+    );
+  }
+
+  function applyFormTypeUI() {
+    if (formularTypInput) formularTypInput.value = currentFormularTyp || '';
+
+    formularTypeCards.forEach(card => {
+      card.classList.toggle('active', card.dataset.formularType === currentFormularTyp);
+    });
+
+    $$('[data-form-type-only]', form).forEach(el => {
+      const only = String(el.dataset.formTypeOnly || '').trim();
+      const allowedTypes = only ? only.split(',').map(value => value.trim()).filter(Boolean) : [];
+      const shouldShow = !allowedTypes.length || !currentFormularTyp || allowedTypes.includes(currentFormularTyp);
+      el.classList.toggle('hidden', !shouldShow);
+    });
+
+    if (step1Title) {
+      if (currentFormularTyp === 'zusaetzliche_leistungen') {
+        step1Title.textContent = 'Grunddaten zusätzliche Leistungen';
+      } else if (currentFormularTyp === 'nachbesserung') {
+        step1Title.textContent = 'Grunddaten Nachbesserung';
+      } else if (currentFormularTyp === 'schadensmeldung') {
+        step1Title.textContent = 'Grunddaten Schadensmeldung';
+      } else {
+        step1Title.textContent = 'Abschluss der Baustelle';
+      }
+    }
+
+    if (step1Intro) {
+      if (currentFormularTyp === 'zusaetzliche_leistungen') {
+        step1Intro.innerHTML = 'Erfasse hier die Kundendaten und die beauftragten Zusatzleistungen. Danach kannst du den Vorgang direkt intern ergänzen und absenden.';
+      } else if (currentFormularTyp === 'nachbesserung') {
+        step1Intro.innerHTML = 'Erfasse hier die Grunddaten für die Nachbesserung. Anschließend dokumentierst du die ausgeführten Restarbeiten und lässt den Vorgang bestätigen.';
+      } else if (currentFormularTyp === 'schadensmeldung') {
+        step1Intro.innerHTML = 'Erfasse hier die Grunddaten zur Schadensmeldung. Danach dokumentierst du den Schaden mit Fotos und internen Hinweisen.';
+      } else {
+        step1Intro.innerHTML = 'Auf den folgenden Seiten wirst du Schritt für Schritt durch den Abschluss der Baustelle geführt. Bitte beachte, dass dieser <strong>vor Ort mit dem Kunden</strong> gemeinsam vorgenommen werden muss.';
+      }
+    }
+
+    if (appSubtitle) appSubtitle.textContent = getDefaultSubtitle();
+
+    syncDevOnlySteps();
+    buildStepDots();
+    updateStepDots();
+  }
+
+  function chooseFormularTyp(type, { advance = false, updateHistory = true } = {}) {
+    if (type === 'zusaetzliche_leistungen') currentFormularTyp = 'zusaetzliche_leistungen';
+    else if (type === 'nachbesserung') currentFormularTyp = 'nachbesserung';
+    else if (type === 'schadensmeldung') currentFormularTyp = 'schadensmeldung';
+    else currentFormularTyp = 'baustellenabnahme';
+
+    if (updateHistory && !window.location.pathname.startsWith('/form/')) {
+      window.history.replaceState({}, '', getFormularTypePath(currentFormularTyp));
+    }
+
+    const defaultArtDesTermins = currentFormularTyp === 'nachbesserung'
+      ? 'Nachbesserung'
+      : currentFormularTyp === 'schadensmeldung'
+        ? 'Service'
+        : 'Umbau';
+    setSelectValue('artDesTermins', defaultArtDesTermins);
+
+    applyFormTypeUI();
+
+    if (advance) {
+      markFormDirty();
+      showStep(getNextVisibleStep(0));
+    }
+  }
+
+  function getSelectedDemoPresetKey() {
+    const value = demoActivityPresetSelect?.value || localStorage.getItem(DEMO_PRESET_STORAGE_KEY) || 'badumbau';
+    return DEMO_PRESETS[value] ? value : 'badumbau';
+  }
+
+  function getSelectedDemoPreset() {
+    return DEMO_PRESETS[getSelectedDemoPresetKey()];
+  }
+
+  function syncDemoPresetSelection() {
+    if (!demoActivityPresetSelect) return;
+    demoActivityPresetSelect.value = getSelectedDemoPresetKey();
+  }
+
   function setAuszufuehrendeTaetigkeitenValue(value) {
-    const field = fields?.auszufuehrendeTaetigkeiten || $('[name="auszufuehrendeTaetigkeiten"]');
+    const field = $('[name="auszufuehrendeTaetigkeiten"]');
     if (!field) return;
     if (Array.isArray(value)) {
       field.value = value.filter(Boolean).join(', ');
@@ -139,10 +350,11 @@
   }
 
   // ── Initialisation ─────────────────────────────────────
-  function init() {
-    syncDevOnlySteps();
-    buildStepDots();
+  async function init() {
+    syncDemoPresetSelection();
     bindNavigation();
+    bindFormularTypeSelection();
+    bindDirtyTracking();
     bindFileUploads();
     bindConditionalFields();
     bindAuftragsNrSync();
@@ -151,10 +363,24 @@
     bindDraftLookup();
     bindArbeitsberichtLookup();
     bindDocumentActions();
+    bindChecklistRules();
     initSignaturePads();
     initDevModeToggle();
-    loadDraftIfNeeded();
-    showStep(getFirstVisibleStep());
+    bindDemoPresetSelection();
+    const draftLoaded = await loadDraftIfNeeded();
+    if (draftLoaded) {
+      showStep(getNextVisibleStep(0));
+    } else {
+      const routeFormularTyp = getRouteFormularTyp();
+      if (routeFormularTyp) {
+        chooseFormularTyp(routeFormularTyp, { updateHistory: false });
+        showStep(getNextVisibleStep(0));
+      } else {
+        applyFormTypeUI();
+        currentStep = 0;
+        showStep(0);
+      }
+    }
     fetchBitrixDeals();
     fetchDrafts();
     renderArbeitsberichtResults([], 'Noch keine externen Treffer geladen.');
@@ -178,13 +404,17 @@
       .sort((a, b) => a - b);
   }
 
+  function getWorkflowStepNumbers() {
+    return getVisibleStepNumbers().filter(step => step > 0);
+  }
+
   function getFirstVisibleStep() {
     return getVisibleStepNumbers()[0] || 1;
   }
 
   function getLastVisibleStep() {
     const steps = getVisibleStepNumbers();
-    return steps[steps.length - 1] || TOTAL_STEPS;
+    return steps[steps.length - 1] || INITIAL_TOTAL_STEPS;
   }
 
   function getNextVisibleStep(stepNumber) {
@@ -198,7 +428,7 @@
   }
 
   function buildStepDots() {
-    const steps = getVisibleStepNumbers();
+    const steps = getWorkflowStepNumbers();
     stepIndicator.innerHTML = '';
     steps.forEach((step, index) => {
       const dot = document.createElement('div');
@@ -210,7 +440,7 @@
   }
 
   function updateStepDots() {
-    const visibleSteps = getVisibleSteps();
+    const visibleSteps = getVisibleSteps().filter(step => Number(step.dataset.step) > 0);
     const currentVisibleIndex = getCurrentVisibleIndex();
     $$('.step-dot', stepIndicator).forEach((dot, idx) => {
       dot.classList.remove('active', 'completed');
@@ -220,10 +450,7 @@
   }
 
   function getVisibleSteps() {
-    return $$('.form-step', form).filter(step => {
-      if (step.classList.contains('dev-only-step') && !devMode) return false;
-      return true;
-    });
+    return $$('.form-step', form).filter(step => !step.classList.contains('hidden'));
   }
 
   function getVisibleStepNumber(stepEl) {
@@ -231,19 +458,20 @@
   }
 
   function getCurrentVisibleIndex() {
-    const visibleSteps = getVisibleSteps();
+    const visibleSteps = getVisibleSteps().filter(step => Number(step.dataset.step) > 0);
     const current = visibleSteps.findIndex(step => +step.dataset.step === currentStep);
     return current >= 0 ? current : 0;
   }
 
   function syncDevOnlySteps() {
     $$('.dev-only-step', form).forEach(step => {
-      step.classList.toggle('hidden', !devMode);
+      const only = String(step.dataset.formTypeOnly || '').trim();
+      const allowedTypes = only ? only.split(',').map(value => value.trim()).filter(Boolean) : [];
+      const forceVisibleForCurrentType = Boolean(currentFormularTyp) && allowedTypes.includes(currentFormularTyp) && currentFormularTyp !== 'baustellenabnahme';
+      step.classList.toggle('hidden', !devMode && !forceVisibleForCurrentType);
     });
 
     const visibleSteps = getVisibleSteps();
-    TOTAL_STEPS = visibleSteps.length;
-
     const currentVisible = visibleSteps.some(step => +step.dataset.step === currentStep);
     if (!currentVisible && visibleSteps.length) {
       currentStep = +visibleSteps[0].dataset.step;
@@ -255,6 +483,7 @@
   function showStep(n) {
     const visibleSteps = getVisibleStepNumbers();
     const targetStep = visibleSteps.includes(Number(n)) ? Number(n) : getFirstVisibleStep();
+    const isStartStep = targetStep === 0;
 
     currentStep = targetStep;
     $$('.form-step', form).forEach(sec => {
@@ -262,13 +491,23 @@
     });
     updateStepDots();
 
-    const currentIndex = visibleSteps.indexOf(targetStep);
-    stepCounter.textContent = `${currentIndex + 1}/${visibleSteps.length}`;
+    const workflowSteps = getWorkflowStepNumbers();
+    const currentIndex = workflowSteps.indexOf(targetStep);
+    stepCounter.textContent = `${Math.max(1, currentIndex + 1)}/${workflowSteps.length || 1}`;
+    stepIndicator.classList.toggle('hidden', isStartStep);
+    stepCounter.classList.toggle('hidden', isStartStep);
 
     // Button visibility
     btnBack.style.display   = targetStep === getFirstVisibleStep() ? 'none' : 'inline-flex';
     btnNext.style.display   = targetStep === getLastVisibleStep() ? 'none' : 'inline-flex';
     btnSubmit.style.display = targetStep === getLastVisibleStep() ? 'inline-flex' : 'none';
+    btnDraft.style.display  = isStartStep ? 'none' : 'inline-flex';
+    btnNext.textContent = isStartStep ? 'Formular starten' : 'Weiter';
+    if (btnBackToHome) btnBackToHome.classList.toggle('hidden', isStartStep);
+
+    if (targetStep === 10) {
+      syncChecklistAutoSelections();
+    }
 
     // Re-init signature pads when step becomes visible (canvas resize)
     requestAnimationFrame(() => resizeAllSignatureCanvases());
@@ -320,6 +559,82 @@
     });
   }
 
+  function bindFormularTypeSelection() {
+    formularTypeCards.forEach(card => {
+      card.addEventListener('click', () => {
+        chooseFormularTyp(card.dataset.formularType, { advance: true });
+      });
+    });
+  }
+
+  function bindDirtyTracking() {
+    form.addEventListener('input', event => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT') {
+        markFormDirty();
+      }
+    });
+
+    form.addEventListener('change', event => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement)) return;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT') {
+        markFormDirty();
+      }
+    });
+
+    if (btnBackToHome) {
+      btnBackToHome.addEventListener('click', () => {
+        if (!confirmLeaveToHome()) return;
+        clearDirtyState();
+        window.location.href = '/home';
+      });
+    }
+  }
+
+  function syncChecklistAutoSelections() {
+    CHECKLIST_AUTO_CHECKBOXES.forEach(name => {
+      const input = $(`input[type="checkbox"][name="${name}"]`, form);
+      if (!input) return;
+      input.checked = true;
+      input.disabled = true;
+      input.closest('.check-item')?.classList.remove('check-item-invalid');
+    });
+  }
+
+  function bindChecklistRules() {
+    syncChecklistAutoSelections();
+
+    $$('input[type="checkbox"]', form).forEach(input => {
+      input.addEventListener('change', () => {
+        input.closest('.check-item')?.classList.remove('check-item-invalid');
+        if (CHECKLIST_AUTO_CHECKBOXES.includes(input.name) && !input.checked) {
+          input.checked = true;
+        }
+      });
+    });
+  }
+
+  function validateChecklistBadumbau(section) {
+    let valid = true;
+
+    CHECKLIST_BADUMBAU_REQUIRED_CHECKBOXES.forEach(name => {
+      const input = $(`input[type="checkbox"][name="${name}"]`, section);
+      if (!input) return;
+
+      const row = input.closest('.check-item');
+      row?.classList.remove('check-item-invalid');
+
+      if (!input.checked) {
+        row?.classList.add('check-item-invalid');
+        valid = false;
+      }
+    });
+
+    return valid;
+  }
+
   function updateDevModeToggle() {
     if (!devModeToggle) return;
 
@@ -330,6 +645,7 @@
     if (bitrixTestActions) bitrixTestActions.classList.toggle('hidden', !devMode);
     if (btnHeaderDemoPrefill) btnHeaderDemoPrefill.classList.toggle('hidden', !devMode);
     if (bitrixDebugFields) bitrixDebugFields.classList.toggle('hidden', !devMode);
+    if (debugDocumentPanel) debugDocumentPanel.classList.toggle('hidden', !devMode);
 
     // Hide Bitrix-Aufträge + Entwürfe completely when Testmodus is off
     if (devToolsPanel) {
@@ -420,12 +736,23 @@ function syncDevSidebarVisibility() {
     }
 
     if (btnDemoPrefill) {
-      btnDemoPrefill.addEventListener('click', prefillDemoData);
+      btnDemoPrefill.addEventListener('click', () => prefillDemoData());
     }
 
     if (btnHeaderDemoPrefill) {
-      btnHeaderDemoPrefill.addEventListener('click', prefillDemoData);
+      btnHeaderDemoPrefill.addEventListener('click', () => prefillDemoData());
     }
+  }
+
+  function bindDemoPresetSelection() {
+    if (!demoActivityPresetSelect) return;
+
+    demoActivityPresetSelect.addEventListener('change', () => {
+      const key = getSelectedDemoPresetKey();
+      localStorage.setItem(DEMO_PRESET_STORAGE_KEY, key);
+      updateChecklistVariant(getSelectedDemoPreset().activityValue);
+      showToast(`Musterdaten-Typ gesetzt: ${getSelectedDemoPreset().label}.`, 'success');
+    });
   }
 
   function bindDraftLookup() {
@@ -883,7 +1210,7 @@ function syncDevSidebarVisibility() {
       resetFormState();
       populateForm(data);
       renderDrafts(drafts);
-      showStep(getFirstVisibleStep());
+      showStep(getNextVisibleStep(0));
       showToast('Entwurf geladen.', 'success');
     } catch (error) {
       showToast('Fehler beim Laden des Entwurfs: ' + error.message, 'error');
@@ -926,31 +1253,33 @@ function syncDevSidebarVisibility() {
   }
 
   function prefillDemoData() {
+    chooseFormularTyp('baustellenabnahme');
+    const preset = getSelectedDemoPreset();
     const today = new Date();
     const todayStr = today.toISOString().slice(0, 10);
 
     const textValues = {
-      terminId: 'MUSTER-2026-001',
+      terminId: preset.terminId,
       kundennummer: '12398',
-      hinweiseAnFinance: 'Musterhinweis für Finance zur internen Prüfung.',
       vorname: 'Max',
       nachname: 'Mustermann',
       'adresse.strasse': 'Musterstraße 42',
       'adresse.adresszeile2': '2. OG links',
       'adresse.stadt': 'Leipzig',
       'adresse.plz': '04109',
-      auftragsNummer: 'A-AN-MUSTER-001',
-      warenpruefungKommentar: 'Musterprüfung durchgeführt, leichte Kratzer an der Verpackung dokumentiert.',
-      checklistGratisHaltegriffKommentar: 'Mustertext: Montage erfolgt nach Rücksprache beim Folgetermin.',
-      sonstigeBemerkungenBaustelle: 'Musterbemerkung: Baustelle sauber verlassen, Kunde eingewiesen.',
-      zusaetzlicheArbeiten: 'Mustertext für zusätzliche Arbeiten vor Ort.',
-      nichtErledigteArbeiten: 'Mustertext: Silikonfuge im Bereich Türanschluss offen, Nacharbeit erforderlich.',
-      zusaetzlicheArbeitenNB: 'Mustertext für Nachbesserung.',
-      nichtErledigteArbeitenNB: 'Mustertext: Restarbeiten in Abstimmung mit Kunde verschoben.',
-      hinweiseBuero: 'Musterhinweis für das Büro: Bitte Unterlagen archivieren und Rückruf einplanen.',
-      bitrixZusatzfeld: 'DBG-ANG-2026-001',
-      bitrixAuszufuehrendeTaetigkeiten: '[HD] Badumbau',
+      auftragsNummer: preset.auftragsNummer,
+      warenpruefungKommentar: preset.warenpruefungKommentar,
+      checklistGratisHaltegriffKommentar: preset.checklistGratisHaltegriffKommentar,
+      sonstigeBemerkungenBaustelle: preset.sonstigeBemerkungenBaustelle,
+      zusaetzlicheArbeiten: preset.zusaetzlicheArbeiten,
+      nichtErledigteArbeiten: preset.nichtErledigteArbeiten,
+      zusaetzlicheArbeitenNB: preset.zusaetzlicheArbeitenNB,
+      nichtErledigteArbeitenNB: preset.nichtErledigteArbeitenNB,
+      hinweiseBuero: preset.hinweiseBuero,
+      bitrixZusatzfeld: preset.bitrixZusatzfeld,
+      auszufuehrendeTaetigkeiten: preset.activityValue,
       bitrixAuftragId: '90001',
+      emailEmpfaenger: 'kunde@beispiel.de',
     };
 
     const numberValues = {
@@ -977,7 +1306,7 @@ function syncDevSidebarVisibility() {
     setRadioValue('alleArbeitenErledigt', 'Nein');
     setRadioValue('alleArbeitenNB', 'Nein');
 
-    [
+    const baseChecklistFields = [
       'checklistFotosWaerendUmsetzung',
       'checklistFinaleFotos',
       'checklistFotosHandwerkskoordination',
@@ -987,9 +1316,6 @@ function syncDevSidebarVisibility() {
       'checklistArbeitszeitenErfasst',
       'checklistBestaetigungKasse',
       'checklistDokumentArbeitsbericht',
-      'checklistFlyerBadewannentuer',
-      'checklistFlyerBadumbau',
-      'checklistFlyerHaltegriffe',
       'checklistBroschuerePflegehinweise',
       'checklistSilikonDuschabzieher',
       'checklistHinweisSilikonfugen',
@@ -1000,7 +1326,15 @@ function syncDevSidebarVisibility() {
       'abschlusskontrolleKundeEingewiesen',
       'abschlusskontrolleWerkzeugeMitgenommen',
       'grossesVideoNachgang',
-    ].forEach(name => setCheckboxValue(name, true));
+    ];
+    const flyerFields = [
+      'checklistFlyerBadewannentuer',
+      'checklistFlyerBadumbau',
+      'checklistFlyerHaltegriffe',
+    ];
+
+    baseChecklistFields.forEach(name => setCheckboxValue(name, true));
+    flyerFields.forEach(name => setCheckboxValue(name, name === preset.flyerFieldName));
 
     const inspectionStatus = {
       wareWandverkleidungenStatus: 'io',
@@ -1026,11 +1360,11 @@ function syncDevSidebarVisibility() {
       'unterschriftNB',
     ].forEach(drawDemoSignature);
 
-    prefillDemoUploads();
-    updateChecklistVariant(textValues.bitrixAuszufuehrendeTaetigkeiten);
+    prefillDemoUploads(preset);
+    updateChecklistVariant(textValues.auszufuehrendeTaetigkeiten);
     updateConfirmationLetterPreview();
     setSidebarSourcesHidden(true);
-    showToast('Musterdaten komplett eingefüllt – inklusive Signaturen, Testfotos und Testvideo.', 'success');
+    showToast(`Musterdaten für ${preset.label} komplett eingefüllt – inklusive Signaturen, Testfotos und Testvideo.`, 'success');
   }
 
   function clearUploadField(fieldName) {
@@ -1068,23 +1402,23 @@ function syncDevSidebarVisibility() {
       .toLowerCase() || 'datei';
   }
 
-  function prefillDemoUploads() {
+  function prefillDemoUploads(preset = getSelectedDemoPreset()) {
     const fertigerUmbauPreview = clearUploadField('bilderFertigerUmbau');
     if (fertigerUmbauPreview) {
       addFiles('bilderFertigerUmbau', [
-        createDemoImageFile('Fertiger Umbau 1'),
-        createDemoImageFile('Fertiger Umbau 2'),
+        createDemoImageFile(`${preset.imageLabelPrefix} 1`),
+        createDemoImageFile(`${preset.imageLabelPrefix} 2`),
       ], fertigerUmbauPreview, true);
     }
 
     const videoPreview = clearUploadField('videoDesAblaufs');
     if (videoPreview) {
-      addFiles('videoDesAblaufs', [createDemoVideoFile('Video des Ablaufs')], videoPreview, false);
+      addFiles('videoDesAblaufs', [createDemoVideoFile(preset.videoLabel)], videoPreview, false);
     }
 
     const abdichtungPreview = clearUploadField('fotosAbdichtung');
     if (abdichtungPreview) {
-      addFiles('fotosAbdichtung', [createDemoImageFile('Fotos der Abdichtung')], abdichtungPreview, true);
+      addFiles('fotosAbdichtung', [createDemoImageFile(`${preset.imageLabelPrefix} Abdichtung`)], abdichtungPreview, true);
     }
   }
 
@@ -1138,7 +1472,7 @@ function syncDevSidebarVisibility() {
 
   function bindConfirmationLetterSync() {
     [
-      'anrede','vorname','nachname','adresse.strasse','adresse.adresszeile2','adresse.plz','adresse.stadt','bitrixZusatzfeld','auftragsNummer','bitrixAuszufuehrendeTaetigkeiten'
+      'anrede','vorname','nachname','adresse.strasse','adresse.adresszeile2','adresse.plz','adresse.stadt','bitrixZusatzfeld','auftragsNummer','auszufuehrendeTaetigkeiten'
     ].forEach(name => {
       const input = form.querySelector(`[name="${name}"]`);
       if (!input) return;
@@ -1207,14 +1541,21 @@ function syncDevSidebarVisibility() {
 
   function applyBitrixItemToForm(item) {
     const resolvedActivities = resolveBitrixActivities(item);
+    const activityValue =
+      resolvedActivities ||
+      item.auszufuehrendeTaetigkeiten ||
+      item.auszufuehrende_taetigkeiten ||
+      item.resolvedAuszufuehrendeTaetigkeiten ||
+      item.ufCrm_1725521281342Resolved ||
+      item.UF_CRM_1725521281342_RESOLVED ||
+      '';
     setFieldValue('terminId', `BITRIX-${item.id}`);
     setFieldValue('auftragsNummer', item.title || `Bitrix ${item.id}`);
     setFieldValue('kundennummer', item.contactId || item.id);
     setFieldValue('bitrixAuftragId', item.id);
     setFieldValue('bitrixZusatzfeld', item.title || `Bitrix ${item.id}`);
-          setAuszufuehrendeTaetigkeitenValue(record.auszufuehrendeTaetigkeiten || record.auszufuehrende_taetigkeiten || record.resolvedAuszufuehrendeTaetigkeiten || record.ufCrm_1725521281342Resolved || record.UF_CRM_1725521281342_RESOLVED || '');
-setFieldValue('bitrixAuszufuehrendeTaetigkeiten', resolvedActivities);
-    updateChecklistVariant(resolvedActivities);
+    setAuszufuehrendeTaetigkeitenValue(activityValue);
+    updateChecklistVariant(activityValue);
     updateConfirmationLetterPreview();
   }
 
@@ -1320,8 +1661,17 @@ setFieldValue('bitrixAuszufuehrendeTaetigkeiten', resolvedActivities);
     const section = $(`.form-step[data-step="${n}"]`);
     let valid = true;
 
+    if (n === 0) {
+      if (!currentFormularTyp) {
+        showToast('Bitte zuerst einen Formulartyp auswählen.', 'error');
+        return false;
+      }
+      return true;
+    }
+
     // Required text / date / select inputs
     $$('input[required], select[required], textarea[required]', section).forEach(el => {
+      if (el.closest('.hidden')) return;
       // Skip hidden conditional fields
       const cond = el.closest('.conditional-field');
       if (cond && !cond.classList.contains('visible')) return;
@@ -1357,6 +1707,12 @@ setFieldValue('bitrixAuszufuehrendeTaetigkeiten', resolvedActivities);
       }
     });
 
+    if (n === 10 && currentChecklistVariant === 'badumbau') {
+      if (!validateChecklistBadumbau(section)) {
+        valid = false;
+      }
+    }
+
     if (!valid) showToast('Bitte alle Pflichtfelder ausfüllen.', 'error');
     return valid;
   }
@@ -1375,6 +1731,7 @@ setFieldValue('bitrixAuszufuehrendeTaetigkeiten', resolvedActivities);
   function collectFormData() {
     const data = {};
     if (formId) data._id = formId;
+    data.formularTyp = currentFormularTyp || 'baustellenabnahme';
 
     // Simple fields
     $$('input[type="text"], input[type="number"], input[type="date"], input[type="email"], select, textarea', form)
@@ -1402,6 +1759,7 @@ setFieldValue('bitrixAuszufuehrendeTaetigkeiten', resolvedActivities);
     });
 
     data.name = buildFullName(data);
+    data.bitrixExecutionActivities = data.auszufuehrendeTaetigkeiten || '';
 
     // Signatures → write base64 to data + timestamp
     for (const [name, pad] of Object.entries(signaturePads)) {
@@ -1720,6 +2078,7 @@ setFieldValue('bitrixAuszufuehrendeTaetigkeiten', resolvedActivities);
       formId     = json.id;
       shareToken = json.shareToken;
       activeDraftId = json.id;
+      clearDirtyState();
 
       if (action === 'save') {
         // Show draft link modal
@@ -1755,12 +2114,12 @@ setFieldValue('bitrixAuszufuehrendeTaetigkeiten', resolvedActivities);
   async function loadDraftIfNeeded() {
     // Check URL for /form/:token
     const match = window.location.pathname.match(/^\/form\/(.+)/);
-    if (!match) return;
+    if (!match) return false;
 
     try {
       const res  = await fetch(`/api/form/token/${match[1]}`);
       const json = await res.json();
-      if (!json.success) return;
+      if (!json.success) return false;
 
       const data = json.data;
       formId     = data._id;
@@ -1771,14 +2130,20 @@ setFieldValue('bitrixAuszufuehrendeTaetigkeiten', resolvedActivities);
       populateForm(data);
       fetchDrafts();
       showToast('Entwurf geladen', 'success');
+      return true;
     } catch (err) {
       console.error('Load draft error:', err);
+      return false;
     }
   }
 
   function resetFormState() {
+    suppressDirtyTracking = true;
     form.reset();
     fileStore = {};
+    currentFormularTyp = FORMULAR_TYPE_DEFAULT;
+    applyFormTypeUI();
+    clearDirtyState();
 
     $$('input.invalid, select.invalid, textarea.invalid', form).forEach(el => {
       el.classList.remove('invalid');
@@ -1792,11 +2157,23 @@ setFieldValue('bitrixAuszufuehrendeTaetigkeiten', resolvedActivities);
     $$('.signature-wrapper', form).forEach(wrapper => {
       wrapper.style.borderColor = '';
     });
+    $$('.check-item-invalid', form).forEach(el => {
+      el.classList.remove('check-item-invalid');
+    });
+    syncChecklistAutoSelections();
+    suppressDirtyTracking = false;
   }
 
   function populateForm(data) {
+    suppressDirtyTracking = true;
+    chooseFormularTyp(data.formularTyp || 'baustellenabnahme', { updateHistory: false });
+
     if ((!data.anrede && !data.vorname && !data.nachname) && data.name) {
       Object.assign(data, splitLegacyName(data.name));
+    }
+
+    if (!data.auszufuehrendeTaetigkeiten && data.bitrixExecutionActivities) {
+      data.auszufuehrendeTaetigkeiten = data.bitrixExecutionActivities;
     }
 
     // Text / number / date / select
@@ -1830,6 +2207,8 @@ setFieldValue('bitrixAuszufuehrendeTaetigkeiten', resolvedActivities);
       if (data[el.name]) el.checked = true;
     });
 
+    syncChecklistAutoSelections();
+
     // Signatures – draw base64 onto pads
     for (const [name, pad] of Object.entries(signaturePads)) {
       if (data[name]) {
@@ -1859,7 +2238,10 @@ setFieldValue('bitrixAuszufuehrendeTaetigkeiten', resolvedActivities);
         thumb.innerHTML = `<img src="${url}" alt="Bild" /><button type="button" class="remove-file">✕</button>`;
         preview.appendChild(thumb);
         // Remove button removes from server list (won't re-upload)
-        $('.remove-file', thumb).addEventListener('click', () => thumb.remove());
+        $('.remove-file', thumb).addEventListener('click', () => {
+          thumb.remove();
+          markFormDirty();
+        });
       });
     });
 
@@ -1872,12 +2254,19 @@ setFieldValue('bitrixAuszufuehrendeTaetigkeiten', resolvedActivities);
         thumb.className = 'file-thumb';
         thumb.innerHTML = `<video src="${data.videoDesAblaufs}" muted></video><button type="button" class="remove-file">✕</button>`;
         preview.appendChild(thumb);
-        $('.remove-file', thumb).addEventListener('click', () => thumb.remove());
+        $('.remove-file', thumb).addEventListener('click', () => {
+          thumb.remove();
+          markFormDirty();
+        });
       }
     }
 
     // Trigger conditional field visibility
     $$('input[type="radio"]:checked', form).forEach(el => el.dispatchEvent(new Event('change', { bubbles: true })));
+    updateChecklistVariant(data.auszufuehrendeTaetigkeiten || '');
+    updateConfirmationLetterPreview();
+    clearDirtyState();
+    suppressDirtyTracking = false;
   }
 
   // ── File Uploads ───────────────────────────────────────
@@ -1938,6 +2327,10 @@ setFieldValue('bitrixAuszufuehrendeTaetigkeiten', resolvedActivities);
       previewEl.innerHTML = '';
     }
 
+    if (files.length) {
+      markFormDirty();
+    }
+
     files.forEach(file => {
       fileStore[fieldName].push(file);
 
@@ -1965,6 +2358,7 @@ setFieldValue('bitrixAuszufuehrendeTaetigkeiten', resolvedActivities);
         const idx = fileStore[fieldName].indexOf(file);
         if (idx > -1) fileStore[fieldName].splice(idx, 1);
         thumb.remove();
+        markFormDirty();
       });
       thumb.appendChild(removeBtn);
       previewEl.appendChild(thumb);
@@ -2078,11 +2472,13 @@ setFieldValue('bitrixAuszufuehrendeTaetigkeiten', resolvedActivities);
       $('.btn-clear-sig', wrapper).addEventListener('click', () => {
         pad.clear();
         wrapper.style.borderColor = '';
+        markFormDirty();
       });
 
       // On signature begin → clear validation error
       pad.addEventListener('beginStroke', () => {
         wrapper.style.borderColor = '';
+        markFormDirty();
       });
     });
     resizeAllSignatureCanvases();

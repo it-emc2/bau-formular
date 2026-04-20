@@ -117,10 +117,14 @@ function normalizeChecklistSourceValue(value) {
 }
 
 function getChecklistVariant(data = {}) {
-  const rawValues = Array.isArray(data.bitrixExecutionActivities)
-    ? data.bitrixExecutionActivities
-    : String(data.bitrixExecutionActivities || '')
-      .split(',');
+  const sourceValue =
+    data.auszufuehrendeTaetigkeiten ||
+    data.bitrixExecutionActivities ||
+    data.bitrixAuszufuehrendeTaetigkeiten ||
+    '';
+  const rawValues = Array.isArray(sourceValue)
+    ? sourceValue
+    : String(sourceValue).split(',');
 
   const normalizedValues = rawValues
     .map(value => normalizeChecklistSourceValue(value).trim())

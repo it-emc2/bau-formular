@@ -3,9 +3,9 @@ const mongoose = require('mongoose');
 const schemaDefinition = {
   /* ── Step 1 ─ Grunddaten ─────────────────────────── */
   terminId:          { type: String, required: true },
+  formularTyp:       { type: String, enum: ['baustellenabnahme', 'zusaetzliche_leistungen', 'nachbesserung', 'schadensmeldung'], default: 'baustellenabnahme' },
   kundennummer:      { type: String, default: '' },
   artDesTermins:     { type: String, enum: ['Umbau', 'Nachbesserung', 'Service'], default: 'Umbau' },
-  hinweiseAnFinance: { type: String, default: '' },
   anrede:            { type: String, enum: ['Frau', 'Herr', 'Familie', ''], default: '' },
   vorname:           { type: String, default: '' },
   nachname:          { type: String, default: '' },
@@ -21,6 +21,10 @@ const schemaDefinition = {
     enum: ['Erfolgreich beendet', 'Nicht erfolgreich beendet', ''],
     default: '',
   },
+  bitrixAuftragId:     { type: String, default: '' },
+  bitrixZusatzfeld:    { type: String, default: '' },
+  auszufuehrendeTaetigkeiten: { type: String, default: '' },
+  bitrixExecutionActivities:  { type: String, default: '' },
 
   /* ── Step 2 ─ Warenpruefung ─────────────────────── */
   warenpruefungDatum:            { type: Date },
@@ -106,6 +110,7 @@ const schemaDefinition = {
 
   /* ── Step 10 ─ Hinweise ─────────────────────────── */
   hinweiseBuero: { type: String, default: '' },
+  emailEmpfaenger: { type: String, default: '' },
 
   /* ── System ─────────────────────────────────────── */
   status:     { type: String, enum: ['draft', 'submitted'], default: 'draft' },

@@ -81,6 +81,11 @@ app.use((err, req, res, next) => {
 
 // Serve the SPA for root and shareable links
 app.get('/', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+app.get('/home', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+app.get('/AbschlussderBaustelle', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+app.get('/BeauftragungzusatzlicheLeistungen', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+app.get('/Nachbesserung', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
+app.get('/Schadensmeldung', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/form/:token', (_req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 async function startServer() {

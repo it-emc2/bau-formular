@@ -21,9 +21,19 @@ describe('server module', () => {
 
   it('registers the SPA routes', () => {
     const rootLayer = getRouteLayer(serverModule.app, '/', 'get');
+    const homeLayer = getRouteLayer(serverModule.app, '/home', 'get');
+    const baustellenLayer = getRouteLayer(serverModule.app, '/AbschlussderBaustelle', 'get');
+    const zusaetzlicheLayer = getRouteLayer(serverModule.app, '/BeauftragungzusatzlicheLeistungen', 'get');
+    const nachbesserungLayer = getRouteLayer(serverModule.app, '/Nachbesserung', 'get');
+    const schadensmeldungLayer = getRouteLayer(serverModule.app, '/Schadensmeldung', 'get');
     const shareLayer = getRouteLayer(serverModule.app, '/form/:token', 'get');
 
     expect(rootLayer).toBeDefined();
+    expect(homeLayer).toBeDefined();
+    expect(baustellenLayer).toBeDefined();
+    expect(zusaetzlicheLayer).toBeDefined();
+    expect(nachbesserungLayer).toBeDefined();
+    expect(schadensmeldungLayer).toBeDefined();
     expect(shareLayer).toBeDefined();
   });
 
@@ -45,6 +55,66 @@ describe('server module', () => {
     const res = { sendFile: jest.fn() };
 
     handler({ params: { token: 'abc123' } }, res);
+
+    expect(res.sendFile).toHaveBeenCalledWith(
+      path.join(process.cwd(), 'public', 'index.html')
+    );
+  });
+
+  it('home route serves public/index.html', () => {
+    const homeLayer = getRouteLayer(serverModule.app, '/home', 'get');
+    const handler = homeLayer.route.stack[0].handle;
+    const res = { sendFile: jest.fn() };
+
+    handler({}, res);
+
+    expect(res.sendFile).toHaveBeenCalledWith(
+      path.join(process.cwd(), 'public', 'index.html')
+    );
+  });
+
+  it('baustellenabnahme route serves public/index.html', () => {
+    const layer = getRouteLayer(serverModule.app, '/AbschlussderBaustelle', 'get');
+    const handler = layer.route.stack[0].handle;
+    const res = { sendFile: jest.fn() };
+
+    handler({}, res);
+
+    expect(res.sendFile).toHaveBeenCalledWith(
+      path.join(process.cwd(), 'public', 'index.html')
+    );
+  });
+
+  it('zusaetzliche leistungen route serves public/index.html', () => {
+    const layer = getRouteLayer(serverModule.app, '/BeauftragungzusatzlicheLeistungen', 'get');
+    const handler = layer.route.stack[0].handle;
+    const res = { sendFile: jest.fn() };
+
+    handler({}, res);
+
+    expect(res.sendFile).toHaveBeenCalledWith(
+      path.join(process.cwd(), 'public', 'index.html')
+    );
+  });
+
+  it('nachbesserung route serves public/index.html', () => {
+    const layer = getRouteLayer(serverModule.app, '/Nachbesserung', 'get');
+    const handler = layer.route.stack[0].handle;
+    const res = { sendFile: jest.fn() };
+
+    handler({}, res);
+
+    expect(res.sendFile).toHaveBeenCalledWith(
+      path.join(process.cwd(), 'public', 'index.html')
+    );
+  });
+
+  it('schadensmeldung route serves public/index.html', () => {
+    const layer = getRouteLayer(serverModule.app, '/Schadensmeldung', 'get');
+    const handler = layer.route.stack[0].handle;
+    const res = { sendFile: jest.fn() };
+
+    handler({}, res);
 
     expect(res.sendFile).toHaveBeenCalledWith(
       path.join(process.cwd(), 'public', 'index.html')

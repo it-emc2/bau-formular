@@ -19,9 +19,13 @@ describe('Abnahme model', () => {
     const doc = new Abnahme({ terminId: 'UT-1000' });
 
     expect(doc.status).toBe('draft');
+    expect(doc.formularTyp).toBe('baustellenabnahme');
     expect(doc.artDesTermins).toBe('Umbau');
     expect(doc.grossesVideoNachgang).toBe(false);
     expect(doc.adresse.strasse).toBe('');
+    expect(doc.bitrixAuftragId).toBe('');
+    expect(doc.auszufuehrendeTaetigkeiten).toBe('');
+    expect(doc.emailEmpfaenger).toBe('');
   });
 
   it('rejects invalid enum values', async () => {

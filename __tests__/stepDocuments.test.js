@@ -40,4 +40,14 @@ describe('stepDocuments', () => {
       attachments.some(attachment => attachment.filename.includes('06-checkliste-handlaeufe-max-muster.pdf'))
     ).toBe(true);
   });
+
+  it('supports the current form field name for execution activities', () => {
+    expect(getChecklistVariant({
+      auszufuehrendeTaetigkeiten: '[HD] Badewannentüre',
+    })).toEqual({
+      key: 'badewannentuer',
+      title: '06-Checkliste-Badewannentuer',
+      fileNamePrefix: '06-checkliste-badewannentuer',
+    });
+  });
 });
