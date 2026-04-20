@@ -156,6 +156,11 @@
                 <option value="Erfolgreich beendet">Erfolgreich beendet</option>
                 <option value="Nicht erfolgreich beendet">Nicht erfolgreich beendet</option>
               </select>
+
+              <div class="conditional-field" id="grundNichtErfolgreich" data-show-when="terminStatus" data-show-value="Nicht erfolgreich beendet">
+                <label class="field-label required">Grund dafür</label>
+                <textarea name="grundNichtErfolgreich" rows="3" required placeholder="Bitte den Grund angeben, warum der Termin nicht erfolgreich beendet werden konnte."></textarea>
+              </div>
             </div>
 
             <label class="field-label">Angebots-Nummer</label>
@@ -673,7 +678,7 @@
           <label class="check-item required"><input type="checkbox" name="checklistFinaleFotos" /> Finale Fotos nach Abschluss gemacht?</label>
           <label class="check-item required"><input type="checkbox" name="checklistFotosHandwerkskoordination" /> Fotos an Handwerkskoordination übermittelt?</label>
 
-          <label class="field-label">Übermittlungsweg</label>
+          <label class="field-label required">Übermittlungsweg</label>
           <div class="choice-group choice-group-3">
             <label class="choice-pill"><input type="radio" name="checklistFotoUebermittlung" value="iMessage" /><span>iMessage<br /><small>an 0157 37994273</small></span></label>
             <label class="choice-pill"><input type="radio" name="checklistFotoUebermittlung" value="WhatsApp" /><span>WhatsApp<br /><small>an 0157 37994273</small></span></label>

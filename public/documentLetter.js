@@ -75,7 +75,7 @@ function formatLongDate(date) {
 
 function buildConfirmationText(data = {}) {
   const appointmentType = normalizeWhitespace(data.artDesTermins);
-  const orderNumber = normalizeWhitespace(data.bitrixZusatzfeld || data.auftragsNummer);
+  const orderNumber = normalizeWhitespace(data.auftragsNummer);
   const completionState = normalizeWhitespace(data.terminStatus);
   const isSuccessful = completionState !== 'Nicht erfolgreich beendet';
 
@@ -122,7 +122,7 @@ function renderLetterHtml(data = {}) {
   const city = escapeHtml(normalizeWhitespace(data.adresse?.stadt) || 'Leipzig');
   const confirmationText = escapeHtml(buildConfirmationText(data));
   const signature = normalizeWhitespace(data.unterschriftKunde);
-  const orderNumber = normalizeWhitespace(data.bitrixZusatzfeld || data.auftragsNummer);
+  const orderNumber = normalizeWhitespace(data.auftragsNummer);
   const titleSuffix = orderNumber ? ` ${escapeHtml(orderNumber)}` : '';
 
   const addressMarkup = addressLines.length

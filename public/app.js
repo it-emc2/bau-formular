@@ -635,6 +635,29 @@
       }
     });
 
+    const uebermittlungRadios = $$('input[name="checklistFotoUebermittlung"]', section);
+    const uebermittlungChecked = uebermittlungRadios.some(r => r.checked);
+    const uebermittlungGroup = uebermittlungRadios[0]?.closest('.choice-group');
+    if (uebermittlungGroup) {
+      if (!uebermittlungChecked) {
+        uebermittlungGroup.style.borderColor = '#e53935';
+        uebermittlungGroup.style.borderStyle = 'solid';
+        uebermittlungGroup.style.borderWidth = '2px';
+        uebermittlungGroup.style.borderRadius = '18px';
+        uebermittlungGroup.style.padding = '8px';
+        uebermittlungGroup.style.boxShadow = '0 0 0 2px rgba(229,57,53,.18)';
+        if (valid) showToast('Bitte Übermittlungsweg auswählen.', 'error');
+        valid = false;
+      } else {
+        uebermittlungGroup.style.borderColor = '';
+        uebermittlungGroup.style.borderStyle = '';
+        uebermittlungGroup.style.borderWidth = '';
+        uebermittlungGroup.style.borderRadius = '';
+        uebermittlungGroup.style.padding = '';
+        uebermittlungGroup.style.boxShadow = '';
+      }
+    }
+
     return valid;
   }
 
@@ -1514,7 +1537,7 @@ function syncDevSidebarVisibility() {
     const line2 = getValue('adresse.adresszeile2') || '2. OG links';
     const plz = getValue('adresse.plz') || '04109';
     const city = getValue('adresse.stadt') || 'Leipzig';
-    const orderId = getValue('bitrixZusatzfeld') || getValue('auftragsNummer') || 'DBG-ANG-2026-001';
+    const orderId = getValue('auftragsNummer') || 'ANG2026-XXXXX';
     const now = new Date();
     const monthYear = new Intl.DateTimeFormat('de-DE', { month: 'long', year: 'numeric' }).format(now);
     const monthYearCapitalized = monthYear.charAt(0).toUpperCase() + monthYear.slice(1);
@@ -1853,6 +1876,31 @@ function syncDevSidebarVisibility() {
           sigWrapper.style.boxShadow = '';
         }
       }
+    }
+
+    if (n === 4) {
+      const requiredUploads = [
+        { name: 'bilderFertigerUmbau', label: 'Bilder des fertigen Umbaus' },
+        { name: 'videoDesAblaufs', label: 'Video des Ablaufs' },
+      ];
+
+      requiredUploads.forEach(({ name, label }) => {
+        const wrapper = $(`.file-upload[data-name="${name}"]`, section);
+        if (!wrapper) return;
+        const hasFiles = fileStore[name] && fileStore[name].length > 0;
+        const drop = $('.file-drop', wrapper);
+        if (!hasFiles) {
+          if (drop) {
+            drop.style.borderColor = '#e53935';
+            drop.style.boxShadow = '0 0 0 2px rgba(229,57,53,.18)';
+          }
+          if (valid) showToast(`Bitte "${label}" hochladen.`, 'error');
+          valid = false;
+        } else if (drop) {
+          drop.style.borderColor = '';
+          drop.style.boxShadow = '';
+        }
+      });
     }
 
     if (n === 11 && currentChecklistVariant === 'badumbau') {
@@ -2608,10 +2656,11 @@ function syncDevSidebarVisibility() {
   }
 
   function initWarenpruefungDatum() {
-    const datumInput = $('[name="warenpruefungDatum"]', form);
-    if (datumInput && !datumInput.value) {
-      datumInput.value = new Date().toISOString().slice(0, 10);
-    }
+    const today = new Date().toISOString().slice(0, 10);
+    ['warenpruefungDatum', 'unterschriftMonteurDatum'].forEach(name => {
+      const input = $(`[name="${name}"]`, form);
+      if (input && !input.value) input.value = today;
+    });
   }
 
   // ── Signature Pads ─────────────────────────────────────

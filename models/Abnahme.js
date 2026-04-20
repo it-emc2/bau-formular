@@ -21,6 +21,7 @@ const schemaDefinition = {
     enum: ['Erfolgreich beendet', 'Nicht erfolgreich beendet', ''],
     default: '',
   },
+  grundNichtErfolgreich: { type: String, default: '' },
   bitrixAuftragId:     { type: String, default: '' },
   bitrixZusatzfeld:    { type: String, default: '' },
   auszufuehrendeTaetigkeiten: { type: String, default: '' },
