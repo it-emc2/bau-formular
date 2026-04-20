@@ -10,6 +10,7 @@ const schemaDefinition = {
   vorname:           { type: String, default: '' },
   nachname:          { type: String, default: '' },
   name:              { type: String, default: '' },
+  entwurfsName:      { type: String, default: '' },
   adresse: {
     strasse:      { type: String, default: '' },
     adresszeile2: { type: String, default: '' },

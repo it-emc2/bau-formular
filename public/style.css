@@ -1321,6 +1321,55 @@ input[type="radio"], input[type="checkbox"] {
 
 .dev-only-step.hidden { display: none !important; }
 
+/* ── Home Drafts Section ───────────────────────────────── */
+.home-drafts-section {
+  margin-top: 36px;
+  padding-top: 28px;
+  border-top: 1px solid var(--clr-light-gray);
+}
+
+.home-drafts-section h3 {
+  font-size: 1.15rem;
+  color: var(--clr-dark);
+  margin-bottom: 4px;
+}
+
+.home-drafts-toolbar {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.home-drafts-search {
+  width: 100%;
+  padding: 12px 14px;
+  border: 2px solid var(--clr-light-gray);
+  border-radius: 8px;
+  font-size: .95rem;
+  font-family: var(--font);
+  background: #fafafa;
+  transition: border-color .2s;
+}
+
+.home-drafts-search:focus {
+  outline: none;
+  border-color: var(--clr-orange);
+  background: #fff;
+}
+
+.home-draft-list {
+  margin-top: 14px;
+  display: grid;
+  gap: 10px;
+  max-height: 400px;
+  overflow: auto;
+}
+
+@media (max-width: 600px) {
+  .home-drafts-toolbar { grid-template-columns: 1fr; }
+}
+
 
 @media (max-width: 640px) {
   .app-header-actions {

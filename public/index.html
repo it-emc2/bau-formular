@@ -38,6 +38,7 @@
 
     <form id="abnahmeForm" novalidate>
       <input type="hidden" name="formularTyp" value="" />
+      <input type="hidden" name="entwurfsName" value="" />
 
       <!-- ────────── STEP 0 ─ Start ────────── -->
       <section class="form-step active form-start-step" data-step="0">
@@ -71,6 +72,16 @@
             <strong>Schadensmeldung</strong>
             <span>Grunddaten, Fotodokumentation und interne Meldung für Schäden vor Ort.</span>
           </button>
+        </div>
+
+        <div class="home-drafts-section">
+          <h3>Gespeicherte Entwürfe</h3>
+          <p class="intro">Zwischengespeicherte Formulare suchen und weiterbearbeiten.</p>
+          <div class="home-drafts-toolbar">
+            <input type="text" class="home-drafts-search" id="homeDraftSearch" placeholder="Name, Lead-ID oder Angebots-Nr. suchen…" />
+            <button type="button" class="btn btn-fetch-bitrix" id="btnHomeDraftSearch">Suchen</button>
+          </div>
+          <div class="home-draft-list" id="homeDraftList"></div>
         </div>
       </section>
 
@@ -385,7 +396,7 @@
         </div>
         <p class="hint">Hier bitte die Brause über den Abfluss halten, Wasser laufen lassen und filmen dass es abläuft.</p>
 
-        <label class="field-label">Fotos der Abdichtung</label>
+        <label class="field-label required">Fotos der Abdichtung</label>
         <div class="file-upload" data-name="fotosAbdichtung" data-multiple="true" data-accept="image/*">
           <div class="file-drop">
             <span>Datei(en) wählen</span>
@@ -477,7 +488,7 @@
             <p>Sehr geehrte Damen und Herren,</p>
             <p>
               hiermit bestätige ich den durch die Fa. EmC2 erfolgreich durchgeführten barrierearmen Umbau
-              gemäß Auftrag <strong class="auftrag-nr-display">DBG-ANG-2026-001</strong>
+              gemäß Auftrag <span class="auftrag-nr-display">ANG2026-XXXXX</span>
               mit Hilfe der mir genehmigten Förderung nach §40 SGB XI Abs. 4.
             </p>
             <p>Mit freundlichen Grüßen</p>
@@ -783,6 +794,20 @@
     <div class="modal-actions">
       <button type="button" class="btn btn-capture" id="btnCapture">📸 Aufnehmen</button>
       <button type="button" class="btn btn-back" id="btnCameraClose">Abbrechen</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ DRAFT NAME MODAL ══════════ -->
+<div class="modal-overlay" id="draftNameModal">
+  <div class="modal-content modal-sm">
+    <h3>Entwurf speichern</h3>
+    <p>Optional einen Namen vergeben, um den Entwurf leichter wiederzufinden.</p>
+    <label class="field-label">Entwurfsname</label>
+    <input type="text" id="draftNameInput" placeholder="z.B. Harnisch Badumbau" />
+    <div class="modal-actions">
+      <button type="button" class="btn btn-next" id="btnDraftNameConfirm">Speichern</button>
+      <button type="button" class="btn btn-back" id="btnDraftNameCancel">Abbrechen</button>
     </div>
   </div>
 </div>

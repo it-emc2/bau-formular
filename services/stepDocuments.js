@@ -1,4 +1,7 @@
+const fs = require('fs');
+const path = require('path');
 const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
+const { buildDocumentPackage } = require('./documentLetter');
 
 function normalizeWhitespace(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
@@ -271,18 +274,8 @@ async function buildStepDocumentAttachments(data = {}, { includeDebug = false } 
       ].filter(Boolean),
       signatureDataUrl: data.unterschriftWarenpruefung,
     },
-    {
-      enabled: true,
-      title: '03-Fotos-und-Video',
-      fileName: `03-fotos-und-video-${customerSlug}.pdf`,
-      lines: buildFileLines(data, ['bilderFertigerUmbau', 'videoDesAblaufs', 'fotosAbdichtung']),
-    },
-    {
-      enabled: true,
-      title: '04-Weitere-Bilder',
-      fileName: `04-weitere-bilder-${customerSlug}.pdf`,
-      lines: buildFileLines(data, ['weitereBilder', 'weitereBilder2', 'weitereBilder3']),
-    },
+    // 03 + 04: actual files are appended below (not PDFs)
+
     {
       enabled: true,
       title: '05-Abschluss-und-Unterschrift',
@@ -316,15 +309,15 @@ async function buildStepDocumentAttachments(data = {}, { includeDebug = false } 
     },
     {
       enabled: includeDebug && (normalizeWhitespace(data.unterschriftMaengel) || normalizeWhitespace(data.maengelAbgeschlossenAm)),
-      title: '07-Maengelbeseitigung',
-      fileName: `07-maengelbeseitigung-${customerSlug}.pdf`,
+      title: '08-Maengelbeseitigung',
+      fileName: `08-maengelbeseitigung-${customerSlug}.pdf`,
       lines: [`Abgeschlossen am: ${formatDate(data.maengelAbgeschlossenAm)}`].filter(Boolean),
       signatureDataUrl: data.unterschriftMaengel,
     },
     {
       enabled: includeDebug && (normalizeWhitespace(data.unterschriftNB) || normalizeWhitespace(data.nachbesserungAbgeschlossenAm)),
-      title: '08-Nachbesserung',
-      fileName: `08-nachbesserung-${customerSlug}.pdf`,
+      title: '09-Nachbesserung',
+      fileName: `09-nachbesserung-${customerSlug}.pdf`,
       lines: [
         `Abgeschlossen am: ${formatDate(data.nachbesserungAbgeschlossenAm)}`,
         normalizeWhitespace(data.alleArbeitenNB)
@@ -349,7 +342,129 @@ async function buildStepDocumentAttachments(data = {}, { includeDebug = false } 
     }));
   }
 
+  // 03/04: Attach actual uploaded files as base64
+  const fileFields = [
+    'bilderFertigerUmbau', 'videoDesAblaufs', 'fotosAbdichtung',
+    'bilderBehobeneMaengel', 'weitereBilder', 'weitereBilder2', 'weitereBilder3',
+  ];
+  const uploadsDir = path.join(__dirname, '..', 'uploads');
+  let fileIndex = 0;
+
+  for (const fieldName of fileFields) {
+    const paths = Array.isArray(data[fieldName]) ? data[fieldName] : (data[fieldName] ? [data[fieldName]] : []);
+    for (const filePath of paths) {
+      const normalized = String(filePath || '').trim();
+      if (!normalized) continue;
+      const basename = path.basename(normalized);
+      const fullPath = path.join(uploadsDir, basename);
+      try {
+        const fileBuffer = fs.readFileSync(fullPath);
+        fileIndex++;
+        const ext = path.extname(basename).toLowerCase() || '.bin';
+        attachments.push({
+          filename: `${String(fileIndex).padStart(2, '0')}-${fieldName}${ext}`,
+          base64: fileBuffer.toString('base64'),
+        });
+      } catch (_err) {
+        // File not found on disk — skip
+      }
+    }
+  }
+
+  // 07: Confirmation letter as PDF
+  try {
+    const letterPdf = await buildConfirmationLetterPdf(data);
+    attachments.push(letterPdf);
+  } catch (_err) {
+    // Skip if letter generation fails
+  }
+
   return attachments;
+}
+
+async function buildConfirmationLetterPdf(data = {}) {
+  const doc = buildDocumentPackage(data);
+  const customerSlug = sanitizeFilenamePart(buildCustomerName(data), 'kunde');
+  const pdfDoc = await PDFDocument.create();
+  const page = pdfDoc.addPage([595.28, 841.89]);
+  const font = await pdfDoc.embedFont(StandardFonts.TimesRoman);
+  const bold = await pdfDoc.embedFont(StandardFonts.TimesRomanBold);
+
+  let y = 760;
+  const x = 70;
+  const maxWidth = 455;
+
+  // Address block
+  const addressLines = [
+    buildCustomerName(data),
+    normalizeWhitespace(data.adresse?.strasse),
+    normalizeWhitespace(data.adresse?.adresszeile2),
+    [normalizeWhitespace(data.adresse?.plz), normalizeWhitespace(data.adresse?.stadt)].filter(Boolean).join(' '),
+  ].filter(Boolean);
+
+  for (const line of addressLines) {
+    page.drawText(line, { x, y, size: 12, font, color: rgb(0.1, 0.1, 0.1) });
+    y -= 16;
+  }
+
+  // Date line
+  y -= 24;
+  const city = normalizeWhitespace(data.adresse?.stadt) || 'Leipzig';
+  const now = new Date();
+  const monthYear = new Intl.DateTimeFormat('de-DE', { month: 'long', year: 'numeric' }).format(now);
+  const dateLine = `${city}, im ${monthYear.charAt(0).toUpperCase() + monthYear.slice(1)}`;
+  const dateWidth = font.widthOfTextAtSize(dateLine, 12);
+  page.drawText(dateLine, { x: 595.28 - 70 - dateWidth, y, size: 12, font, color: rgb(0.1, 0.1, 0.1) });
+
+  // Body
+  y -= 40;
+  page.drawText('Sehr geehrte Damen und Herren,', { x, y, size: 12, font, color: rgb(0.1, 0.1, 0.1) });
+  y -= 28;
+
+  const bodyText = doc.text.split('\n').slice(
+    doc.text.split('\n').findIndex(l => l.startsWith('hiermit')),
+    doc.text.split('\n').findIndex(l => l.startsWith('Mit freundlichen'))
+  ).join(' ').trim();
+
+  // Word-wrap body text
+  const words = bodyText.split(/\s+/);
+  let currentLine = '';
+  for (const word of words) {
+    const test = currentLine ? `${currentLine} ${word}` : word;
+    if (font.widthOfTextAtSize(test, 12) > maxWidth && currentLine) {
+      page.drawText(currentLine, { x, y, size: 12, font, color: rgb(0.1, 0.1, 0.1) });
+      y -= 18;
+      currentLine = word;
+    } else {
+      currentLine = test;
+    }
+  }
+  if (currentLine) {
+    page.drawText(currentLine, { x, y, size: 12, font, color: rgb(0.1, 0.1, 0.1) });
+    y -= 18;
+  }
+
+  // Closing
+  y -= 20;
+  page.drawText('Mit freundlichen Grüßen', { x, y, size: 12, font, color: rgb(0.1, 0.1, 0.1) });
+  y -= 28;
+
+  // Signature
+  y = await embedSignatureIfPresent(pdfDoc, page, data.unterschriftKunde, y);
+
+  // Customer name
+  page.drawText(buildCustomerName(data) || 'Kundin / Kunde', { x, y, size: 12, font, color: rgb(0.1, 0.1, 0.1) });
+
+  // Footer
+  page.drawText(`Erstellt am ${formatDate(new Date())}`, {
+    x: 70, y: 40, size: 10, font, color: rgb(0.45, 0.45, 0.45),
+  });
+
+  const pdfBytes = await pdfDoc.save();
+  return {
+    filename: `07-bestaetigung-erfolgreicher-umbau-${customerSlug}.pdf`,
+    base64: Buffer.from(pdfBytes).toString('base64'),
+  };
 }
 
 module.exports = {

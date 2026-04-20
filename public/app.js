@@ -33,6 +33,9 @@
   const draftSearch = $('#draftSearch');
   const btnDraftRefresh = $('#btnDraftRefresh');
   const draftList = $('#draftList');
+  const homeDraftSearch = $('#homeDraftSearch');
+  const btnHomeDraftSearch = $('#btnHomeDraftSearch');
+  const homeDraftList = $('#homeDraftList');
   const bitrixSidebar = $('.bitrix-sidebar');
   const draftsPanel = $('.drafts-panel');
   const arbeitsberichtSearch = $('#arbeitsberichtSearch');
@@ -363,6 +366,7 @@
     bindAdditionalServicesConfirmationSync();
     bindBitrixAutofill();
     bindDraftLookup();
+    bindHomeDraftSearch();
     bindArbeitsberichtLookup();
     bindDocumentActions();
     bindChecklistRules();
@@ -531,7 +535,7 @@
       showStep(getPreviousVisibleStep(currentStep));
     });
 
-    btnDraft.addEventListener('click', () => saveForm('save'));
+    btnDraft.addEventListener('click', () => showDraftNameModal());
     btnSubmit.addEventListener('click', () => {
       if (validateAllSteps()) saveForm('submit');
     });
@@ -782,6 +786,73 @@ function syncDevSidebarVisibility() {
       localStorage.setItem(DEMO_PRESET_STORAGE_KEY, key);
       updateChecklistVariant(getSelectedDemoPreset().activityValue);
       showToast(`Musterdaten-Typ gesetzt: ${getSelectedDemoPreset().label}.`, 'success');
+    });
+  }
+
+  function bindHomeDraftSearch() {
+    if (!homeDraftList) return;
+
+    const doSearch = async () => {
+      const query = (homeDraftSearch?.value || '').trim();
+      if (btnHomeDraftSearch) btnHomeDraftSearch.disabled = true;
+      homeDraftList.innerHTML = '<p class="bitrix-empty">Entwürfe werden geladen...</p>';
+
+      try {
+        const qs = query ? `?q=${encodeURIComponent(query)}` : '';
+        const res = await fetch(`/api/form/drafts${qs}`);
+        const json = await res.json();
+
+        if (!json.success) throw new Error(json.error || 'Fehler');
+
+        const items = json.drafts || [];
+        renderHomeDrafts(items, query ? 'Keine passenden Entwürfe gefunden.' : 'Noch keine Entwürfe gespeichert.');
+      } catch (error) {
+        homeDraftList.innerHTML = '<p class="bitrix-empty">Fehler beim Laden der Entwürfe.</p>';
+        showToast('Fehler: ' + error.message, 'error');
+      } finally {
+        if (btnHomeDraftSearch) btnHomeDraftSearch.disabled = false;
+      }
+    };
+
+    if (btnHomeDraftSearch) btnHomeDraftSearch.addEventListener('click', doSearch);
+    if (homeDraftSearch) {
+      homeDraftSearch.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); doSearch(); }
+      });
+    }
+  }
+
+  function renderHomeDrafts(items, emptyMessage) {
+    if (!homeDraftList) return;
+
+    if (!items.length) {
+      homeDraftList.innerHTML = `<p class="bitrix-empty">${emptyMessage}</p>`;
+      return;
+    }
+
+    homeDraftList.innerHTML = '';
+    items.forEach(item => {
+      const card = document.createElement('article');
+      card.className = 'draft-card';
+
+      const displayTitle = buildDraftTitle(item);
+      const subtitle = buildDraftSubtitle(item);
+      const updatedAt = item.updatedAt ? formatShortDate(item.updatedAt) : '';
+
+      card.innerHTML = `
+        <div class="draft-card-top">
+          <div>
+            <div class="draft-card-title">${escapeHtml(displayTitle)}</div>
+            ${subtitle ? `<div class="draft-card-subtitle">${escapeHtml(subtitle)}</div>` : ''}
+            <div class="draft-card-meta">ID ${escapeHtml(String(item._id || ''))}${updatedAt ? ` · aktualisiert ${escapeHtml(updatedAt)}` : ''}</div>
+          </div>
+          ${item.terminId ? `<span class="bitrix-chip">${escapeHtml(item.terminId)}</span>` : ''}
+        </div>
+        <button type="button" class="draft-card-action">Entwurf laden</button>
+      `;
+
+      $('.draft-card-action', card).addEventListener('click', () => loadDraftById(item._id));
+      homeDraftList.appendChild(card);
     });
   }
 
@@ -1212,6 +1283,7 @@ function syncDevSidebarVisibility() {
   }
 
   function buildDraftTitle(item) {
+    if (item.entwurfsName) return item.entwurfsName;
     return [item.vorname, item.nachname]
       .map(value => String(value || '').trim())
       .filter(Boolean)
@@ -1882,6 +1954,7 @@ function syncDevSidebarVisibility() {
       const requiredUploads = [
         { name: 'bilderFertigerUmbau', label: 'Bilder des fertigen Umbaus' },
         { name: 'videoDesAblaufs', label: 'Video des Ablaufs' },
+        { name: 'fotosAbdichtung', label: 'Fotos der Abdichtung' },
       ];
 
       requiredUploads.forEach(({ name, label }) => {
@@ -2250,6 +2323,44 @@ function syncDevSidebarVisibility() {
       setDocumentStatus(`Fehler beim Bitrix-Versand: ${error.message}`, 'error');
       showToast('Fehler beim Bitrix-Versand: ' + error.message, 'error');
     }
+  }
+
+  // ── Draft Name Modal ────────────────────────────────────
+  function showDraftNameModal() {
+    const modal = $('#draftNameModal');
+    const input = $('#draftNameInput');
+    const btnConfirm = $('#btnDraftNameConfirm');
+    const btnCancel = $('#btnDraftNameCancel');
+    if (!modal) { saveForm('save'); return; }
+
+    input.value = $('[name="entwurfsName"]')?.value || '';
+    modal.classList.add('open');
+    input.focus();
+
+    const cleanup = () => {
+      modal.classList.remove('open');
+      btnConfirm.removeEventListener('click', onConfirm);
+      btnCancel.removeEventListener('click', onCancel);
+      input.removeEventListener('keydown', onKey);
+    };
+
+    const onConfirm = () => {
+      const name = input.value.trim();
+      setFieldValue('entwurfsName', name);
+      cleanup();
+      saveForm('save');
+    };
+
+    const onCancel = () => cleanup();
+
+    const onKey = e => {
+      if (e.key === 'Enter') { e.preventDefault(); onConfirm(); }
+      if (e.key === 'Escape') { e.preventDefault(); onCancel(); }
+    };
+
+    btnConfirm.addEventListener('click', onConfirm);
+    btnCancel.addEventListener('click', onCancel);
+    input.addEventListener('keydown', onKey);
   }
 
   // ── Save / Submit ──────────────────────────────────────

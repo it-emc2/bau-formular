@@ -115,8 +115,11 @@ describe('bitrix routes', () => {
     });
 
     expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringContaining('/crm.timeline.comment.add.json?'),
-      { method: 'GET' }
+      expect.stringContaining('/crm.timeline.comment.add.json'),
+      expect.objectContaining({
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      })
     );
     expect(res.statusCode).toBe(200);
     expect(res.body).toEqual({ result: 123 });

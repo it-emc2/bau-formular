@@ -8,7 +8,7 @@ const nodemailer = require('nodemailer');
 const Abnahme = require('../models/Abnahme');
 const Entwurf = require('../models/Entwurf');
 const { buildDocumentPackage } = require('../services/documentLetter');
-const { postTimelineComment } = require('../services/bitrix');
+const { postTimelineComment, updateDealFields } = require('../services/bitrix');
 const { buildStepDocumentAttachments } = require('../services/stepDocuments');
 
 const router = express.Router();
@@ -148,6 +148,17 @@ function buildSuccessResponse(form) {
   };
 }
 
+const DEAL_FIELD_DOC_MAP = {
+  '02-warenpruefung':                   'UF_CRM_1764230457968',
+  '05-abschluss-und-unterschrift':      'UF_CRM_1764760728724',
+  '06-checkliste':                      'UF_CRM_1764319514136',
+  '07-bestaetigung-erfolgreicher-umbau': 'UF_CRM_1741678496329',
+};
+
+function findAttachmentForDealField(attachments, prefix) {
+  return attachments.find(att => att.filename.startsWith(prefix));
+}
+
 async function trySendDocumentToBitrix(data = {}) {
   const entityId = Number(data.bitrixAuftragId || 0);
 
@@ -168,6 +179,23 @@ async function trySendDocumentToBitrix(data = {}) {
       comment,
       attachments,
     });
+
+    // Upload PDFs to deal custom fields
+    const dealFields = {};
+    for (const [prefix, fieldName] of Object.entries(DEAL_FIELD_DOC_MAP)) {
+      const att = findAttachmentForDealField(attachments, prefix);
+      if (att) {
+        dealFields[fieldName] = { fileData: [att.filename, att.base64] };
+      }
+    }
+
+    if (Object.keys(dealFields).length) {
+      try {
+        await updateDealFields({ dealId: entityId, fields: dealFields });
+      } catch (_err) {
+        // Deal field update is best-effort; don't fail the whole submission
+      }
+    }
 
     return {
       attempted: true,
@@ -199,6 +227,7 @@ function buildDraftSearchQuery(search = '') {
       { vorname: regex },
       { nachname: regex },
       { name: regex },
+      { entwurfsName: regex },
     ],
   };
 }
@@ -253,6 +282,7 @@ router.get('/drafts', async (req, res) => {
         vorname: draft.vorname,
         nachname: draft.nachname,
         name: draft.name,
+        entwurfsName: draft.entwurfsName,
         status: draft.status,
         updatedAt: draft.updatedAt,
       })),

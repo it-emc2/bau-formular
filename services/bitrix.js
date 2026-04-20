@@ -37,18 +37,54 @@ async function bxGet(method, paramsObj = {}) {
   return data;
 }
 
-function postTimelineComment({ entityType, entityId, comment }) {
-  return bxGet('crm.timeline.comment.add', {
-    fields: {
-      ENTITY_ID: entityId,
-      ENTITY_TYPE: entityType,
-      COMMENT: comment,
-    },
+async function bxPost(method, body = {}) {
+  const webhookBase = BITRIX_WEBHOOK_BASE();
+  if (!webhookBase) {
+    throw new Error('BITRIX_WEBHOOK_BASE is not configured.');
+  }
+
+  const url = `${webhookBase}/${method}.json`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await response.json().catch(() => null);
+
+  if (!data) throw new Error('Invalid JSON response from Bitrix');
+  if (data.error) throw new Error(data.error_description || data.error);
+
+  return data;
+}
+
+function postTimelineComment({ entityType, entityId, comment, attachments = [] }) {
+  const fields = {
+    ENTITY_ID: entityId,
+    ENTITY_TYPE: entityType,
+    COMMENT: comment,
+  };
+
+  if (attachments.length) {
+    fields.FILES = attachments.map(att => [
+      att.filename,
+      att.base64,
+    ]);
+  }
+
+  return bxPost('crm.timeline.comment.add', { fields });
+}
+
+function updateDealFields({ dealId, fields }) {
+  return bxPost('crm.deal.update', {
+    id: dealId,
+    fields,
   });
 }
 
 module.exports = {
   buildQS,
   bxGet,
+  bxPost,
   postTimelineComment,
+  updateDealFields,
 };
