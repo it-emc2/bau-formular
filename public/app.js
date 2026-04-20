@@ -23,6 +23,7 @@
   const devModeBadge  = $('#devModeBadge');
   const bitrixTestActions = $('#bitrixTestActions');
   const btnBitrixAutofill = $('#btnBitrixAutofill');
+  const btnFetchBitrixLead = $('#btnFetchBitrixLead');
   const btnBitrixRefresh = $('#btnBitrixRefresh');
   const btnDemoPrefill = $('#btnDemoPrefill');
   const btnHeaderDemoPrefill = $('#btnHeaderDemoPrefill');
@@ -736,6 +737,10 @@ function syncDevSidebarVisibility() {
       });
     }
 
+    if (btnFetchBitrixLead) {
+      btnFetchBitrixLead.addEventListener('click', fetchBitrixDealById);
+    }
+
     if (btnDemoPrefill) {
       btnDemoPrefill.addEventListener('click', () => prefillDemoData());
     }
@@ -847,7 +852,7 @@ function syncDevSidebarVisibility() {
 
     try {
       const itemRes = await fetch(
-        `/api/bitrix/items/by-stage?entityTypeId=${BITRIX_TEST_ENTITY_TYPE_ID}&stageId=${encodeURIComponent(BITRIX_STAGE_ID)}&useOriginalUfNames=N&select=id,title,stageId,contactId,opportunity,assignedById,createdTime,begindate,closeDate,UF_CRM_1725521281342,ufCrm_1725521281342`
+        `/api/bitrix/items/by-stage?entityTypeId=${BITRIX_TEST_ENTITY_TYPE_ID}&stageId=${encodeURIComponent(BITRIX_STAGE_ID)}&useOriginalUfNames=N&select=id,title,stageId,contactId,opportunity,assignedById,createdTime,begindate,closeDate,UF_CRM_1725521281342,ufCrm_1725521281342,UF_CRM_1776156870205,ufCrm_1776156870205`
       );
       const itemJson = await itemRes.json();
       const items = itemJson?.result?.items || itemJson?.result || [];
@@ -1564,6 +1569,8 @@ function syncDevSidebarVisibility() {
   function normalizeSalutation(value) {
     const normalized = String(value || '').trim().toLowerCase();
 
+    if (normalized === 'hnr_de_1') return 'Frau';
+    if (normalized === 'hnr_de_2') return 'Herr';
     if (normalized.includes('frau')) return 'Frau';
     if (normalized.includes('herr')) return 'Herr';
     if (normalized.includes('familie')) return 'Familie';
@@ -1580,11 +1587,11 @@ function syncDevSidebarVisibility() {
       item.ufCrm_1725521281342Resolved ||
       item.UF_CRM_1725521281342_RESOLVED ||
       '';
-    setFieldValue('terminId', `BITRIX-${item.id}`);
+    setFieldValue('terminId', item.id);
     setFieldValue('auftragsNummer', item.title || `Bitrix ${item.id}`);
     setFieldValue('kundennummer', item.contactId || item.id);
     setFieldValue('bitrixAuftragId', item.id);
-    setFieldValue('bitrixZusatzfeld', item.title || `Bitrix ${item.id}`);
+    setFieldValue('bitrixZusatzfeld', item.UF_CRM_1776156870205 || item.ufCrm_1776156870205 || item.title || `Bitrix ${item.id}`);
     setAuszufuehrendeTaetigkeitenValue(activityValue);
     updateChecklistVariant(activityValue);
     updateConfirmationLetterPreview();
@@ -1610,6 +1617,55 @@ function syncDevSidebarVisibility() {
         return { ...item, _contact: null };
       }
     }));
+  }
+
+  async function fetchBitrixDealById() {
+    const terminIdInput = $('[name="terminId"]', form);
+    const terminId = String(terminIdInput?.value || '').trim();
+
+    if (!terminId) {
+      showToast('Bitte zuerst eine Lead-ID eingeben.', 'error');
+      return;
+    }
+
+    const dealId = terminId.replace(/\D/g, '');
+    if (!dealId) {
+      showToast('Keine gueltige Bitrix-Deal-ID in der Lead-ID gefunden.', 'error');
+      return;
+    }
+
+    if (btnFetchBitrixLead) btnFetchBitrixLead.disabled = true;
+
+    try {
+      const res = await fetch(`/api/bitrix/deal/${encodeURIComponent(dealId)}`);
+      const json = await res.json();
+
+      if (!res.ok || !json.result) {
+        showToast(json.error || 'Deal nicht gefunden.', 'error');
+        return;
+      }
+
+      const deal = json.result;
+      applyBitrixDealToForm(deal);
+      showToast('Bitrix-Deal erfolgreich geladen.', 'success');
+    } catch (error) {
+      showToast('Fehler beim Abrufen des Deals: ' + error.message, 'error');
+    } finally {
+      if (btnFetchBitrixLead) btnFetchBitrixLead.disabled = false;
+    }
+  }
+
+  function applyBitrixDealToForm(deal) {
+    if (deal.TITLE) setFieldValue('auftragsNummer', deal.TITLE);
+    if (deal.UF_CRM_1776156870205) setFieldValue('bitrixZusatzfeld', deal.UF_CRM_1776156870205);
+    setFieldValue('bitrixAuftragId', deal.ID);
+
+    const contactId = deal.CONTACT_ID;
+    if (contactId) {
+      fetchBitrixContact(contactId).then(contact => {
+        if (contact) applyBitrixContactToForm(contact);
+      });
+    }
   }
 
   async function fetchBitrixContact(contactId) {

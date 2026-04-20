@@ -110,6 +110,25 @@ router.post('/timeline/comment', express.json({ limit: '1mb' }), async (req, res
   }
 });
 
+router.get('/deal/:id', async (req, res) => {
+  try {
+    const id = String(req.params.id || '').trim();
+    if (!id) return res.status(400).json({ error: 'id is required' });
+
+    const dealResp = await bxGet('crm.deal.get', { id });
+    const deal = dealResp?.result;
+
+    if (!deal) {
+      return res.status(404).json({ error: 'Deal not found' });
+    }
+
+    return res.json(dealResp);
+  } catch (err) {
+    console.error('GET /api/bitrix/deal/:id error:', err);
+    return res.status(500).json({ error: err?.message || String(err) });
+  }
+});
+
 router.get('/items/by-stage', async (req, res) => {
   try {
     const entityTypeId = Number(req.query.entityTypeId);

@@ -85,11 +85,15 @@
 
         <div class="step1-layout">
           <div class="step1-main">
-            <label class="field-label required">Termin-ID</label>
-            <input type="text" name="terminId" required placeholder="z.B. UT-12345" />
+            <label class="field-label required">Lead-ID</label>
+            <div class="termin-id-row">
+              <input type="text" name="terminId" required placeholder="z.B. 12345" />
+              <button type="button" class="btn btn-fetch-bitrix" id="btnFetchBitrixLead">Lead laden</button>
+            </div>
 
-            <label class="field-label">Kundennummer</label>
-            <input type="text" name="kundennummer" placeholder="Kundennummer" />
+            <!-- Kundennummer ausgeblendet für Abschluss der Baustelle -->
+            <!-- <label class="field-label">Kundennummer</label>
+            <input type="text" name="kundennummer" placeholder="Kundennummer" /> -->
 
             <label class="field-label">Art des Termins</label>
             <select name="artDesTermins">
@@ -160,7 +164,7 @@
             <div class="additional-services-box hidden" data-form-type-only="zusaetzliche_leistungen">
               <h3>Zusätzliche Leistungen</h3>
 
-              <label class="field-label required">Termin-ID</label>
+              <label class="field-label required">Lead-ID</label>
               <input type="text" id="zusatzTerminIdDisplay" readonly value="" placeholder="Wird aus den Grunddaten übernommen" />
 
               <div class="legal-text zusatzleistung-legal-text">
