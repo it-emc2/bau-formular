@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>emc2 Bauformular</title>
+  <link rel="stylesheet" href="/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/signature_pad@4.2.0/dist/signature_pad.umd.min.js"></script>
+</head>
+<body>
+
+<div class="app-wrapper">
+  <!-- ══════════ HEADER ══════════ -->
+  <header class="app-header">
+    <img src="/emc2-logo.png" alt="emc2 Dienstleister fürs Leben" class="brand-logo" />
+    <div class="brand-copy">
+      <h1 class="logo">emc2 Bauformular</h1>
+      <p class="subtitle">Digitale Baustellenabnahme</p>
+    </div>
+    <div class="app-header-actions pill-group">
+      <button type="button" class="pill-btn hidden" id="btnBackToHome">
+        Hauptmenü
+      </button>
+      <button type="button" class="dev-toggle pill-btn" id="devModeToggle" aria-pressed="false">
+        Testmodus: Aus
+      </button>
+      <button type="button" class="pill-btn hidden" id="btnHeaderDemoPrefill">
+        Musterdaten komplett
+      </button>
+    </div>
+  </header>
+
+  <!-- ══════════ FORM CARD ══════════ -->
+  <div class="form-card">
+
+    <!-- Step Indicator -->
+    <div class="step-indicator" id="stepIndicator"></div>
+
+    <form id="abnahmeForm" novalidate>
+      <input type="hidden" name="formularTyp" value="" />
+
+      <!-- ────────── STEP 0 ─ Start ────────── -->
+      <section class="form-step active form-start-step" data-step="0">
+        <h2>Bitte Formulartyp auswählen</h2>
+        <p class="intro">
+          Wähle den passenden Vorgang für deinen Einsatz aus. Anschließend werden dir nur die
+          Schritte angezeigt, die für die jeweilige Dokumentation erforderlich sind.
+        </p>
+
+        <div class="formular-type-grid">
+          <button type="button" class="formular-type-card" data-formular-type="baustellenabnahme">
+            <span class="formular-type-eyebrow">Typ 1</span>
+            <strong>Baustellenabnahme</strong>
+            <span>Vollständiger Baustellenabschluss mit Prüfung, Fotos, Bestätigung und Checkliste.</span>
+          </button>
+
+          <button type="button" class="formular-type-card" data-formular-type="zusaetzliche_leistungen">
+            <span class="formular-type-eyebrow">Typ 2</span>
+            <strong>Beauftragung zusätzliche Leistungen</strong>
+            <span>Kurzer Ablauf für Grunddaten, Leistungsbeschreibung und interne Hinweise.</span>
+          </button>
+
+          <button type="button" class="formular-type-card" data-formular-type="nachbesserung">
+            <span class="formular-type-eyebrow">Typ 3</span>
+            <strong>Nachbesserung</strong>
+            <span>Eigener Ablauf für Nachlieferung, Restarbeiten und Kundenunterschrift.</span>
+          </button>
+
+          <button type="button" class="formular-type-card" data-formular-type="schadensmeldung">
+            <span class="formular-type-eyebrow">Typ 4</span>
+            <strong>Schadensmeldung</strong>
+            <span>Grunddaten, Fotodokumentation und interne Meldung für Schäden vor Ort.</span>
+          </button>
+        </div>
+      </section>
+
+      <!-- ────────── STEP 1 ────────── -->
+      <section class="form-step" data-step="1">
+        <h2 id="step1Title">Abschluss der Baustelle</h2>
+        <p class="intro" id="step1Intro">
+          Auf den folgenden Seiten wirst du Schritt für Schritt durch den Abschluss
+          der Baustelle geführt. Bitte beachte, dass dieser <strong>vor Ort mit dem
+          Kunden</strong> gemeinsam vorgenommen werden muss.
+        </p>
+
+        <div class="step1-layout">
+          <div class="step1-main">
+            <label class="field-label required">Termin-ID</label>
+            <input type="text" name="terminId" required placeholder="z.B. UT-12345" />
+
+            <label class="field-label">Kundennummer</label>
+            <input type="text" name="kundennummer" placeholder="Kundennummer" />
+
+            <label class="field-label">Art des Termins</label>
+            <select name="artDesTermins">
+              <option value="Umbau">Umbau</option>
+              <option value="Nachbesserung">Nachbesserung</option>
+              <option value="Service">Service</option>
+            </select>
+
+            <div class="name-block">
+              <div>
+                <label class="field-label required">Anrede</label>
+                <div class="choice-group choice-group-3">
+                  <label class="choice-pill">
+                    <input type="radio" name="anrede" value="Frau" />
+                    <span>Frau</span>
+                  </label>
+                  <label class="choice-pill">
+                    <input type="radio" name="anrede" value="Herr" />
+                    <span>Herr</span>
+                  </label>
+                  <label class="choice-pill">
+                    <input type="radio" name="anrede" value="Familie" />
+                    <span>Familie</span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="row-2 row-2-name">
+                <div>
+                  <label class="field-label required">Vorname</label>
+                  <input type="text" name="vorname" required placeholder="Vorname" />
+                </div>
+                <div>
+                  <label class="field-label required">Nachname</label>
+                  <input type="text" name="nachname" required placeholder="Nachname" />
+                </div>
+              </div>
+            </div>
+
+            <fieldset class="address-group">
+              <legend>Adresse</legend>
+              <input type="text" name="adresse.strasse" placeholder="Straßen Adresse" />
+              <input type="text" name="adresse.adresszeile2" placeholder="Adresszeile 2" />
+              <div class="row-2">
+                <div>
+                  <input type="text" name="adresse.stadt" placeholder="Stadt" />
+                  <small>Stadt</small>
+                </div>
+                <div>
+                  <input type="text" name="adresse.plz" placeholder="PLZ" />
+                  <small>Postleitzahl</small>
+                </div>
+              </div>
+            </fieldset>
+
+            <div data-form-type-only="baustellenabnahme,nachbesserung">
+              <label class="field-label required">Konnte der Termin erfolgreich beendet werden?</label>
+              <select name="terminStatus" required>
+                <option value="">— Bitte wählen —</option>
+                <option value="Erfolgreich beendet">Erfolgreich beendet</option>
+                <option value="Nicht erfolgreich beendet">Nicht erfolgreich beendet</option>
+              </select>
+            </div>
+
+            <label class="field-label">Auftrags-Nummer</label>
+            <input type="text" name="auftragsNummer" placeholder="A-AN-XXXXX" />
+
+            <div class="additional-services-box hidden" data-form-type-only="zusaetzliche_leistungen">
+              <h3>Zusätzliche Leistungen</h3>
+
+              <label class="field-label required">Termin-ID</label>
+              <input type="text" id="zusatzTerminIdDisplay" readonly value="" placeholder="Wird aus den Grunddaten übernommen" />
+
+              <div class="legal-text zusatzleistung-legal-text">
+                <p>
+                  Mit meiner Unterschrift bestätige ich, dass die nachfolgend aufgeführten Zusatzarbeiten von mir beauftragt wurden.
+                  Der vereinbarte Gesamtpreis für diese Leistungen beträgt brutto <strong id="zusatzPreisDisplay">0,00 €</strong>.
+                  Ich bin darüber informiert, dass diese Kosten zusätzlich zu den bisherigen Aufträgen anfallen.
+                </p>
+              </div>
+
+              <label class="field-label required">Zusätzliche Arbeiten</label>
+              <textarea name="zusaetzlicheArbeiten" rows="6" placeholder="Leistungsbeschreibung" required></textarea>
+
+              <label class="field-label">Preis der zusätzlichen Leistungen</label>
+              <div class="input-euro">
+                <input type="number" name="preisZusaetzlich" min="0" step="0.01" placeholder="0,00" />
+                <span class="euro-suffix">€</span>
+              </div>
+
+              <label class="field-label required">Unterschrift zusätzliche Leistungen</label>
+              <div class="signature-wrapper" data-name="unterschriftZusaetzlicheLeistungen">
+                <canvas class="signature-canvas" width="600" height="200"></canvas>
+                <button type="button" class="btn-clear-sig">Löschen</button>
+              </div>
+              <input type="hidden" name="unterschriftZusaetzlicheLeistungen" />
+              <input type="hidden" name="unterschriftZusaetzlicheLeistungenZeitpunkt" />
+            </div>
+
+            <div class="bitrix-debug-fields hidden" id="bitrixDebugFields">
+              <label class="field-label">Bitrix Zusatzfeld</label>
+              <input type="text" name="bitrixZusatzfeld" readonly placeholder="Wird nur im Testmodus angezeigt" />
+
+              <label class="field-label">Auszuführende Tätigkeiten</label>
+              <input type="text" name="auszufuehrendeTaetigkeiten" readonly placeholder="Wird nur im Testmodus angezeigt" />
+            </div>
+          </div>
+
+          <aside class="bitrix-sidebar">
+            <div class="dev-tools" id="devToolsPanel">
+              <div class="dev-tools-head">
+                <div>
+                  <h3 class="bitrix-panel-title">Bitrix-Aufträge</h3>
+                  <p class="bitrix-panel-subtitle">Auftrag auswählen und Formular automatisch vorbefüllen.</p>
+                </div>
+                <span class="dev-tools-badge hidden" id="devModeBadge">Testmodus</span>
+              </div>
+
+              <div class="bitrix-toolbar">
+                <input type="text" id="bitrixSearch" class="bitrix-search" placeholder="Suche nach Kunde, Angebot oder ID" />
+                <button type="button" class="btn btn-bitrix" id="btnBitrixRefresh">
+                  Aktualisieren
+                </button>
+              </div>
+
+              <div class="bitrix-test-actions hidden" id="bitrixTestActions">
+                <label class="field-label demo-preset-label" for="demoActivityPreset">Musterdaten-Typ</label>
+                <select id="demoActivityPreset" class="demo-preset-select">
+                  <option value="badumbau">Badumbau</option>
+                  <option value="badewannentuer">Badewannentür</option>
+                  <option value="handlaeufe">Handläufe / Haltegriffe</option>
+                </select>
+                <button type="button" class="btn btn-bitrix ghost" id="btnDemoPrefill">
+                  Musterdaten einfüllen
+                </button>
+              </div>
+
+              <div class="bitrix-deal-list" id="bitrixDealList">
+                <p class="bitrix-empty">Bitrix-Aufträge werden geladen.</p>
+              </div>
+
+              <div class="drafts-panel">
+                <div class="dev-tools-head drafts-head">
+                  <div>
+                    <h3 class="bitrix-panel-title">Entwürfe</h3>
+                    <p class="bitrix-panel-subtitle">Zwischengespeicherte Formulare suchen und weiterbearbeiten.</p>
+                  </div>
+                </div>
+
+                <div class="bitrix-toolbar">
+                  <input type="text" id="draftSearch" class="bitrix-search" placeholder="Suche nach Termin, Kunde oder Auftrag" />
+                  <button type="button" class="btn btn-bitrix" id="btnDraftRefresh">
+                    Suchen
+                  </button>
+                </div>
+
+                <div class="draft-list" id="draftList">
+                  <p class="bitrix-empty">Entwürfe werden geladen.</p>
+                </div>
+              </div>
+
+              <button type="button" class="btn btn-bitrix ghost hidden" id="btnBitrixAutofill">
+                Legacy Autofill
+              </button>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <!-- ────────── STEP 3 ─ Warenpruefung ────────── -->
+      <section class="form-step" data-step="3" data-form-type-only="baustellenabnahme">
+        <h2>Warenprüfung vor Baubeginn</h2>
+        <p class="intro">Ware vor Baubeginn genau auf Qualität, sichtbare Schäden und Funktionsfähigkeit prüfen.</p>
+
+        <label class="field-label">Datum</label>
+        <input type="date" name="warenpruefungDatum" />
+
+        <div class="inspection-table">
+          <div class="inspection-row inspection-head">
+            <div>Zu prüfende Ware</div>
+            <div>I.O.</div>
+            <div>Nicht I.O.</div>
+          </div>
+
+          <div class="inspection-row">
+            <div>Wandverkleidung(en)</div>
+            <label><input type="radio" name="wareWandverkleidungenStatus" value="io" /></label>
+            <label><input type="radio" name="wareWandverkleidungenStatus" value="nicht-io" /></label>
+          </div>
+          <div class="inspection-row">
+            <div>Duschabtrennung(en)</div>
+            <label><input type="radio" name="wareDuschabtrennungenStatus" value="io" /></label>
+            <label><input type="radio" name="wareDuschabtrennungenStatus" value="nicht-io" /></label>
+          </div>
+          <div class="inspection-row">
+            <div>Duschwanne</div>
+            <label><input type="radio" name="wareDuschwanneStatus" value="io" /></label>
+            <label><input type="radio" name="wareDuschwanneStatus" value="nicht-io" /></label>
+          </div>
+          <div class="inspection-row">
+            <div>Badewannentür</div>
+            <label><input type="radio" name="wareBadewannentuerStatus" value="io" /></label>
+            <label><input type="radio" name="wareBadewannentuerStatus" value="nicht-io" /></label>
+          </div>
+          <div class="inspection-row">
+            <div>Waschtisch mit allen Anbauteilen</div>
+            <label><input type="radio" name="wareWaschtischStatus" value="io" /></label>
+            <label><input type="radio" name="wareWaschtischStatus" value="nicht-io" /></label>
+          </div>
+          <div class="inspection-row">
+            <div>Toilette mit allen Anbauteilen</div>
+            <label><input type="radio" name="wareToiletteStatus" value="io" /></label>
+            <label><input type="radio" name="wareToiletteStatus" value="nicht-io" /></label>
+          </div>
+          <div class="inspection-row">
+            <div>Haltegriff</div>
+            <label><input type="radio" name="wareHaltegriffStatus" value="io" /></label>
+            <label><input type="radio" name="wareHaltegriffStatus" value="nicht-io" /></label>
+          </div>
+          <div class="inspection-row">
+            <div>Böden</div>
+            <label><input type="radio" name="wareBoedenStatus" value="io" /></label>
+            <label><input type="radio" name="wareBoedenStatus" value="nicht-io" /></label>
+          </div>
+          <div class="inspection-row">
+            <div>Geländer (FlexoFit)</div>
+            <label><input type="radio" name="wareGelaenderStatus" value="io" /></label>
+            <label><input type="radio" name="wareGelaenderStatus" value="nicht-io" /></label>
+          </div>
+          <div class="inspection-row">
+            <div>Sonstiges</div>
+            <label><input type="radio" name="wareSonstigesStatus" value="io" /></label>
+            <label><input type="radio" name="wareSonstigesStatus" value="nicht-io" /></label>
+          </div>
+        </div>
+
+        <label class="field-label">Kommentare</label>
+        <textarea name="warenpruefungKommentar" rows="4" placeholder="Bemerkungen zur Prüfung der Ware"></textarea>
+
+        <label class="field-label">Unterschrift mit Datum</label>
+        <div class="signature-wrapper" data-name="unterschriftWarenpruefung">
+          <canvas class="signature-canvas" width="600" height="200"></canvas>
+          <button type="button" class="btn-clear-sig">Löschen</button>
+        </div>
+        <input type="hidden" name="unterschriftWarenpruefung" />
+      </section>
+
+      <!-- ────────── STEP 4 ────────── -->
+      <section class="form-step" data-step="4" data-form-type-only="baustellenabnahme,schadensmeldung">
+        <h2>Fotos &amp; Video</h2>
+
+        <label class="field-label required">Bilder des fertigen Umbaus</label>
+        <div class="file-upload" data-name="bilderFertigerUmbau" data-multiple="true" data-accept="image/*">
+          <div class="file-drop">
+            <span>Datei(en) wählen</span>
+            <div class="file-actions">
+              <button type="button" class="btn-icon btn-upload" title="Datei hochladen">⬆</button>
+              <button type="button" class="btn-icon btn-camera" title="Foto aufnehmen">📷</button>
+            </div>
+          </div>
+          <div class="file-preview"></div>
+          <input type="file" accept="image/*" multiple hidden />
+        </div>
+
+        <div class="checkbox-row">
+          <label>
+            <input type="checkbox" name="grossesVideoNachgang" />
+            Großes Video im Nachgang hochladen
+          </label>
+          <p class="hint">Wenn diese Checkbox gewählt wird, erhältst du im Nachgang die Möglichkeit, das Video hochzuladen.</p>
+        </div>
+
+        <label class="field-label required">Video des Ablaufs</label>
+        <div class="file-upload" data-name="videoDesAblaufs" data-multiple="false" data-accept="video/*">
+          <div class="file-drop">
+            <span>Datei wählen</span>
+            <div class="file-actions">
+              <button type="button" class="btn-icon btn-upload" title="Datei hochladen">⬆</button>
+              <button type="button" class="btn-icon btn-video" title="Video aufnehmen">🎥</button>
+            </div>
+          </div>
+          <div class="file-preview"></div>
+          <input type="file" accept="video/*" hidden />
+        </div>
+        <p class="hint">Hier bitte die Brause über den Abfluss halten, Wasser laufen lassen und filmen dass es abläuft.</p>
+
+        <label class="field-label">Fotos der Abdichtung</label>
+        <div class="file-upload" data-name="fotosAbdichtung" data-multiple="true" data-accept="image/*">
+          <div class="file-drop">
+            <span>Datei(en) wählen</span>
+            <div class="file-actions">
+              <button type="button" class="btn-icon btn-upload" title="Datei hochladen">⬆</button>
+              <button type="button" class="btn-icon btn-camera" title="Foto aufnehmen">📷</button>
+            </div>
+          </div>
+          <div class="file-preview"></div>
+          <input type="file" accept="image/*" multiple hidden />
+        </div>
+
+        <label class="field-label">Bilder der behobenen Mängel</label>
+        <div class="file-upload" data-name="bilderBehobeneMaengel" data-multiple="true" data-accept="image/*">
+          <div class="file-drop">
+            <span>Datei(en) wählen</span>
+            <div class="file-actions">
+              <button type="button" class="btn-icon btn-upload" title="Datei hochladen">⬆</button>
+              <button type="button" class="btn-icon btn-camera" title="Foto aufnehmen">📷</button>
+            </div>
+          </div>
+          <div class="file-preview"></div>
+          <input type="file" accept="image/*" multiple hidden />
+        </div>
+      </section>
+
+      <!-- ────────── STEP 5 ────────── -->
+      <section class="form-step" data-step="5" data-form-type-only="baustellenabnahme,schadensmeldung">
+        <h2>Weitere Bilder</h2>
+
+        <label class="field-label">Weitere Bilder</label>
+        <div class="file-upload" data-name="weitereBilder" data-multiple="true" data-accept="image/*">
+          <div class="file-drop">
+            <span>Datei(en) wählen</span>
+            <div class="file-actions">
+              <button type="button" class="btn-icon btn-upload" title="Datei hochladen">⬆</button>
+              <button type="button" class="btn-icon btn-camera" title="Foto aufnehmen">📷</button>
+            </div>
+          </div>
+          <div class="file-preview"></div>
+          <input type="file" accept="image/*" multiple hidden />
+        </div>
+
+        <label class="field-label">Weitere Bilder 2</label>
+        <div class="file-upload" data-name="weitereBilder2" data-multiple="true" data-accept="image/*">
+          <div class="file-drop">
+            <span>Datei(en) wählen</span>
+            <div class="file-actions">
+              <button type="button" class="btn-icon btn-upload" title="Datei hochladen">⬆</button>
+              <button type="button" class="btn-icon btn-camera" title="Foto aufnehmen">📷</button>
+            </div>
+          </div>
+          <div class="file-preview"></div>
+          <input type="file" accept="image/*" multiple hidden />
+        </div>
+
+        <label class="field-label">Weitere Bilder 3</label>
+        <div class="file-upload" data-name="weitereBilder3" data-multiple="true" data-accept="image/*">
+          <div class="file-drop">
+            <span>Datei(en) wählen</span>
+            <div class="file-actions">
+              <button type="button" class="btn-icon btn-upload" title="Datei hochladen">⬆</button>
+              <button type="button" class="btn-icon btn-camera" title="Foto aufnehmen">📷</button>
+            </div>
+          </div>
+          <div class="file-preview"></div>
+          <input type="file" accept="image/*" multiple hidden />
+        </div>
+      </section>
+
+      <!-- ────────── STEP 6 ─ Bestätigung erfolgreicher Umbau ────────── -->
+      <section class="form-step" data-step="6" data-form-type-only="baustellenabnahme">
+        <h2>Bestätigung erfolgreicher Umbau</h2>
+        <p class="intro">Dieses Schreiben wird automatisch aus den Kundendaten aufgebaut und direkt vor der finalen Checkliste vom Kunden unterschrieben.</p>
+
+        <div class="bestaetigung-letter">
+          <div class="bestaetigung-address">
+            <div class="bestaetigung-name"><span class="kunde-name-display">Max Mustermann</span></div>
+            <div><span class="adresse-strasse-display">Musterstraße 42</span></div>
+            <div><span class="adresse-adresszeile2-display">2. OG links</span></div>
+            <div><span class="adresse-plz-display">04109</span> <span class="adresse-stadt-display">Leipzig</span></div>
+          </div>
+
+          <div class="bestaetigung-date-line">
+            <span class="adresse-stadt-display">Leipzig</span>, im <span class="brief-monat-jahr-display">April 2026</span>
+          </div>
+
+          <div class="bestaetigung-body">
+            <p>Sehr geehrte Damen und Herren,</p>
+            <p>
+              hiermit bestätige ich den durch die Fa. EmC2 erfolgreich durchgeführten barrierearmen Umbau
+              gemäß Auftrag <strong class="auftrag-nr-display">DBG-ANG-2026-001</strong>
+              mit Hilfe der mir genehmigten Förderung nach §40 SGB XI Abs. 4.
+            </p>
+            <p>Mit freundlichen Grüßen</p>
+          </div>
+
+          <div class="bestaetigung-signoff">
+            <div class="kunde-name-display">Max Mustermann</div>
+          </div>
+        </div>
+
+        <label class="field-label required">Unterschrift Kunde</label>
+        <div class="signature-wrapper" data-name="unterschriftKunde">
+          <canvas class="signature-canvas" width="600" height="200"></canvas>
+          <button type="button" class="btn-clear-sig">Löschen</button>
+        </div>
+        <input type="hidden" name="unterschriftKunde" />
+        <input type="hidden" name="unterschriftZeitpunkt" />
+      </section>
+
+      <!-- ────────── STEP 7 ─ Mängelbeseitigung ────────── -->
+      <section class="form-step dev-only-step" data-step="7" data-form-type-only="baustellenabnahme">
+        <h2>Mängelbeseitigung</h2>
+
+        <label class="field-label required">Die Mängelbeseitigung wurde vollständig abgeschlossen am</label>
+        <input type="date" name="maengelAbgeschlossenAm" />
+
+        <div class="legal-text">
+          <p>Mit meiner Unterschrift bestätige ich den ordnungsgemäßen Abschluss der Mängelbeseitigung.</p>
+        </div>
+
+        <label class="field-label required">Unterschrift Mängelbeseitigung</label>
+        <div class="signature-wrapper" data-name="unterschriftMaengel">
+          <canvas class="signature-canvas" width="600" height="200"></canvas>
+          <button type="button" class="btn-clear-sig">Löschen</button>
+        </div>
+        <input type="hidden" name="unterschriftMaengel" />
+        <input type="hidden" name="unterschriftMaengelZeitpunkt" />
+      </section>
+
+      <!-- ────────── STEP 8 ─ Nachbesserung ────────── -->
+      <section class="form-step dev-only-step" data-step="8" data-form-type-only="baustellenabnahme,nachbesserung">
+        <h2>Nachbesserung</h2>
+
+        <label class="field-label required">Die Nachlieferung der noch offenen Arbeiten wurde vollständig abgeschlossen am</label>
+        <input type="date" name="nachbesserungAbgeschlossenAm" />
+
+        <div class="kva-section">
+          <h3>KVA für Nachbesserung</h3>
+          <label class="field-label">Zusätzlich zur Beauftragung durchgeführte Arbeiten</label>
+          <textarea name="zusaetzlicheArbeitenNB" rows="3"></textarea>
+
+          <label class="field-label">Preis der zusätzlich durchgeführten Arbeiten</label>
+          <div class="input-euro">
+            <input type="number" name="preisZusaetzlichNB" min="0" step="0.01" placeholder="0,00" />
+            <span class="euro-suffix">€</span>
+          </div>
+        </div>
+
+        <label class="field-label required">Wurden alle Arbeiten durchgeführt?</label>
+        <div class="radio-group">
+          <label><input type="radio" name="alleArbeitenNB" value="Ja" /> Ja</label>
+          <label><input type="radio" name="alleArbeitenNB" value="Nein" /> Nein</label>
+        </div>
+
+        <div class="conditional-field" data-show-when="alleArbeitenNB" data-show-value="Nein">
+          <label class="field-label required">Welche Arbeiten wurden nicht durchgeführt?</label>
+          <textarea name="nichtErledigteArbeitenNB" rows="3"></textarea>
+        </div>
+
+        <div class="legal-text">
+          <p>Mit meiner Unterschrift bestätige ich den ordnungsgemäßen Abschluss der beauftragten
+          Arbeiten unter Einbezug der eventuell oben festgehaltenen Abweichungen.</p>
+          <p>Falls eine Kostenübernahme durch die Pflegekasse zugesagt wurde, erkläre ich mich damit
+          einverstanden, dass die Seniovo Bau GmbH im Rahmen des Kostenerstattungsverfahren für
+          wohnumfeldverbessernde Maßnahmen direkt mit meiner Krankenkasse abrechnen darf.</p>
+        </div>
+
+        <label class="field-label required">Unterschrift Nachbesserung</label>
+        <div class="signature-wrapper" data-name="unterschriftNB">
+          <canvas class="signature-canvas" width="600" height="200"></canvas>
+          <button type="button" class="btn-clear-sig">Löschen</button>
+        </div>
+        <input type="hidden" name="unterschriftNB" />
+        <input type="hidden" name="unterschriftNBZeitpunkt" />
+      </section>
+
+      <!-- ────────── STEP 9 ─ Arbeitsbericht ────────── -->
+      <section class="form-step dev-only-step" data-step="9" data-form-type-only="baustellenabnahme">
+        <h2>Arbeitsbericht</h2>
+        <p class="intro">Suche nach einem externen Angebot oder Entwurf und lade daraus den Arbeitsbericht als PDF.</p>
+
+        <div class="arbeitsbericht-panel">
+          <div class="document-panel-head">
+            <div>
+              <h3>Externe Suche</h3>
+              <p>Suche nach Name, Angebotsnummer, E-Mail oder Ort. Beim Auswählen wird der passende Arbeitsbericht als PDF geladen.</p>
+            </div>
+          </div>
+
+          <div class="bitrix-toolbar">
+            <input type="text" id="arbeitsberichtSearch" class="bitrix-search" placeholder="Suche nach Name, Angebotsnummer, E-Mail oder Ort" />
+            <button type="button" class="btn btn-bitrix" id="btnArbeitsberichtSearch">
+              Suchen
+            </button>
+          </div>
+
+          <div class="bitrix-deal-list arbeitsbericht-results" id="arbeitsberichtResultList">
+            <p class="bitrix-empty">Noch keine externen Treffer geladen.</p>
+          </div>
+
+          <p class="document-status" id="arbeitsberichtStatus">
+            Waehle einen Treffer aus, um den Arbeitsbericht aus der externen App als PDF abzurufen.
+          </p>
+
+          <div class="arbeitsbericht-loading hidden" id="arbeitsberichtLoading" aria-live="polite">
+            <div class="arbeitsbericht-loading-spinner" aria-hidden="true"></div>
+            <div class="arbeitsbericht-loading-copy">
+              <strong>PDF wird erstellt...</strong>
+              <span id="arbeitsberichtLoadingTimer">0s</span>
+            </div>
+          </div>
+
+          <div class="arbeitsbericht-preview hidden" id="arbeitsberichtPreview">
+            <div class="arbeitsbericht-preview-head">
+              <h3>PDF-Vorschau</h3>
+              <a href="#" class="btn btn-doc-secondary arbeitsbericht-preview-download" id="arbeitsberichtPreviewDownload">PDF herunterladen</a>
+            </div>
+            <iframe
+              id="arbeitsberichtPreviewFrame"
+              class="arbeitsbericht-preview-frame"
+              title="Arbeitsbericht PDF Vorschau"
+            ></iframe>
+          </div>
+        </div>
+      </section>
+
+      <!-- ────────── STEP 10 ─ Hinweise ────────── -->
+      <section class="form-step" data-step="10">
+        <h2>Hinweise für das Büro</h2>
+        <textarea name="hinweiseBuero" rows="6" placeholder="Optionale Hinweise für das Büro…"></textarea>
+
+        <div class="document-panel hidden" id="debugDocumentPanel">
+          <div class="document-panel-head">
+            <div>
+              <h3>Bestätigungsschreiben</h3>
+              <p>Am Ende des Formulars kannst du das Schreiben ansehen, herunterladen, per E-Mail vorbereiten oder in Bitrix als Kommentar hinterlegen.</p>
+            </div>
+          </div>
+
+          <div class="row-2">
+            <div>
+              <label class="field-label">E-Mail-Empfänger</label>
+              <input type="email" name="emailEmpfaenger" id="emailEmpfaenger" placeholder="kunde@beispiel.de" />
+            </div>
+            <div>
+              <label class="field-label">Bitrix-Auftrag-ID</label>
+              <input type="text" name="bitrixAuftragId" id="bitrixAuftragId" placeholder="z.B. 12345" />
+            </div>
+          </div>
+
+          <div class="document-actions">
+            <button type="button" class="btn btn-doc-secondary" id="btnPreviewDocument">Vorschau</button>
+            <button type="button" class="btn btn-doc-secondary" id="btnDownloadDocument">Herunterladen</button>
+            <button type="button" class="btn btn-doc-secondary" id="btnEmailDocument">Per E-Mail</button>
+            <button type="button" class="btn btn-doc-secondary" id="btnBitrixDocument">Zu Bitrix</button>
+          </div>
+
+          <p class="document-status" id="documentStatus">
+            Das Schreiben wird automatisch aus Kundendaten, Adresse, Auftrag und Unterschrift aufgebaut.
+          </p>
+
+          <div class="document-preview hidden" id="documentPreview">
+            <div class="document-preview-head">
+              <h3>Vorschau im Formular</h3>
+              <div class="document-preview-actions">
+                <a href="#" class="btn btn-doc-secondary document-preview-download" id="documentPreviewOpen">Im neuen Tab öffnen</a>
+                <a href="#" class="btn btn-doc-secondary document-preview-download" id="documentPreviewDownload">Herunterladen</a>
+              </div>
+            </div>
+            <iframe
+              id="documentPreviewFrame"
+              class="document-preview-frame"
+              title="Bestaetigungsschreiben Vorschau"
+            ></iframe>
+          </div>
+        </div>
+      </section>
+
+
+      <!-- ────────── STEP 11 ─ Montage-Checkliste ────────── -->
+      <section class="form-step" data-step="11" data-form-type-only="baustellenabnahme">
+        <h2 id="checklistStepTitle">Checkliste Badumbau</h2>
+        <p class="intro" id="checklistStepIntro">Bitte alle Punkte abhaken, sobald sie erledigt oder geprüft wurden.</p>
+
+        <div class="checklist-group">
+          <h3>1. Fotodokumentation</h3>
+          <label class="check-item required"><input type="checkbox" name="checklistFotosWaerendUmsetzung" /> Regelmäßige Fotos während der Umsetzung gemacht?</label>
+          <label class="check-item required"><input type="checkbox" name="checklistFinaleFotos" /> Finale Fotos nach Abschluss gemacht?</label>
+          <label class="check-item required"><input type="checkbox" name="checklistFotosHandwerkskoordination" /> Fotos an Handwerkskoordination übermittelt?</label>
+
+          <label class="field-label">Übermittlungsweg</label>
+          <div class="choice-group choice-group-3">
+            <label class="choice-pill"><input type="radio" name="checklistFotoUebermittlung" value="iMessage" /><span>iMessage<br /><small>an 0157 37994273</small></span></label>
+            <label class="choice-pill"><input type="radio" name="checklistFotoUebermittlung" value="WhatsApp" /><span>WhatsApp<br /><small>an 0157 37994273</small></span></label>
+            <label class="choice-pill"><input type="radio" name="checklistFotoUebermittlung" value="FortyTools" /><span>FortyTools</span></label>
+          </div>
+        </div>
+
+        <div class="checklist-group">
+          <h3>2. Verbrauchsmaterial</h3>
+          <label class="check-item required"><input type="checkbox" name="checklistVerbrauchsmaterialErfasst" /> Verbrauchsmaterial über GC-App separat erfasst? (Fittinge, Rohre, etc.)</label>
+          <label class="check-item required"><input type="checkbox" name="checklistWarenkorbGeschickt" /> Warenkorb über GC-App an Handwerkskoordination geschickt?</label>
+        </div>
+
+        <div class="checklist-group">
+          <h3>3. Warenprüfung</h3>
+          <label class="check-item"><input type="checkbox" name="checklistDokumentWarenpruefung" /> Dokument „Warenprüfung“ vom Monteur ausgefüllt und unterschrieben?</label>
+        </div>
+
+        <div class="checklist-group">
+          <h3>4. Arbeitszeiterfassung</h3>
+          <label class="check-item"><input type="checkbox" name="checklistArbeitszeitenErfasst" /> Arbeitszeiten in FortyTools erfasst und vom Kunden unterschrieben?</label>
+        </div>
+
+        <div class="checklist-group">
+          <h3>5. Bestätigung &amp; Arbeitsbericht</h3>
+          <label class="check-item"><input type="checkbox" name="checklistBestaetigungKasse" /> Dokument „Bestätigung für erfolgreichen Umbau Kasse“ vom Kunden unterschrieben?</label>
+          <label class="check-item"><input type="checkbox" name="checklistDokumentArbeitsbericht" /> Dokument „Arbeitsbericht“ vom Kunden unterschrieben?</label>
+        </div>
+
+        <div class="checklist-group">
+          <h3>6. Kundeninformation</h3>
+          <label class="check-item required"><input type="checkbox" name="checklistFlyerBadewannentuer" /> 2 x EmC2-Flyer „Badewannentür“ an Kunden übergeben?</label>
+          <label class="check-item required"><input type="checkbox" name="checklistFlyerBadumbau" /> 2 x EmC2-Flyer „Badumbau“ an Kunden übergeben?</label>
+          <label class="check-item required"><input type="checkbox" name="checklistFlyerHaltegriffe" /> 2 x EmC2-Flyer „Haltegriffe &amp; Handläufe“ an Kunden übergeben?</label>
+          <label class="check-item"><input type="checkbox" name="checklistBroschuerePflegehinweise" /> Broschüre „Pflegehinweise“ an Kunden übergeben?</label>
+          <label class="check-item"><input type="checkbox" name="checklistSilikonDuschabzieher" /> Silikon-Duschabzieher an Kunden übergeben?</label>
+          <label class="check-item"><input type="checkbox" name="checklistHinweisSilikonfugen" /> Hinweis zu Silikonfugen beim Kunden hinterlassen?</label>
+        </div>
+
+        <div class="checklist-group">
+          <h3>7. Gratisaktion</h3>
+          <label class="check-item"><input type="checkbox" name="checklistGratisHaltegriffMontiert" /> Gratis Haltegriff montiert?</label>
+          <label class="field-label">Wenn nein, weil</label>
+          <textarea name="checklistGratisHaltegriffKommentar" rows="3" placeholder="Grund / Bemerkung"></textarea>
+        </div>
+
+        <div class="checklist-group">
+          <h3>8. Abschlusskontrolle vor Verlassen der Baustelle</h3>
+          <label class="check-item"><input type="checkbox" name="abschlusskontrolleBaustelleSauber" /> Baustelle sauber und besenrein hinterlassen?</label>
+          <label class="check-item"><input type="checkbox" name="abschlusskontrolleVerpackungEntsorgt" /> Verpackungen &amp; Müll entfernt und entsorgt?</label>
+          <label class="check-item"><input type="checkbox" name="abschlusskontrolleFunktionstest" /> Funktionstest Armaturen, Duschabtrennung, Abläufe durchgeführt?</label>
+          <label class="check-item"><input type="checkbox" name="abschlusskontrolleKundeEingewiesen" /> Kunde kurz in die neue Anlage eingewiesen?</label>
+          <label class="check-item"><input type="checkbox" name="abschlusskontrolleWerkzeugeMitgenommen" /> Alle Werkzeuge und Materialien mitgenommen?</label>
+        </div>
+
+        <div class="checklist-group">
+          <h3>9. Sonstige Bemerkungen</h3>
+          <textarea name="sonstigeBemerkungenBaustelle" rows="6" placeholder="Weitere Hinweise oder Besonderheiten"></textarea>
+        </div>
+
+        <div class="checklist-group">
+          <h3>10. Unterschriften</h3>
+          <label class="field-label">Unterschrift Monteur 1</label>
+          <div class="signature-wrapper" data-name="unterschriftMonteur1">
+            <canvas class="signature-canvas" width="600" height="200"></canvas>
+            <button type="button" class="btn-clear-sig">Löschen</button>
+          </div>
+          <input type="hidden" name="unterschriftMonteur1" />
+
+          <label class="field-label">Unterschrift Monteur 2</label>
+          <div class="signature-wrapper" data-name="unterschriftMonteur2">
+            <canvas class="signature-canvas" width="600" height="200"></canvas>
+            <button type="button" class="btn-clear-sig">Löschen</button>
+          </div>
+          <input type="hidden" name="unterschriftMonteur2" />
+
+          <label class="field-label">Datum</label>
+          <input type="date" name="unterschriftMonteurDatum" />
+        </div>
+      </section>
+
+    </form>
+
+    <!-- ══════════ NAVIGATION ══════════ -->
+    <div class="form-nav">
+      <button type="button" class="btn btn-back" id="btnBack">Zurück</button>
+      <button type="button" class="btn btn-draft" id="btnDraft">Zwischenspeichern</button>
+      <button type="button" class="btn btn-next" id="btnNext">Weiter</button>
+      <button type="button" class="btn btn-submit" id="btnSubmit">Absenden</button>
+    </div>
+
+    <div class="step-counter" id="stepCounter">1/11</div>
+  </div>
+</div>
+
+<!-- ══════════ CAMERA MODAL ══════════ -->
+<div class="modal-overlay" id="cameraModal">
+  <div class="modal-content">
+    <h3 id="cameraModalTitle">Foto aufnehmen</h3>
+    <video id="cameraVideo" autoplay playsinline></video>
+    <canvas id="cameraCanvas" hidden></canvas>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-capture" id="btnCapture">📸 Aufnehmen</button>
+      <button type="button" class="btn btn-back" id="btnCameraClose">Abbrechen</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ DRAFT LINK MODAL ══════════ -->
+<div class="modal-overlay" id="draftModal">
+  <div class="modal-content modal-sm">
+    <h3>Zwischengespeichert ✓</h3>
+    <p>Link zu dem zwischengespeicherten Formular:</p>
+    <input type="text" id="draftLink" readonly class="draft-link-input" />
+    <div class="modal-actions">
+      <button type="button" class="btn btn-next" id="btnCopyLink">Link kopieren</button>
+      <button type="button" class="btn btn-back" id="btnCloseDraft">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ TOAST ══════════ -->
+<div class="toast" id="toast"></div>
+
+<script src="/app.js"></script>
+</body>
+</html>
