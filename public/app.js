@@ -359,6 +359,7 @@
     bindConditionalFields();
     bindAuftragsNrSync();
     bindConfirmationLetterSync();
+    bindAdditionalServicesConfirmationSync();
     bindBitrixAutofill();
     bindDraftLookup();
     bindArbeitsberichtLookup();
@@ -505,7 +506,7 @@
     btnNext.textContent = isStartStep ? 'Formular starten' : 'Weiter';
     if (btnBackToHome) btnBackToHome.classList.toggle('hidden', isStartStep);
 
-    if (targetStep === 10) {
+    if (targetStep === 11) {
       syncChecklistAutoSelections();
     }
 
@@ -1355,6 +1356,7 @@ function syncDevSidebarVisibility() {
       'unterschriftWarenpruefung',
       'unterschriftMonteur1',
       'unterschriftMonteur2',
+      'unterschriftZusaetzlicheLeistungen',
       'unterschriftKunde',
       'unterschriftMaengel',
       'unterschriftNB',
@@ -1482,6 +1484,20 @@ function syncDevSidebarVisibility() {
     updateConfirmationLetterPreview();
   }
 
+  function bindAdditionalServicesConfirmationSync() {
+    [
+      'terminId',
+      'zusaetzlicheArbeiten',
+      'preisZusaetzlich',
+    ].forEach(name => {
+      const input = form.querySelector(`[name="${name}"]`);
+      if (!input) return;
+      input.addEventListener('input', updateAdditionalServicesConfirmationPreview);
+      input.addEventListener('change', updateAdditionalServicesConfirmationPreview);
+    });
+    updateAdditionalServicesConfirmationPreview();
+  }
+
   function updateConfirmationLetterPreview() {
     const getValue = name => (form.querySelector(`[name="${name}"]`)?.value || '').trim();
     const anrede = getValue('anrede');
@@ -1504,6 +1520,21 @@ function syncDevSidebarVisibility() {
     $$('.adresse-stadt-display').forEach(el => { el.textContent = city; });
     const monthEl = $('.brief-monat-jahr-display'); if (monthEl) monthEl.textContent = monthYearCapitalized;
     const orderEl = $('.auftrag-nr-display'); if (orderEl) orderEl.textContent = orderId;
+  }
+
+  function updateAdditionalServicesConfirmationPreview() {
+    const terminValue = (form.querySelector('[name="terminId"]')?.value || '').trim();
+    const rawPriceValue = (form.querySelector('[name="preisZusaetzlich"]')?.value || '').trim();
+    const parsedPrice = Number.parseFloat(rawPriceValue.replace(',', '.'));
+    const formattedPrice = Number.isFinite(parsedPrice)
+      ? new Intl.NumberFormat('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(parsedPrice)
+      : '0,00';
+
+    const terminDisplay = $('#zusatzTerminIdDisplay');
+    const priceDisplay = $('#zusatzPreisDisplay');
+
+    if (terminDisplay) terminDisplay.value = terminValue || '—';
+    if (priceDisplay) priceDisplay.textContent = `${formattedPrice} €`;
   }
 
   function drawDemoSignature(name) {
@@ -1697,6 +1728,7 @@ function syncDevSidebarVisibility() {
 
     // Required signatures
     $$('.signature-wrapper', section).forEach(wrapper => {
+      if (wrapper.closest('.hidden')) return;
       const name = wrapper.dataset.name;
       const pad  = signaturePads[name];
       if (pad && pad.isEmpty()) {
@@ -1707,7 +1739,7 @@ function syncDevSidebarVisibility() {
       }
     });
 
-    if (n === 10 && currentChecklistVariant === 'badumbau') {
+    if (n === 11 && currentChecklistVariant === 'badumbau') {
       if (!validateChecklistBadumbau(section)) {
         valid = false;
       }
@@ -1769,6 +1801,7 @@ function syncDevSidebarVisibility() {
         const tsField = name.replace('unterschrift', 'unterschrift') + 'Zeitpunkt';
         // map the names properly
         const tsMap = {
+          unterschriftZusaetzlicheLeistungen: 'unterschriftZusaetzlicheLeistungenZeitpunkt',
           unterschriftKunde:  'unterschriftZeitpunkt',
           unterschriftMaengel: 'unterschriftMaengelZeitpunkt',
           unterschriftNB:     'unterschriftNBZeitpunkt',
@@ -2208,6 +2241,7 @@ function syncDevSidebarVisibility() {
     });
 
     syncChecklistAutoSelections();
+    updateAdditionalServicesConfirmationPreview();
 
     // Signatures – draw base64 onto pads
     for (const [name, pad] of Object.entries(signaturePads)) {

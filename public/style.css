@@ -247,6 +247,30 @@ body {
   color: #5e3f25;
 }
 
+.zusatzleistung-confirmation-card {
+  max-width: 860px;
+  padding: 24px;
+  border: 1px solid #efddcf;
+  border-radius: 20px;
+  background: linear-gradient(180deg, #fffaf5 0%, #ffffff 100%);
+  box-shadow: 0 12px 30px rgba(192, 69, 28, .08);
+}
+
+.zusatzleistung-confirmation-card textarea[readonly],
+.zusatzleistung-confirmation-card input[readonly] {
+  background: #f4f2ef;
+  color: #46505c;
+  border-color: #ddd4cb;
+}
+
+.zusatzleistung-legal-text {
+  margin-top: 20px;
+}
+
+.zusatzleistung-legal-text strong {
+  color: #2f241c;
+}
+
 /* ── Fields ─────────────────────────────────────────────── */
 .field-label {
   display: block;

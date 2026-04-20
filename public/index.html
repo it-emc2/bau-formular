@@ -160,14 +160,33 @@
             <div class="additional-services-box hidden" data-form-type-only="zusaetzliche_leistungen">
               <h3>Zusätzliche Leistungen</h3>
 
-              <label class="field-label required">Welche zusätzlichen Leistungen werden beauftragt?</label>
-              <textarea name="zusaetzlicheArbeiten" rows="4" placeholder="Leistungsbeschreibung" required></textarea>
+              <label class="field-label required">Termin-ID</label>
+              <input type="text" id="zusatzTerminIdDisplay" readonly value="" placeholder="Wird aus den Grunddaten übernommen" />
+
+              <div class="legal-text zusatzleistung-legal-text">
+                <p>
+                  Mit meiner Unterschrift bestätige ich, dass die nachfolgend aufgeführten Zusatzarbeiten von mir beauftragt wurden.
+                  Der vereinbarte Gesamtpreis für diese Leistungen beträgt brutto <strong id="zusatzPreisDisplay">0,00 €</strong>.
+                  Ich bin darüber informiert, dass diese Kosten zusätzlich zu den bisherigen Aufträgen anfallen.
+                </p>
+              </div>
+
+              <label class="field-label required">Zusätzliche Arbeiten</label>
+              <textarea name="zusaetzlicheArbeiten" rows="6" placeholder="Leistungsbeschreibung" required></textarea>
 
               <label class="field-label">Preis der zusätzlichen Leistungen</label>
               <div class="input-euro">
                 <input type="number" name="preisZusaetzlich" min="0" step="0.01" placeholder="0,00" />
                 <span class="euro-suffix">€</span>
               </div>
+
+              <label class="field-label required">Unterschrift zusätzliche Leistungen</label>
+              <div class="signature-wrapper" data-name="unterschriftZusaetzlicheLeistungen">
+                <canvas class="signature-canvas" width="600" height="200"></canvas>
+                <button type="button" class="btn-clear-sig">Löschen</button>
+              </div>
+              <input type="hidden" name="unterschriftZusaetzlicheLeistungen" />
+              <input type="hidden" name="unterschriftZusaetzlicheLeistungenZeitpunkt" />
             </div>
 
             <div class="bitrix-debug-fields hidden" id="bitrixDebugFields">
@@ -240,8 +259,8 @@
         </div>
       </section>
 
-      <!-- ────────── STEP 2 ─ Warenpruefung ────────── -->
-      <section class="form-step" data-step="2" data-form-type-only="baustellenabnahme">
+      <!-- ────────── STEP 3 ─ Warenpruefung ────────── -->
+      <section class="form-step" data-step="3" data-form-type-only="baustellenabnahme">
         <h2>Warenprüfung vor Baubeginn</h2>
         <p class="intro">Ware vor Baubeginn genau auf Qualität, sichtbare Schäden und Funktionsfähigkeit prüfen.</p>
 
@@ -318,8 +337,8 @@
         <input type="hidden" name="unterschriftWarenpruefung" />
       </section>
 
-      <!-- ────────── STEP 3 ────────── -->
-      <section class="form-step" data-step="3" data-form-type-only="baustellenabnahme,schadensmeldung">
+      <!-- ────────── STEP 4 ────────── -->
+      <section class="form-step" data-step="4" data-form-type-only="baustellenabnahme,schadensmeldung">
         <h2>Fotos &amp; Video</h2>
 
         <label class="field-label required">Bilder des fertigen Umbaus</label>
@@ -384,8 +403,8 @@
         </div>
       </section>
 
-      <!-- ────────── STEP 4 ────────── -->
-      <section class="form-step" data-step="4" data-form-type-only="baustellenabnahme,schadensmeldung">
+      <!-- ────────── STEP 5 ────────── -->
+      <section class="form-step" data-step="5" data-form-type-only="baustellenabnahme,schadensmeldung">
         <h2>Weitere Bilder</h2>
 
         <label class="field-label">Weitere Bilder</label>
@@ -428,8 +447,8 @@
         </div>
       </section>
 
-      <!-- ────────── STEP 5 ─ Bestätigung erfolgreicher Umbau ────────── -->
-      <section class="form-step" data-step="5" data-form-type-only="baustellenabnahme">
+      <!-- ────────── STEP 6 ─ Bestätigung erfolgreicher Umbau ────────── -->
+      <section class="form-step" data-step="6" data-form-type-only="baustellenabnahme">
         <h2>Bestätigung erfolgreicher Umbau</h2>
         <p class="intro">Dieses Schreiben wird automatisch aus den Kundendaten aufgebaut und direkt vor der finalen Checkliste vom Kunden unterschrieben.</p>
 
@@ -469,8 +488,8 @@
         <input type="hidden" name="unterschriftZeitpunkt" />
       </section>
 
-      <!-- ────────── STEP 6 ─ Mängelbeseitigung ────────── -->
-      <section class="form-step dev-only-step" data-step="6" data-form-type-only="baustellenabnahme">
+      <!-- ────────── STEP 7 ─ Mängelbeseitigung ────────── -->
+      <section class="form-step dev-only-step" data-step="7" data-form-type-only="baustellenabnahme">
         <h2>Mängelbeseitigung</h2>
 
         <label class="field-label required">Die Mängelbeseitigung wurde vollständig abgeschlossen am</label>
@@ -489,8 +508,8 @@
         <input type="hidden" name="unterschriftMaengelZeitpunkt" />
       </section>
 
-      <!-- ────────── STEP 7 ─ Nachbesserung ────────── -->
-      <section class="form-step dev-only-step" data-step="7" data-form-type-only="baustellenabnahme,nachbesserung">
+      <!-- ────────── STEP 8 ─ Nachbesserung ────────── -->
+      <section class="form-step dev-only-step" data-step="8" data-form-type-only="baustellenabnahme,nachbesserung">
         <h2>Nachbesserung</h2>
 
         <label class="field-label required">Die Nachlieferung der noch offenen Arbeiten wurde vollständig abgeschlossen am</label>
@@ -536,8 +555,8 @@
         <input type="hidden" name="unterschriftNBZeitpunkt" />
       </section>
 
-      <!-- ────────── STEP 8 ─ Arbeitsbericht ────────── -->
-      <section class="form-step dev-only-step" data-step="8" data-form-type-only="baustellenabnahme">
+      <!-- ────────── STEP 9 ─ Arbeitsbericht ────────── -->
+      <section class="form-step dev-only-step" data-step="9" data-form-type-only="baustellenabnahme">
         <h2>Arbeitsbericht</h2>
         <p class="intro">Suche nach einem externen Angebot oder Entwurf und lade daraus den Arbeitsbericht als PDF.</p>
 
@@ -586,8 +605,8 @@
         </div>
       </section>
 
-      <!-- ────────── STEP 9 ─ Hinweise ────────── -->
-      <section class="form-step" data-step="9">
+      <!-- ────────── STEP 10 ─ Hinweise ────────── -->
+      <section class="form-step" data-step="10">
         <h2>Hinweise für das Büro</h2>
         <textarea name="hinweiseBuero" rows="6" placeholder="Optionale Hinweise für das Büro…"></textarea>
 
@@ -639,8 +658,8 @@
       </section>
 
 
-      <!-- ────────── STEP 10 ─ Montage-Checkliste ────────── -->
-      <section class="form-step" data-step="10" data-form-type-only="baustellenabnahme">
+      <!-- ────────── STEP 11 ─ Montage-Checkliste ────────── -->
+      <section class="form-step" data-step="11" data-form-type-only="baustellenabnahme">
         <h2 id="checklistStepTitle">Checkliste Badumbau</h2>
         <p class="intro" id="checklistStepIntro">Bitte alle Punkte abhaken, sobald sie erledigt oder geprüft wurden.</p>
 

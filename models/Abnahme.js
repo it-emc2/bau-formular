@@ -87,6 +87,8 @@ const schemaDefinition = {
   /* ── Step 7 ─ Abschluss Umbau ───────────────────── */
   zusaetzlicheArbeiten:  { type: String, default: '' },
   preisZusaetzlich:      { type: Number, default: 0 },
+  unterschriftZusaetzlicheLeistungen: { type: String, default: '' },
+  unterschriftZusaetzlicheLeistungenZeitpunkt: { type: Date },
   abgeschlossenAm:       { type: Date },
   alleArbeitenErledigt:  { type: String, enum: ['Ja', 'Nein', ''], default: '' },
   nichtErledigteArbeiten:{ type: String, default: '' },
