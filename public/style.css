@@ -611,6 +611,21 @@ small { color: var(--clr-gray); font-size: .8rem; }
   background: #2d343d;
 }
 
+.draft-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.draft-card-action-secondary {
+  background: #75c19f;
+  color: #0f2018;
+}
+
+.draft-card-action-secondary:hover {
+  background: #5fae8b;
+}
+
 .bitrix-deal-card {
   display: grid;
   gap: 10px;
@@ -881,6 +896,20 @@ input[type="radio"], input[type="checkbox"] {
 .file-thumb img, .file-thumb video {
   width: 100%; height: 100%;
   object-fit: cover;
+}
+.file-thumb-missing {
+  width: 100%; height: 100%;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  padding: 4px; text-align: center;
+  background: #f4f4f4;
+  color: #8a3b3b;
+  font-size: 10px;
+  line-height: 1.2;
+}
+.file-thumb-missing small {
+  color: #666;
+  word-break: break-all;
 }
 .file-thumb .remove-file {
   position: absolute; top: 2px; right: 2px;
@@ -1318,8 +1347,100 @@ input[type="radio"], input[type="checkbox"] {
   font-size: 1.05rem;
 }
 
+.einwilligung-header {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 24px;
+  font-family: "Times New Roman", Times, serif;
+}
+
+.einwilligung-box {
+  border: 1px solid #b9bdc8;
+  border-radius: 6px;
+  padding: 14px 16px;
+  min-height: 150px;
+}
+
+.einwilligung-box-label {
+  font-size: 0.9rem;
+  color: #404553;
+  margin: 0 0 10px 0;
+}
+
+.einwilligung-field {
+  margin: 14px 0 0 0;
+  line-height: 1.4;
+}
+
+.einwilligung-hint {
+  display: block;
+  font-size: 0.75rem;
+  color: #6a6f7d;
+  margin-top: 2px;
+}
+
+.einwilligung-geburtsdatum {
+  font-family: inherit;
+  font-size: 0.95rem;
+  padding: 4px 6px;
+  border: 1px solid #c7cbd6;
+  border-radius: 4px;
+}
+
+.einwilligung-title {
+  font-family: "Times New Roman", Times, serif;
+  font-size: 1.15rem;
+  margin: 28px 0 16px 0;
+}
+
+.einwilligung-body {
+  text-align: justify;
+}
+
+.einwilligung-empfaenger {
+  text-align: center;
+  margin: 16px 0;
+}
+
+@media (max-width: 640px) {
+  .einwilligung-header { grid-template-columns: 1fr; }
+}
+
 
 .dev-only-step.hidden { display: none !important; }
+
+.dev-step-pdf-wrapper {
+  margin-top: 24px;
+  padding: 12px 14px;
+  border: 1px dashed #c3a240;
+  border-radius: 8px;
+  background: #fff8dd;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.dev-step-pdf-wrapper.hidden { display: none; }
+
+.btn-dev-pdf-download {
+  background: #c3a240;
+  color: #1f1500;
+  border: 1px solid #a88832;
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-dev-pdf-download:hover:not(:disabled) { background: #d4b04a; }
+.btn-dev-pdf-download:disabled { opacity: 0.6; cursor: not-allowed; }
+
+.dev-step-pdf-hint {
+  font-size: 0.85rem;
+  color: #6a5512;
+}
 
 /* ── Home Drafts Section ───────────────────────────────── */
 .home-drafts-section {

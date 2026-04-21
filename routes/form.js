@@ -4,6 +4,7 @@ const fs = require('fs');
 const express = require('express');
 const multer = require('multer');
 const nodemailer = require('nodemailer');
+const archiver = require('archiver');
 
 const Abnahme = require('../models/Abnahme');
 const Entwurf = require('../models/Entwurf');
@@ -232,6 +233,26 @@ function buildDraftSearchQuery(search = '') {
   };
 }
 
+function buildSubmittedSearchQuery(search = '') {
+  const value = String(search || '').trim();
+  if (!value) return { status: 'submitted' };
+
+  const regex = new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+
+  return {
+    status: 'submitted',
+    $or: [
+      { terminId: regex },
+      { kundennummer: regex },
+      { auftragsNummer: regex },
+      { vorname: regex },
+      { nachname: regex },
+      { name: regex },
+      { entwurfsName: regex },
+    ],
+  };
+}
+
 async function proxyArbeitsberichtPdf(payload = {}) {
   const endpoint = process.env.ARBEITSBERICHT_PDF_URL ||
     'https://angebotskonfigurator-emc2-v2.fly.dev/api/arbeitsbericht/pdf';
@@ -289,6 +310,114 @@ router.get('/drafts', async (req, res) => {
     });
   } catch (error) {
     return res.status(400).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/submitted', async (req, res) => {
+  try {
+    const items = await Abnahme.find(buildSubmittedSearchQuery(req.query.q))
+      .sort({ updatedAt: -1 })
+      .limit(20)
+      .lean();
+
+    return res.json({
+      success: true,
+      submitted: items.map(item => ({
+        _id: item._id,
+        shareToken: item.shareToken,
+        terminId: item.terminId,
+        kundennummer: item.kundennummer,
+        auftragsNummer: item.auftragsNummer,
+        vorname: item.vorname,
+        nachname: item.nachname,
+        name: item.name,
+        entwurfsName: item.entwurfsName,
+        status: item.status,
+        updatedAt: item.updatedAt,
+      })),
+    });
+  } catch (error) {
+    return res.status(400).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/submitted/:id/export', async (req, res) => {
+  try {
+    const form = await Abnahme.findById(req.params.id).lean();
+    if (!form) {
+      return res.status(404).json({ success: false, error: 'Abnahme nicht gefunden' });
+    }
+
+    const customerSlug = String(`${form.vorname || ''}-${form.nachname || ''}`)
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'abnahme';
+    const zipName = `abnahme-${customerSlug}-${form._id}.zip`;
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${zipName}"`);
+
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    archive.on('warning', err => { if (err.code !== 'ENOENT') throw err; });
+    archive.on('error', err => { throw err; });
+    archive.pipe(res);
+
+    // 1. Raw JSON (everything from DB)
+    archive.append(JSON.stringify(form, null, 2), { name: 'data.json' });
+
+    // 2. Signature fields – any base64 data URL gets decoded into a PNG
+    const signatures = [];
+    for (const [key, value] of Object.entries(form)) {
+      if (typeof value !== 'string' || !value.startsWith('data:image/')) continue;
+      const match = value.match(/^data:image\/(\w+);base64,(.+)$/);
+      if (!match) continue;
+      const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
+      const buf = Buffer.from(match[2], 'base64');
+      archive.append(buf, { name: `signatures/${key}.${ext}` });
+      signatures.push(`${key}.${ext}`);
+    }
+
+    // 3. File upload fields – pull the actual files from /uploads if present
+    const fileFields = [
+      'bilderFertigerUmbau', 'videoDesAblaufs', 'fotosAbdichtung',
+      'bilderBehobeneMaengel', 'weitereBilder', 'weitereBilder2', 'weitereBilder3',
+    ];
+    const missingFiles = [];
+    for (const field of fileFields) {
+      const raw = form[field];
+      const paths = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+      for (const p of paths) {
+        const basename = path.basename(String(p));
+        const fullPath = path.join(uploadsDir, basename);
+        if (fs.existsSync(fullPath)) {
+          archive.file(fullPath, { name: `uploads/${field}/${basename}` });
+        } else {
+          missingFiles.push(`${field}/${basename}`);
+        }
+      }
+    }
+
+    // 4. Manifest so it's obvious what's inside
+    const manifest = {
+      _id: String(form._id),
+      terminId: form.terminId,
+      shareToken: form.shareToken,
+      status: form.status,
+      createdAt: form.createdAt,
+      updatedAt: form.updatedAt,
+      customer: `${form.vorname || ''} ${form.nachname || ''}`.trim(),
+      signaturesExtracted: signatures,
+      missingUploads: missingFiles,
+      note: 'data.json contains the full document as stored in MongoDB. signatures/ holds the decoded PNGs. uploads/ holds the referenced files that were still on disk.',
+    };
+    archive.append(JSON.stringify(manifest, null, 2), { name: 'manifest.json' });
+
+    await archive.finalize();
+  } catch (error) {
+    if (!res.headersSent) {
+      return res.status(400).json({ success: false, error: error.message });
+    }
+    res.end();
   }
 });
 
@@ -407,6 +536,27 @@ router.post('/document/bitrix', async (req, res) => {
     });
 
     return res.json({ success: true, result, document });
+  } catch (error) {
+    return res.status(400).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/document/step-pdf', async (req, res) => {
+  try {
+    const parsed = parsePayload(req);
+    const prefix = String(req.body?.filenamePrefix || '').trim();
+    if (!prefix) {
+      return res.status(400).json({ success: false, error: 'filenamePrefix fehlt' });
+    }
+    const attachments = await buildStepDocumentAttachments(parsed, { includeDebug: true, forceAll: true });
+    const match = attachments.find(a => a.filename && a.filename.startsWith(prefix));
+    if (!match || !match.base64) {
+      return res.status(404).json({ success: false, error: `Kein PDF mit Prefix "${prefix}" gefunden` });
+    }
+    const buffer = Buffer.from(match.base64, 'base64');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${match.filename}"`);
+    return res.status(200).send(buffer);
   } catch (error) {
     return res.status(400).json({ success: false, error: error.message });
   }

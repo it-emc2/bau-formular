@@ -78,10 +78,20 @@
           <h3>Gespeicherte Entwürfe</h3>
           <p class="intro">Zwischengespeicherte Formulare suchen und weiterbearbeiten.</p>
           <div class="home-drafts-toolbar">
-            <input type="text" class="home-drafts-search" id="homeDraftSearch" placeholder="Name, Lead-ID oder Angebots-Nr. suchen…" />
+            <input type="text" class="home-drafts-search" id="homeDraftSearch" placeholder="Name, Auftrags-ID oder Angebots-Nr. suchen…" />
             <button type="button" class="btn btn-fetch-bitrix" id="btnHomeDraftSearch">Suchen</button>
           </div>
           <div class="home-draft-list" id="homeDraftList"></div>
+        </div>
+
+        <div class="home-drafts-section">
+          <h3>Gesendete Abnahmen</h3>
+          <p class="intro">Bereits abgesendete Abnahmen suchen und öffnen.</p>
+          <div class="home-drafts-toolbar">
+            <input type="text" class="home-drafts-search" id="homeSubmittedSearch" placeholder="Name, Auftrags-ID oder Angebots-Nr. suchen…" />
+            <button type="button" class="btn btn-fetch-bitrix" id="btnHomeSubmittedSearch">Suchen</button>
+          </div>
+          <div class="home-draft-list" id="homeSubmittedList"></div>
         </div>
       </section>
 
@@ -96,7 +106,7 @@
 
         <div class="step1-layout">
           <div class="step1-main">
-            <label class="field-label required">Lead-ID</label>
+            <label class="field-label required">Auftrags-ID</label>
             <div class="termin-id-row">
               <input type="text" name="terminId" required placeholder="z.B. 12345" />
               <button type="button" class="btn btn-fetch-bitrix" id="btnFetchBitrixLead">Lead laden</button>
@@ -180,7 +190,7 @@
             <div class="additional-services-box hidden" data-form-type-only="zusaetzliche_leistungen">
               <h3>Zusätzliche Leistungen</h3>
 
-              <label class="field-label required">Lead-ID</label>
+              <label class="field-label required">Auftrags-ID</label>
               <input type="text" id="zusatzTerminIdDisplay" readonly value="" placeholder="Wird aus den Grunddaten übernommen" />
 
               <div class="legal-text zusatzleistung-legal-text">
@@ -508,8 +518,59 @@
         <input type="hidden" name="unterschriftZeitpunkt" />
       </section>
 
-      <!-- ────────── STEP 7 ─ Mängelbeseitigung ────────── -->
-      <section class="form-step dev-only-step" data-step="7" data-form-type-only="baustellenabnahme">
+      <!-- ────────── STEP 7 ─ Einwilligung zur Abrechnung ────────── -->
+      <section class="form-step" data-step="7" data-form-type-only="baustellenabnahme">
+        <h2>Einwilligung zur Abrechnung</h2>
+        <p class="intro">Dieses Formular wird vom Kunden unterschrieben und ist Bestandteil der Baustellenabnahme.</p>
+
+        <div class="bestaetigung-letter einwilligung-letter">
+          <div class="einwilligung-header">
+            <div class="einwilligung-box">
+              <p class="einwilligung-box-label">Leistungserbringer/-in im Gesundheitswesen<br />(vollständige Bezeichnung bzw. Praxis-/ Firmenstempel)</p>
+            </div>
+            <div class="einwilligung-box">
+              <p class="einwilligung-box-label">Patient/-in bzw. Leistungsempfänger/-in:</p>
+              <p class="einwilligung-field">
+                <span class="kunde-name-display">Max Mustermann</span>
+                <span class="einwilligung-hint">(Vor- und Nachname)</span>
+              </p>
+              <p class="einwilligung-field">
+                <span class="adresse-strasse-display">Musterstraße 42</span>,
+                <span class="adresse-plz-display">04109</span>
+                <span class="adresse-stadt-display">Leipzig</span>
+                <span class="einwilligung-hint">(Adresse)</span>
+              </p>
+              <p class="einwilligung-field">
+                <input type="date" name="einwilligungGeburtsdatum" class="einwilligung-geburtsdatum" />
+                <span class="einwilligung-hint">Geburtsdatum</span>
+              </p>
+            </div>
+          </div>
+
+          <h3 class="einwilligung-title"><u>Einwilligung zur Abrechnung</u></h3>
+
+          <div class="bestaetigung-body einwilligung-body">
+            <p>Ich willige ein, dass mein Name, meine Anschrift, mein Geburtsdatum sowie meine abrechnungsrelevanten Gesundheitsdaten vom Leistungserbringer/-in an die</p>
+            <p class="einwilligung-empfaenger"><strong>Dr. Löffler &amp; Co. KG, Schildergasse 120, 50667 Köln (Abrechnungszentrale)</strong></p>
+            <p>ausschließlich zur Abtretung und Abrechnung übermittelt und dort verarbeitet werden. Für den Fall, dass ich Selbstzahler bin, stimme ich zu, dass die Abrechnungszentrale im Zuge ihrer Refinanzierung bei der Commerzbank AG meinen Namen und den jeweils offenen Betrag dieser auf Anfrage mitteilt.</p>
+            <p>Die Rechtsgrundlagen für die Verarbeitung sind meine Einwilligung, vgl. Art. 9 Abs. 2 Buchstabe a der EU- Datenschutzgrundverordnung sowie die sozialrechtlichen Erlaubnistatbestände, vgl. insbesondere §§ 300 Abs. 2, 302 Abs. 2, 295a Abs. 3 SGB V sowie § 105 Abs. 2 SGB XI. Mir ist bekannt, dass es keine gesetzliche Pflicht gibt, diese Einwilligung zu unterzeichnen, eine Abrechnung über die Abrechnungszentrale bei Verweigerung der Einwilligung aber ggfls. nicht erfolgen könnte.</p>
+            <p>Die Abrechnungszentrale wird meine Daten unverzüglich löschen, sobald sie für die Abtretung, Abrechnung und Geltendmachung der Forderungen nicht mehr erforderlich sind. Anstelle der Löschung tritt die Einschränkung der Verarbeitung (Sperrung), sofern gesetzliche Aufbewahrungspflichten einzuhalten sind. Die gesetzlichen Aufbewahrungsfristen für meine Daten betragen in der Regel zehn Jahre. Ich habe ein Recht auf Auskunft gegenüber der Abrechnungszentrale, welche meine Daten verarbeitet sowie auf Berichtigung, auf Löschung bzw. auf Einschränkung der Verarbeitung. Ferner habe ich ein Recht auf Datenübertragbarkeit sowie ein Beschwerderecht bei der für die Abrechnungszentrale zuständigen Aufsichtsbehörde, der Landesbeauftragten für Datenschutz und Informationsfreiheit Nordrhein-Westfalen, Postfach 20 04 44, 40102 Düsseldorf.</p>
+            <p>Die Datenschutzbeauftragte der Abrechnungszentrale ist die Kinast Rechtsanwaltsgesellschaft mbH, Hohenzollernring 54, 50672 Köln, zu erreichen über die Dr. Löffler &amp; Co. KG, Telefon 0221 – 257 64 29.</p>
+            <p>Ich kann diese Einwilligung jederzeit gegenüber der Abrechnungszentrale oder dem/der Leistungserbringer/-in widerrufen. Der Widerruf entfaltet lediglich Wirkung für die Zukunft, d.h. bis zum Widerruf bleibt die Verarbeitung rechtmäßig.</p>
+          </div>
+        </div>
+
+        <label class="field-label required">Datum und Unterschrift des Patienten/Leistungsempfängers bzw. dessen Vertreter/in</label>
+        <div class="signature-wrapper" data-name="unterschriftEinwilligung">
+          <canvas class="signature-canvas" width="600" height="200"></canvas>
+          <button type="button" class="btn-clear-sig">Löschen</button>
+        </div>
+        <input type="hidden" name="unterschriftEinwilligung" />
+        <input type="hidden" name="unterschriftEinwilligungZeitpunkt" />
+      </section>
+
+      <!-- ────────── STEP 8 ─ Mängelbeseitigung ────────── -->
+      <section class="form-step dev-only-step" data-step="8" data-form-type-only="baustellenabnahme">
         <h2>Mängelbeseitigung</h2>
 
         <label class="field-label required">Die Mängelbeseitigung wurde vollständig abgeschlossen am</label>
@@ -528,8 +589,8 @@
         <input type="hidden" name="unterschriftMaengelZeitpunkt" />
       </section>
 
-      <!-- ────────── STEP 8 ─ Nachbesserung ────────── -->
-      <section class="form-step dev-only-step" data-step="8" data-form-type-only="baustellenabnahme,nachbesserung">
+      <!-- ────────── STEP 9 ─ Nachbesserung ────────── -->
+      <section class="form-step dev-only-step" data-step="9" data-form-type-only="baustellenabnahme,nachbesserung">
         <h2>Nachbesserung</h2>
 
         <label class="field-label required">Die Nachlieferung der noch offenen Arbeiten wurde vollständig abgeschlossen am</label>
@@ -575,8 +636,8 @@
         <input type="hidden" name="unterschriftNBZeitpunkt" />
       </section>
 
-      <!-- ────────── STEP 9 ─ Arbeitsbericht ────────── -->
-      <section class="form-step dev-only-step" data-step="9" data-form-type-only="baustellenabnahme">
+      <!-- ────────── STEP 10 ─ Arbeitsbericht ────────── -->
+      <section class="form-step dev-only-step" data-step="10" data-form-type-only="baustellenabnahme">
         <h2>Arbeitsbericht</h2>
         <p class="intro">Suche nach einem externen Angebot oder Entwurf und lade daraus den Arbeitsbericht als PDF.</p>
 
@@ -625,8 +686,8 @@
         </div>
       </section>
 
-      <!-- ────────── STEP 10 ─ Hinweise ────────── -->
-      <section class="form-step" data-step="10">
+      <!-- ────────── STEP 11 ─ Hinweise ────────── -->
+      <section class="form-step" data-step="11">
         <h2>Hinweise für das Büro</h2>
         <textarea name="hinweiseBuero" rows="6" placeholder="Optionale Hinweise für das Büro…"></textarea>
 
@@ -678,8 +739,8 @@
       </section>
 
 
-      <!-- ────────── STEP 11 ─ Montage-Checkliste ────────── -->
-      <section class="form-step" data-step="11" data-form-type-only="baustellenabnahme">
+      <!-- ────────── STEP 12 ─ Montage-Checkliste ────────── -->
+      <section class="form-step" data-step="12" data-form-type-only="baustellenabnahme">
         <h2 id="checklistStepTitle">Checkliste Badumbau</h2>
         <p class="intro" id="checklistStepIntro">Bitte alle Punkte abhaken, sobald sie erledigt oder geprüft wurden.</p>
 

@@ -98,7 +98,12 @@ const schemaDefinition = {
   unterschriftKunde:     { type: String, default: '' },   // base64 PNG
   unterschriftZeitpunkt: { type: Date },
 
-  /* ── Step 8 ─ Mängelbeseitigung ─────────────────── */
+  /* ── Step 8 ─ Einwilligung zur Abrechnung ──────── */
+  einwilligungGeburtsdatum:           { type: String, default: '' },
+  unterschriftEinwilligung:           { type: String, default: '' },
+  unterschriftEinwilligungZeitpunkt:  { type: Date },
+
+  /* ── Step 9 ─ Mängelbeseitigung ─────────────────── */
   maengelAbgeschlossenAm:        { type: Date },
   unterschriftMaengel:           { type: String, default: '' },
   unterschriftMaengelZeitpunkt:  { type: Date },

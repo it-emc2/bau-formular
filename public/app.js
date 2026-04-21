@@ -36,6 +36,9 @@
   const homeDraftSearch = $('#homeDraftSearch');
   const btnHomeDraftSearch = $('#btnHomeDraftSearch');
   const homeDraftList = $('#homeDraftList');
+  const homeSubmittedSearch = $('#homeSubmittedSearch');
+  const btnHomeSubmittedSearch = $('#btnHomeSubmittedSearch');
+  const homeSubmittedList = $('#homeSubmittedList');
   const bitrixSidebar = $('.bitrix-sidebar');
   const draftsPanel = $('.drafts-panel');
   const arbeitsberichtSearch = $('#arbeitsberichtSearch');
@@ -69,7 +72,7 @@
   const toast         = $('#toast');
   const EXTERNAL_APP_BASE_URL = 'https://angebotskonfigurator-emc2-v2.fly.dev';
 
-  const INITIAL_TOTAL_STEPS = 11;
+  const INITIAL_TOTAL_STEPS = 12;
   const FORMULAR_TYPE_DEFAULT = '';
   const FORMULAR_TYPE_PATHS = {
     baustellenabnahme: '/AbschlussderBaustelle',
@@ -99,6 +102,7 @@
   let shareToken    = null;
   let fileStore     = {};       // { fieldName: File[] }
   let signaturePads = {};       // { fieldName: SignaturePad }
+  let signaturePadDataUrls = {}; // cached data URLs for pads whose canvas may have been 0-sized when loaded
   let devMode       = localStorage.getItem('bauFormularDevMode') === 'true';
   let bitrixDeals   = [];
   let activeBitrixDealId = null;
@@ -367,12 +371,14 @@
     bindBitrixAutofill();
     bindDraftLookup();
     bindHomeDraftSearch();
+    bindHomeSubmittedSearch();
     bindArbeitsberichtLookup();
     bindDocumentActions();
     bindChecklistRules();
     initSignaturePads();
     initWarenpruefungDatum();
     initDevModeToggle();
+    injectDevStepPdfButtons();
     bindDemoPresetSelection();
     const draftLoaded = await loadDraftIfNeeded();
     if (draftLoaded) {
@@ -498,6 +504,12 @@
     });
     updateStepDots();
 
+    // Signature canvases inside a newly-visible step need resizing (they had
+    // width=0 while hidden). This also re-applies any cached data URL.
+    if (Object.keys(signaturePads).length) {
+      resizeAllSignatureCanvases();
+    }
+
     const workflowSteps = getWorkflowStepNumbers();
     const currentIndex = workflowSteps.indexOf(targetStep);
     stepCounter.textContent = `${Math.max(1, currentIndex + 1)}/${workflowSteps.length || 1}`;
@@ -547,6 +559,91 @@
       navigator.clipboard.writeText(input.value).then(() => showToast('Link kopiert!', 'success'));
     });
     $('#btnCloseDraft').addEventListener('click', () => $('#draftModal').classList.remove('open'));
+  }
+
+  const STEP_PDF_MAP = {
+    1:  [{ prefix: '01-abschluss-der-baustelle',       label: '01-Abschluss-der-Baustelle' }],
+    2:  [{ prefix: '02-warenpruefung',                 label: '02-Warenpruefung' }],
+    6:  [{ prefix: '07-bestaetigung-erfolgreicher-umbau', label: '07-Bestaetigung-erfolgreicher-Umbau' }],
+    7:  [
+      { prefix: '08-einwilligung-zur-abrechnung',      label: '08-Einwilligung (generiert)' },
+      { prefix: '08-einwilligung-template',            label: '08-Einwilligung (Template)' },
+    ],
+    8:  [{ prefix: '09-maengelbeseitigung',            label: '09-Maengelbeseitigung' }],
+    9:  [{ prefix: '10-nachbesserung',                 label: '10-Nachbesserung' }],
+    12: [{ prefix: '06-checkliste',                    label: '06-Checkliste' }],
+  };
+
+  function injectDevStepPdfButtons() {
+    Object.entries(STEP_PDF_MAP).forEach(([stepNumber, specs]) => {
+      const section = $(`.form-step[data-step="${stepNumber}"]`, form);
+      if (!section) return;
+      if (section.querySelector('.dev-step-pdf-wrapper')) return;
+
+      const wrapper = document.createElement('div');
+      wrapper.className = 'dev-step-pdf-wrapper';
+      wrapper.classList.toggle('hidden', !devMode);
+
+      specs.forEach(spec => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn btn-dev-pdf-download';
+        btn.textContent = `PDF herunterladen (${spec.label})`;
+        btn.addEventListener('click', () => downloadStepPdf(spec, btn));
+        wrapper.appendChild(btn);
+      });
+
+      const hint = document.createElement('span');
+      hint.className = 'dev-step-pdf-hint';
+      hint.textContent = 'Testmodus: identische PDF wie beim Bitrix-Upload.';
+      wrapper.appendChild(hint);
+
+      section.appendChild(wrapper);
+    });
+  }
+
+  function syncDevStepPdfButtons() {
+    $$('.dev-step-pdf-wrapper', form).forEach(el => el.classList.toggle('hidden', !devMode));
+  }
+
+  async function downloadStepPdf(spec, btn) {
+    const originalLabel = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'PDF wird erstellt...';
+    try {
+      const response = await fetch('/api/form/document/step-pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          formData: collectFormData(),
+          filenamePrefix: spec.prefix,
+        }),
+      });
+      if (!response.ok) {
+        const errText = await response.text();
+        let message = errText;
+        try { message = JSON.parse(errText).error || message; } catch (_) {}
+        throw new Error(message || `HTTP ${response.status}`);
+      }
+      const blob = await response.blob();
+      const disposition = response.headers.get('Content-Disposition') || '';
+      const match = /filename="([^"]+)"/.exec(disposition);
+      const filename = match ? match[1] : `${spec.prefix}.pdf`;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      showToast('PDF heruntergeladen.', 'success');
+    } catch (error) {
+      showToast(`PDF-Download fehlgeschlagen: ${error.message}`, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalLabel;
+    }
   }
 
   function initDevModeToggle() {
@@ -676,6 +773,7 @@
     if (btnHeaderDemoPrefill) btnHeaderDemoPrefill.classList.toggle('hidden', !devMode);
     if (bitrixDebugFields) bitrixDebugFields.classList.toggle('hidden', !devMode);
     if (debugDocumentPanel) debugDocumentPanel.classList.toggle('hidden', !devMode);
+    syncDevStepPdfButtons();
 
     // Hide Bitrix-Aufträge + Entwürfe completely when Testmodus is off
     if (devToolsPanel) {
@@ -820,6 +918,85 @@ function syncDevSidebarVisibility() {
         if (e.key === 'Enter') { e.preventDefault(); doSearch(); }
       });
     }
+  }
+
+  function bindHomeSubmittedSearch() {
+    if (!homeSubmittedList) return;
+
+    const doSearch = async () => {
+      const query = (homeSubmittedSearch?.value || '').trim();
+      if (btnHomeSubmittedSearch) btnHomeSubmittedSearch.disabled = true;
+      homeSubmittedList.innerHTML = '<p class="bitrix-empty">Gesendete Abnahmen werden geladen...</p>';
+
+      try {
+        const qs = query ? `?q=${encodeURIComponent(query)}` : '';
+        const res = await fetch(`/api/form/submitted${qs}`);
+        const json = await res.json();
+
+        if (!json.success) throw new Error(json.error || 'Fehler');
+
+        const items = json.submitted || [];
+        renderHomeSubmitted(items, query ? 'Keine passenden Abnahmen gefunden.' : 'Noch keine gesendeten Abnahmen.');
+      } catch (error) {
+        homeSubmittedList.innerHTML = '<p class="bitrix-empty">Fehler beim Laden der Abnahmen.</p>';
+        showToast('Fehler: ' + error.message, 'error');
+      } finally {
+        if (btnHomeSubmittedSearch) btnHomeSubmittedSearch.disabled = false;
+      }
+    };
+
+    if (btnHomeSubmittedSearch) btnHomeSubmittedSearch.addEventListener('click', doSearch);
+    if (homeSubmittedSearch) {
+      homeSubmittedSearch.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); doSearch(); }
+      });
+    }
+  }
+
+  function renderHomeSubmitted(items, emptyMessage) {
+    if (!homeSubmittedList) return;
+
+    if (!items.length) {
+      homeSubmittedList.innerHTML = `<p class="bitrix-empty">${emptyMessage}</p>`;
+      return;
+    }
+
+    homeSubmittedList.innerHTML = '';
+    items.forEach(item => {
+      const card = document.createElement('article');
+      card.className = 'draft-card';
+
+      const displayTitle = buildDraftTitle(item);
+      const subtitle = buildDraftSubtitle(item);
+      const updatedAt = item.updatedAt ? formatShortDateTime(item.updatedAt) : '';
+
+      card.innerHTML = `
+        <div class="draft-card-top">
+          <div>
+            <div class="draft-card-title">${escapeHtml(displayTitle)}</div>
+            ${subtitle ? `<div class="draft-card-subtitle">${escapeHtml(subtitle)}</div>` : ''}
+            <div class="draft-card-meta">ID ${escapeHtml(String(item._id || ''))}${updatedAt ? ` · gesendet ${escapeHtml(updatedAt)} Uhr` : ''}</div>
+          </div>
+          ${item.terminId ? `<span class="bitrix-chip">${escapeHtml(item.terminId)}</span>` : ''}
+        </div>
+        <div class="draft-card-actions">
+          <button type="button" class="draft-card-action" data-action="open">Abnahme öffnen</button>
+          <button type="button" class="draft-card-action draft-card-action-secondary" data-action="download">ZIP herunterladen</button>
+        </div>
+      `;
+
+      $('[data-action="open"]', card).addEventListener('click', () => {
+        if (item.shareToken) {
+          window.location.href = `/form/${item.shareToken}`;
+        } else {
+          showToast('Kein Share-Token vorhanden — Abnahme kann nicht geöffnet werden.', 'error');
+        }
+      });
+      $('[data-action="download"]', card).addEventListener('click', () => {
+        window.location.href = `/api/form/submitted/${item._id}/export`;
+      });
+      homeSubmittedList.appendChild(card);
+    });
   }
 
   function renderHomeDrafts(items, emptyMessage) {
@@ -1459,6 +1636,7 @@ function syncDevSidebarVisibility() {
       'unterschriftMonteur2',
       'unterschriftZusaetzlicheLeistungen',
       'unterschriftKunde',
+      'unterschriftEinwilligung',
       'unterschriftMaengel',
       'unterschriftNB',
     ].forEach(drawDemoSignature);
@@ -1741,13 +1919,13 @@ function syncDevSidebarVisibility() {
     const terminId = String(terminIdInput?.value || '').trim();
 
     if (!terminId) {
-      showToast('Bitte zuerst eine Lead-ID eingeben.', 'error');
+      showToast('Bitte zuerst eine Auftrags-ID eingeben.', 'error');
       return;
     }
 
     const dealId = terminId.replace(/\D/g, '');
     if (!dealId) {
-      showToast('Keine gueltige Bitrix-Deal-ID in der Lead-ID gefunden.', 'error');
+      showToast('Keine gueltige Bitrix-Deal-ID in der Auftrags-ID gefunden.', 'error');
       return;
     }
 
@@ -1854,6 +2032,19 @@ function syncDevSidebarVisibility() {
       day: '2-digit',
       month: '2-digit',
       year: 'numeric',
+    }).format(date);
+  }
+
+  function formatShortDateTime(value) {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+
+    return new Intl.DateTimeFormat('de-DE', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
     }).format(date);
   }
 
@@ -2040,6 +2231,7 @@ function syncDevSidebarVisibility() {
         const tsMap = {
           unterschriftZusaetzlicheLeistungen: 'unterschriftZusaetzlicheLeistungenZeitpunkt',
           unterschriftKunde:  'unterschriftZeitpunkt',
+          unterschriftEinwilligung: 'unterschriftEinwilligungZeitpunkt',
           unterschriftMaengel: 'unterschriftMaengelZeitpunkt',
           unterschriftNB:     'unterschriftNBZeitpunkt',
         };
@@ -2449,6 +2641,7 @@ function syncDevSidebarVisibility() {
     suppressDirtyTracking = true;
     form.reset();
     fileStore = {};
+    signaturePadDataUrls = {};
     currentFormularTyp = FORMULAR_TYPE_DEFAULT;
     applyFormTypeUI();
     clearDirtyState();
@@ -2518,16 +2711,13 @@ function syncDevSidebarVisibility() {
     syncChecklistAutoSelections();
     updateAdditionalServicesConfirmationPreview();
 
-    // Signatures – draw base64 onto pads
+    // Signatures – cache each data URL so we can re-apply after a step's
+    // canvas is sized (initSignaturePads runs before the step is visible;
+    // hidden canvases have width=0 and fromDataURL paints nothing).
     for (const [name, pad] of Object.entries(signaturePads)) {
-      if (data[name]) {
-        const img = new Image();
-        img.onload = () => {
-          const canvas = pad.canvas;
-          canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
-        };
-        img.src = data[name];
-      }
+      if (!data[name]) continue;
+      signaturePadDataUrls[name] = data[name];
+      applySignatureDataUrl(pad, data[name]);
     }
 
     // Existing file URLs → show as previews
@@ -2536,17 +2726,26 @@ function syncDevSidebarVisibility() {
       'weitereBilder', 'weitereBilder2', 'weitereBilder3'
     ];
     fileFields.forEach(fieldName => {
-      const urls = data[fieldName];
-      if (!urls || !urls.length) return;
+      const urls = Array.isArray(data[fieldName]) ? data[fieldName] : (data[fieldName] ? [data[fieldName]] : []);
+      if (!urls.length) return;
       const wrapper = $(`.file-upload[data-name="${fieldName}"]`);
       if (!wrapper) return;
       const preview = $('.file-preview', wrapper);
       urls.forEach(url => {
         const thumb = document.createElement('div');
         thumb.className = 'file-thumb';
-        thumb.innerHTML = `<img src="${url}" alt="Bild" /><button type="button" class="remove-file">✕</button>`;
+        const fileName = String(url).split('/').pop();
+        thumb.innerHTML = `
+          <img src="${url}" alt="${fileName}" />
+          <div class="file-thumb-missing hidden">Datei nicht verfügbar<br><small>${fileName}</small></div>
+          <button type="button" class="remove-file">✕</button>
+        `;
+        const img = $('img', thumb);
+        img.addEventListener('error', () => {
+          img.classList.add('hidden');
+          $('.file-thumb-missing', thumb).classList.remove('hidden');
+        });
         preview.appendChild(thumb);
-        // Remove button removes from server list (won't re-upload)
         $('.remove-file', thumb).addEventListener('click', () => {
           thumb.remove();
           markFormDirty();
@@ -2561,7 +2760,17 @@ function syncDevSidebarVisibility() {
         const preview = $('.file-preview', wrapper);
         const thumb = document.createElement('div');
         thumb.className = 'file-thumb';
-        thumb.innerHTML = `<video src="${data.videoDesAblaufs}" muted></video><button type="button" class="remove-file">✕</button>`;
+        const fileName = String(data.videoDesAblaufs).split('/').pop();
+        thumb.innerHTML = `
+          <video src="${data.videoDesAblaufs}" muted></video>
+          <div class="file-thumb-missing hidden">Video nicht verfügbar<br><small>${fileName}</small></div>
+          <button type="button" class="remove-file">✕</button>
+        `;
+        const video = $('video', thumb);
+        video.addEventListener('error', () => {
+          video.classList.add('hidden');
+          $('.file-thumb-missing', thumb).classList.remove('hidden');
+        });
         preview.appendChild(thumb);
         $('.remove-file', thumb).addEventListener('click', () => {
           thumb.remove();
@@ -2788,6 +2997,7 @@ function syncDevSidebarVisibility() {
       // Clear button
       $('.btn-clear-sig', wrapper).addEventListener('click', () => {
         pad.clear();
+        delete signaturePadDataUrls[name];
         wrapper.style.borderColor = '';
         markFormDirty();
       });
@@ -2802,15 +3012,32 @@ function syncDevSidebarVisibility() {
     window.addEventListener('resize', () => resizeAllSignatureCanvases());
   }
 
+  function applySignatureDataUrl(pad, dataUrl) {
+    if (!dataUrl) return;
+    const ratio = window.devicePixelRatio || 1;
+    const w = pad.canvas.width / ratio;
+    const h = pad.canvas.height / ratio;
+    if (w <= 0 || h <= 0) return; // canvas not sized yet; will be applied on resize
+    try { pad.fromDataURL(dataUrl, { width: w, height: h }); }
+    catch (_err) { /* ignore invalid data URL */ }
+  }
+
   function resizeAllSignatureCanvases() {
     for (const [name, pad] of Object.entries(signaturePads)) {
       const canvas  = pad.canvas;
       const wrapper = canvas.parentElement;
       const ratio   = Math.max(window.devicePixelRatio || 1, 1);
-      const w       = wrapper.clientWidth - 16;
+      const w       = Math.max(wrapper.clientWidth - 16, 0);
 
-      // Save current data
-      const data = pad.toData();
+      // Pad's step is hidden — skip entirely. Resizing to 0×0 would wipe the
+      // canvas and scrambles pad.fromData() on return. Internal _data and
+      // current pixel buffer both persist until the step becomes visible.
+      if (w <= 0) continue;
+
+      // Preserve stroke data AND any loaded image.
+      const strokes = pad.toData();
+      const priorDataUrl = pad.isEmpty() ? null : pad.toDataURL();
+      const cachedUrl = signaturePadDataUrls[name];
 
       canvas.width  = w * ratio;
       canvas.height = 200 * ratio;
@@ -2819,7 +3046,20 @@ function syncDevSidebarVisibility() {
       canvas.getContext('2d').scale(ratio, ratio);
 
       pad.clear();
-      if (data.length) pad.fromData(data);
+      if (strokes.length) {
+        pad.fromData(strokes);
+      } else {
+        // Prefer the cached source of truth: pad.fromDataURL sets _isEmpty
+        // synchronously to false but paints asynchronously, so toDataURL()
+        // in the same tick can return a blank canvas. Only fall back to
+        // priorDataUrl when the cache has been cleared (user cleared or
+        // redrew — see clear button + beginStroke below).
+        const urlToApply = cachedUrl || priorDataUrl;
+        if (urlToApply) {
+          try { pad.fromDataURL(urlToApply, { width: w, height: 200 }); }
+          catch (_err) { /* skip */ }
+        }
+      }
     }
   }
 

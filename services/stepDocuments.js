@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { PDFDocument, StandardFonts, rgb } = require('pdf-lib');
+const { PDFDocument, PDFArray, PDFName, StandardFonts, rgb, decodePDFRawStream } = require('pdf-lib');
 const { buildDocumentPackage } = require('./documentLetter');
 
 function normalizeWhitespace(value) {
@@ -36,6 +36,14 @@ function buildAddressLine(data = {}) {
   ].filter(Boolean).join(', ');
 }
 
+function buildShortAddressLine(data = {}) {
+  const address = data.adresse || {};
+  return [
+    normalizeWhitespace(address.strasse),
+    [normalizeWhitespace(address.plz), normalizeWhitespace(address.stadt)].filter(Boolean).join(' '),
+  ].filter(Boolean).join(', ');
+}
+
 function buildBasicInfoLines(data = {}) {
   return [
     ['Termin-ID', data.terminId],
@@ -47,6 +55,276 @@ function buildBasicInfoLines(data = {}) {
   ]
     .filter(([, value]) => normalizeWhitespace(value))
     .map(([label, value]) => `${label}: ${normalizeWhitespace(value)}`);
+}
+
+// Placeholders are literal text strings (e.g. "vorUndNachname") drawn on the
+// template PDF. We scan the content streams, pull each placeholder's (x, y)
+// from its Tm operator, overlay a white box to hide the placeholder, and draw
+// the real value at the same spot. Move a placeholder in the template and the
+// code auto-adapts — no hardcoded coordinates.
+const EINWILLIGUNG_PLACEHOLDER_KEYS = ['vorUndNachname', 'adresse', 'geburtsdatum', 'signature'];
+
+function findAndStripTemplatePlaceholders(pdfDoc, page, keys) {
+  const positions = {};
+  const contentsEntry = page.node.Contents();
+  if (!contentsEntry) return positions;
+
+  const isArray = typeof contentsEntry.asArray === 'function';
+  const rawItems = isArray ? contentsEntry.asArray() : [contentsEntry];
+  const keep = [];
+
+  for (const item of rawItems) {
+    const stream = item && typeof item.getContents === 'function'
+      ? item
+      : pdfDoc.context.lookup(item);
+
+    let matchedKey = null;
+    if (stream && typeof stream.getContents === 'function') {
+      let decoded;
+      try { decoded = decodePDFRawStream(stream).decode(); }
+      catch (_err) { decoded = null; }
+      if (decoded) {
+        const text = Buffer.from(decoded).toString('latin1');
+        for (const key of keys) {
+          if (positions[key]) continue;
+          const re = new RegExp(`1\\s+0\\s+0\\s+1\\s+([\\d.]+)\\s+([\\d.]+)\\s+Tm\\s*\\(${key}\\)\\s*Tj`);
+          const m = text.match(re);
+          if (m) {
+            positions[key] = { x: parseFloat(m[1]), y: parseFloat(m[2]) };
+            matchedKey = key;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!matchedKey) keep.push(item);
+  }
+
+  if (isArray && keep.length !== rawItems.length) {
+    const newArr = PDFArray.withContext(pdfDoc.context);
+    keep.forEach(entry => newArr.push(entry));
+    page.node.set(PDFName.of('Contents'), newArr);
+  }
+
+  return positions;
+}
+
+async function buildEinwilligungFromTemplate(data = {}) {
+  const templatePath = path.join(__dirname, '..', 'public', 'templates', 'Template3.pdf');
+  const templateBytes = fs.readFileSync(templatePath);
+  const pdfDoc = await PDFDocument.load(templateBytes);
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const page = pdfDoc.getPage(0);
+
+  const positions = findAndStripTemplatePlaceholders(pdfDoc, page, EINWILLIGUNG_PLACEHOLDER_KEYS);
+
+  const stamp = (key, value, { size = 11 } = {}) => {
+    const pos = positions[key];
+    if (!pos || !normalizeWhitespace(value)) return;
+    page.drawText(String(value), {
+      x: pos.x,
+      y: pos.y,
+      size,
+      font,
+      color: rgb(0.05, 0.05, 0.05),
+    });
+  };
+
+  stamp('vorUndNachname', buildCustomerName(data));
+  stamp('adresse', buildShortAddressLine(data));
+  stamp('geburtsdatum', formatDate(data.einwilligungGeburtsdatum));
+
+  const sigPos = positions.signature;
+  if (sigPos) {
+    const signatureBase64 = String(data.unterschriftEinwilligung || '').split(',')[1] || '';
+    if (signatureBase64) {
+      try {
+        const png = await pdfDoc.embedPng(Buffer.from(signatureBase64, 'base64'));
+        const maxW = 220;
+        const maxH = 50;
+        const scale = Math.min(maxW / png.width, maxH / png.height, 1);
+        page.drawImage(png, {
+          x: sigPos.x,
+          y: sigPos.y - 4,
+          width: png.width * scale,
+          height: png.height * scale,
+        });
+      } catch (_err) { /* skip */ }
+    }
+  }
+
+  const customerSlug = sanitizeFilenamePart(buildCustomerName(data), 'kunde');
+  return {
+    filename: `08-einwilligung-template-${customerSlug}.pdf`,
+    base64: Buffer.from(await pdfDoc.save()).toString('base64'),
+  };
+}
+
+async function buildEinwilligungPdf(data = {}) {
+  const customerSlug = sanitizeFilenamePart(buildCustomerName(data), 'kunde');
+  const pdfDoc = await PDFDocument.create();
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+  const oblique = await pdfDoc.embedFont(StandardFonts.HelveticaOblique);
+
+  const pageWidth = 595.28;
+  const pageHeight = 841.89;
+  const marginX = 55;
+  const contentWidth = pageWidth - (2 * marginX);
+  const page = pdfDoc.addPage([pageWidth, pageHeight]);
+  const text = (s, x, y, { size = 10, f = font, color = rgb(0.1, 0.1, 0.1) } = {}) =>
+    page.drawText(String(s), { x, y, size, font: f, color });
+  const centerText = (s, y, { size = 10, f = font, color = rgb(0.1, 0.1, 0.1) } = {}) => {
+    const w = f.widthOfTextAtSize(String(s), size);
+    text(s, (pageWidth - w) / 2, y, { size, f, color });
+  };
+
+  let y = pageHeight - 40;
+
+  // ── Barcode + Logo (Dr. Löffler header image) ──────────────────
+  try {
+    const logoPath = path.join(__dirname, '..', 'public', 'assets', 'barcodelogo.png');
+    const logoBytes = fs.readFileSync(logoPath);
+    const logoImage = await pdfDoc.embedPng(logoBytes);
+    const logoWidth = 400;
+    const logoHeight = logoWidth * (logoImage.height / logoImage.width);
+    y -= logoHeight;
+    page.drawImage(logoImage, { x: marginX, y, width: logoWidth, height: logoHeight });
+  } catch (_err) {
+    // If the logo is missing, fall back to plain text header
+    centerText('Dr. Löffler & Co. KG', y - 20, { size: 22, f: bold, color: rgb(0.12, 0.26, 0.32) });
+    centerText('Abrechnung im Gesundheitswesen', y - 38, { size: 10, f: oblique, color: rgb(0.3, 0.3, 0.3) });
+    y -= 55;
+  }
+
+  // ── Two boxes ─────────────────────────────────────────────────
+  y -= 28;
+  const boxTop = y;
+  const boxHeight = 135;
+  const boxGap = 12;
+  const boxWidth = (contentWidth - boxGap) / 2;
+  const leftBoxX = marginX;
+  const rightBoxX = marginX + boxWidth + boxGap;
+  const boxBottom = boxTop - boxHeight;
+
+  const borderColor = rgb(0.55, 0.55, 0.6);
+  page.drawRectangle({ x: leftBoxX, y: boxBottom, width: boxWidth, height: boxHeight, borderColor, borderWidth: 0.8 });
+  page.drawRectangle({ x: rightBoxX, y: boxBottom, width: boxWidth, height: boxHeight, borderColor, borderWidth: 0.8 });
+
+  // Left box content
+  {
+    const pad = 10;
+    let ly = boxTop - pad - 10;
+    text('Leistungserbringer/-in im Gesundheitswesen', leftBoxX + pad, ly, { size: 9, color: rgb(0.2, 0.2, 0.2) });
+    ly -= 12;
+    text('(vollständige Bezeichnung bzw. Praxis-/', leftBoxX + pad, ly, { size: 9, color: rgb(0.2, 0.2, 0.2) });
+    ly -= 11;
+    text('Firmenstempel)', leftBoxX + pad, ly, { size: 9, color: rgb(0.2, 0.2, 0.2) });
+  }
+
+  // Right box content
+  {
+    const pad = 10;
+    let ry = boxTop - pad - 10;
+    text('Patient/-in bzw. Leistungsempfänger/-in:', rightBoxX + pad, ry, { size: 9, color: rgb(0.2, 0.2, 0.2) });
+
+    const fields = [
+      { value: buildCustomerName(data), label: '(Vor- und Nachname)' },
+      { value: buildAddressLine(data),  label: '(Adresse)' },
+      { value: formatDate(data.einwilligungGeburtsdatum), label: 'Geburtsdatum' },
+    ];
+    const lineStart = rightBoxX + pad;
+    const lineEnd = rightBoxX + boxWidth - pad;
+    const lineOffsets = [45, 80, 115];
+    fields.forEach((field, idx) => {
+      const yLine = boxTop - lineOffsets[idx];
+      page.drawLine({
+        start: { x: lineStart, y: yLine },
+        end: { x: lineEnd, y: yLine },
+        thickness: 0.6,
+        color: rgb(0.35, 0.35, 0.35),
+      });
+      if (field.value) {
+        text(field.value, lineStart, yLine + 2, { size: 10, color: rgb(0.1, 0.1, 0.1) });
+      }
+      text(field.label, lineStart, yLine - 11, { size: 8.5, color: rgb(0.3, 0.3, 0.3) });
+    });
+  }
+
+  // ── Title "Einwilligung zur Abrechnung" (bold, underlined) ─────
+  y = boxBottom - 26;
+  const titleText = 'Einwilligung zur Abrechnung';
+  const titleSize = 12;
+  const titleWidth = bold.widthOfTextAtSize(titleText, titleSize);
+  text(titleText, marginX, y, { size: titleSize, f: bold });
+  page.drawLine({
+    start: { x: marginX, y: y - 2 },
+    end: { x: marginX + titleWidth, y: y - 2 },
+    thickness: 0.8,
+    color: rgb(0.1, 0.1, 0.1),
+  });
+
+  y -= 18;
+
+  // ── Body paragraphs ───────────────────────────────────────────
+  const bodySize = 9.5;
+  const bodyLineHeight = 12;
+  const paragraphSpacing = 6;
+
+  const drawPara = (paragraph, { centered = false, f = font } = {}) => {
+    const wrapped = wrapTextByWidth(paragraph, f, bodySize, contentWidth);
+    wrapped.forEach(line => {
+      if (centered) {
+        const w = f.widthOfTextAtSize(line, bodySize);
+        text(line, (pageWidth - w) / 2, y, { size: bodySize, f });
+      } else {
+        text(line, marginX, y, { size: bodySize, f });
+      }
+      y -= bodyLineHeight;
+    });
+    y -= paragraphSpacing;
+  };
+
+  drawPara('Ich willige ein, dass mein Name, meine Anschrift, mein Geburtsdatum sowie meine abrechnungsrelevanten Gesundheitsdaten vom Leistungserbringer/-in an die');
+  drawPara('Dr. Löffler & Co. KG, Schildergasse 120, 50667 Köln (Abrechnungszentrale)', { centered: true, f: bold });
+  drawPara('ausschließlich zur Abtretung und Abrechnung übermittelt und dort verarbeitet werden. Für den Fall, dass ich Selbstzahler bin, stimme ich zu, dass die Abrechnungszentrale im Zuge ihrer Refinanzierung bei der Commerzbank AG meinen Namen und den jeweils offenen Betrag dieser auf Anfrage mitteilt.');
+  drawPara('Die Rechtsgrundlagen für die Verarbeitung sind meine Einwilligung, vgl. Art. 9 Abs. 2 Buchstabe a der EU- Datenschutzgrundverordnung sowie die sozialrechtlichen Erlaubnistatbestände, vgl. insbesondere §§ 300 Abs. 2, 302 Abs. 2, 295a Abs. 3 SGB V sowie § 105 Abs. 2 SGB XI. Mir ist bekannt, dass es keine gesetzliche Pflicht gibt, diese Einwilligung zu unterzeichnen, eine Abrechnung über die Abrechnungszentrale bei Verweigerung der Einwilligung aber ggfls. nicht erfolgen könnte.');
+  drawPara('Die Abrechnungszentrale wird meine Daten unverzüglich löschen, sobald sie für die Abtretung, Abrechnung und Geltendmachung der Forderungen nicht mehr erforderlich sind. Anstelle der Löschung tritt die Einschränkung der Verarbeitung (Sperrung), sofern gesetzliche Aufbewahrungspflichten einzuhalten sind. Die gesetzlichen Aufbewahrungsfristen für meine Daten betragen in der Regel zehn Jahre. Ich habe ein Recht auf Auskunft gegenüber der Abrechnungszentrale, welche meine Daten verarbeitet sowie auf Berichtigung, auf Löschung bzw. auf Einschränkung der Verarbeitung. Ferner habe ich ein Recht auf Datenübertragbarkeit sowie ein Beschwerderecht bei der für die Abrechnungszentrale zuständigen Aufsichtsbehörde, der Landesbeauftragten für Datenschutz und Informationsfreiheit Nordrhein-Westfalen, Postfach 20 04 44, 40102 Düsseldorf.');
+  drawPara('Die Datenschutzbeauftragte der Abrechnungszentrale ist die Kinast Rechtsanwaltsgesellschaft mbH, Hohenzollernring 54, 50672 Köln, zu erreichen über die Dr. Löffler & Co. KG, Telefon 0221 – 257 64 29.');
+  drawPara('Ich kann diese Einwilligung jederzeit gegenüber der Abrechnungszentrale oder dem/der Leistungserbringer/-in widerrufen. Der Widerruf entfaltet lediglich Wirkung für die Zukunft, d.h. bis zum Widerruf bleibt die Verarbeitung rechtmäßig.');
+
+  // ── Signature area ────────────────────────────────────────────
+  y -= 8; // small gap after last body paragraph
+  const signatureAreaHeight = 55;
+
+  const signatureBase64 = String(data.unterschriftEinwilligung || '').split(',')[1] || '';
+  if (signatureBase64) {
+    try {
+      const png = await pdfDoc.embedPng(Buffer.from(signatureBase64, 'base64'));
+      const maxW = 220;
+      const maxH = signatureAreaHeight - 4;
+      const scale = Math.min(maxW / png.width, maxH / png.height, 1);
+      const w = png.width * scale;
+      const h = png.height * scale;
+      page.drawImage(png, { x: marginX, y: y - h, width: w, height: h });
+    } catch (_err) { /* skip */ }
+  }
+  y -= signatureAreaHeight;
+
+  page.drawLine({
+    start: { x: marginX, y },
+    end: { x: marginX + contentWidth, y },
+    thickness: 0.8,
+    color: rgb(0.1, 0.1, 0.1),
+  });
+  y -= 14;
+  text('Datum und Unterschrift des Patienten/Leistungsempfängers bzw. dessen Vertreter/in', marginX, y, { size: 9, color: rgb(0.2, 0.2, 0.2) });
+
+  return {
+    filename: `08-einwilligung-zur-abrechnung-${customerSlug}.pdf`,
+    base64: Buffer.from(await pdfDoc.save()).toString('base64'),
+  };
 }
 
 function buildInspectionLines(data = {}) {
@@ -156,11 +434,92 @@ function getChecklistVariant(data = {}) {
   };
 }
 
-async function embedSignatureIfPresent(pdfDoc, page, signatureDataUrl, y) {
-  if (!normalizeWhitespace(signatureDataUrl)) return y;
+function wrapTextByWidth(text, font, size, maxWidth) {
+  const source = String(text || '');
+  if (!source) return [''];
+  const paragraphs = source.split('\n');
+  const out = [];
+  for (const paragraph of paragraphs) {
+    if (!paragraph) { out.push(''); continue; }
+    const words = paragraph.split(/\s+/);
+    let currentLine = '';
+    for (const word of words) {
+      const candidate = currentLine ? `${currentLine} ${word}` : word;
+      if (font.widthOfTextAtSize(candidate, size) > maxWidth && currentLine) {
+        out.push(currentLine);
+        currentLine = word;
+      } else {
+        currentLine = candidate;
+      }
+    }
+    if (currentLine) out.push(currentLine);
+  }
+  return out;
+}
+
+function createPageContext(pdfDoc, font) {
+  const pageSize = [595.28, 841.89];
+  const topY = 790;
+  const bottomY = 70;
+  const state = {
+    pdfDoc,
+    font,
+    page: pdfDoc.addPage(pageSize),
+    y: topY,
+    topY,
+    bottomY,
+    pageSize,
+  };
+  state.drawFooter = () => {
+    state.page.drawText(`Erstellt am ${formatDate(new Date())}`, {
+      x: 50,
+      y: 40,
+      size: 10,
+      font,
+      color: rgb(0.45, 0.45, 0.45),
+    });
+  };
+  state.drawFooter();
+  state.ensureSpace = (needed) => {
+    if (state.y - needed < state.bottomY) {
+      state.page = pdfDoc.addPage(pageSize);
+      state.y = topY;
+      state.drawFooter();
+    }
+  };
+  return state;
+}
+
+function drawWrappedLines(ctx, lines, {
+  x = 50,
+  size = 11,
+  lineHeight = 15,
+  paragraphSpacing = 6,
+  maxWidth = 495,
+  color = rgb(0.1, 0.1, 0.1),
+  font = ctx.font,
+} = {}) {
+  for (const rawLine of lines) {
+    const text = String(rawLine == null ? '' : rawLine);
+    if (!text) {
+      ctx.y -= paragraphSpacing;
+      continue;
+    }
+    const wrapped = wrapTextByWidth(text, font, size, maxWidth);
+    for (const segment of wrapped) {
+      ctx.ensureSpace(lineHeight);
+      ctx.page.drawText(segment, { x, y: ctx.y, size, font, color });
+      ctx.y -= lineHeight;
+    }
+  }
+}
+
+async function embedSignatureIfPresent(pdfDoc, ctxOrPage, signatureDataUrl, maybeY) {
+  const isCtx = ctxOrPage && typeof ctxOrPage === 'object' && 'ensureSpace' in ctxOrPage;
+  if (!normalizeWhitespace(signatureDataUrl)) return isCtx ? ctxOrPage.y : maybeY;
 
   const base64Payload = String(signatureDataUrl).split(',')[1] || '';
-  if (!base64Payload) return y;
+  if (!base64Payload) return isCtx ? ctxOrPage.y : maybeY;
 
   try {
     const pngImage = await pdfDoc.embedPng(Buffer.from(base64Payload, 'base64'));
@@ -170,78 +529,46 @@ async function embedSignatureIfPresent(pdfDoc, page, signatureDataUrl, y) {
     const width = pngImage.width * scale;
     const height = pngImage.height * scale;
 
-    page.drawText('Unterschrift:', {
-      x: 50,
-      y,
-      size: 11,
-      color: rgb(0.2, 0.2, 0.2),
-    });
+    if (isCtx) {
+      const ctx = ctxOrPage;
+      ctx.ensureSpace(14 + height + 16);
+      ctx.page.drawText('Unterschrift:', { x: 50, y: ctx.y, size: 11, color: rgb(0.2, 0.2, 0.2) });
+      ctx.y -= 14;
+      ctx.page.drawImage(pngImage, { x: 50, y: ctx.y - height, width, height });
+      ctx.y -= height + 16;
+      return ctx.y;
+    }
+
+    let y = maybeY;
+    const page = ctxOrPage;
+    page.drawText('Unterschrift:', { x: 50, y, size: 11, color: rgb(0.2, 0.2, 0.2) });
     y -= 14;
-
-    page.drawImage(pngImage, {
-      x: 50,
-      y: y - height,
-      width,
-      height,
-    });
-
+    page.drawImage(pngImage, { x: 50, y: y - height, width, height });
     return y - height - 16;
   } catch (_error) {
-    return y;
+    return isCtx ? ctxOrPage.y : maybeY;
   }
 }
 
 async function buildStepPdf({ title, subtitle = '', lines = [], signatureDataUrl = '', fileName }) {
   const pdfDoc = await PDFDocument.create();
-  const page = pdfDoc.addPage([595.28, 841.89]);
   const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
-  let y = 790;
+  const ctx = createPageContext(pdfDoc, font);
 
-  page.drawText(title, {
-    x: 50,
-    y,
-    size: 18,
-    font: bold,
-    color: rgb(0.15, 0.15, 0.15),
-  });
-  y -= 28;
+  ctx.page.drawText(title, { x: 50, y: ctx.y, size: 18, font: bold, color: rgb(0.15, 0.15, 0.15) });
+  ctx.y -= 28;
 
   if (subtitle) {
-    page.drawText(subtitle, {
-      x: 50,
-      y,
-      size: 11,
-      font,
-      color: rgb(0.35, 0.35, 0.35),
-    });
-    y -= 24;
+    ctx.page.drawText(subtitle, { x: 50, y: ctx.y, size: 11, font, color: rgb(0.35, 0.35, 0.35) });
+    ctx.y -= 24;
   }
 
-  lines.forEach(line => {
-    page.drawText(String(line), {
-      x: 50,
-      y,
-      size: 11,
-      font,
-      color: rgb(0.1, 0.1, 0.1),
-      maxWidth: 495,
-      lineHeight: 14,
-    });
-    y -= 18;
-  });
+  drawWrappedLines(ctx, lines);
 
-  y -= 12;
-  y = await embedSignatureIfPresent(pdfDoc, page, signatureDataUrl, y);
-
-  page.drawText(`Erstellt am ${formatDate(new Date())}`, {
-    x: 50,
-    y: 40,
-    size: 10,
-    font,
-    color: rgb(0.45, 0.45, 0.45),
-  });
+  ctx.y -= 12;
+  await embedSignatureIfPresent(pdfDoc, ctx, signatureDataUrl);
 
   const pdfBytes = await pdfDoc.save();
   return {
@@ -250,7 +577,7 @@ async function buildStepPdf({ title, subtitle = '', lines = [], signatureDataUrl
   };
 }
 
-async function buildStepDocumentAttachments(data = {}, { includeDebug = false } = {}) {
+async function buildStepDocumentAttachments(data = {}, { includeDebug = false, forceAll = false } = {}) {
   const customerSlug = sanitizeFilenamePart(buildCustomerName(data), 'kunde');
   const attachments = [];
   const checklistVariant = getChecklistVariant(data);
@@ -308,16 +635,16 @@ async function buildStepDocumentAttachments(data = {}, { includeDebug = false } 
       signatureDataUrl: data.unterschriftMonteur1 || data.unterschriftMonteur2,
     },
     {
-      enabled: includeDebug && (normalizeWhitespace(data.unterschriftMaengel) || normalizeWhitespace(data.maengelAbgeschlossenAm)),
-      title: '08-Maengelbeseitigung',
-      fileName: `08-maengelbeseitigung-${customerSlug}.pdf`,
+      enabled: forceAll || (includeDebug && (normalizeWhitespace(data.unterschriftMaengel) || normalizeWhitespace(data.maengelAbgeschlossenAm))),
+      title: '09-Maengelbeseitigung',
+      fileName: `09-maengelbeseitigung-${customerSlug}.pdf`,
       lines: [`Abgeschlossen am: ${formatDate(data.maengelAbgeschlossenAm)}`].filter(Boolean),
       signatureDataUrl: data.unterschriftMaengel,
     },
     {
-      enabled: includeDebug && (normalizeWhitespace(data.unterschriftNB) || normalizeWhitespace(data.nachbesserungAbgeschlossenAm)),
-      title: '09-Nachbesserung',
-      fileName: `09-nachbesserung-${customerSlug}.pdf`,
+      enabled: forceAll || (includeDebug && (normalizeWhitespace(data.unterschriftNB) || normalizeWhitespace(data.nachbesserungAbgeschlossenAm))),
+      title: '10-Nachbesserung',
+      fileName: `10-nachbesserung-${customerSlug}.pdf`,
       lines: [
         `Abgeschlossen am: ${formatDate(data.nachbesserungAbgeschlossenAm)}`,
         normalizeWhitespace(data.alleArbeitenNB)
@@ -377,6 +704,25 @@ async function buildStepDocumentAttachments(data = {}, { includeDebug = false } 
     attachments.push(letterPdf);
   } catch (_err) {
     // Skip if letter generation fails
+  }
+
+  // 08: Einwilligung zur Abrechnung (custom layout matching original)
+  const wantsEinwilligung = forceAll || Boolean(normalizeWhitespace(data.unterschriftEinwilligung));
+  if (wantsEinwilligung) {
+    try {
+      const einwilligungPdf = await buildEinwilligungPdf(data);
+      attachments.push(einwilligungPdf);
+    } catch (_err) {
+      // Skip if Einwilligung generation fails
+    }
+
+    // 08 (template variant): stamp values onto the real Dr. Löffler PDF
+    try {
+      const templatePdf = await buildEinwilligungFromTemplate(data);
+      attachments.push(templatePdf);
+    } catch (_err) {
+      // Skip if template is missing or cannot be loaded
+    }
   }
 
   return attachments;

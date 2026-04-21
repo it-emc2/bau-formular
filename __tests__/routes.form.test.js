@@ -401,6 +401,51 @@ describe('form routes', () => {
     );
   });
 
+  it('persists Einwilligung fields and uploads the PDF to Bitrix on submit', async () => {
+    const handlers = findRouteHandlers('/submit', 'post');
+    postTimelineComment.mockResolvedValue({ result: 777 });
+    Abnahme.create.mockImplementation(async payload => ({
+      _id: 'submitted-99',
+      ...payload,
+      toObject: () => ({ _id: 'submitted-99', ...payload }),
+    }));
+
+    const req = {
+      body: {
+        formData: JSON.stringify({
+          terminId: 'UT-1000',
+          vorname: 'Max',
+          nachname: 'Muster',
+          bitrixAuftragId: '77',
+          einwilligungGeburtsdatum: '1955-04-12',
+          unterschriftEinwilligung: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAWk1v3QAAAABJRU5ErkJggg==',
+        }),
+      },
+    };
+
+    const res = await runHandlers(handlers, req);
+
+    expect(res.statusCode).toBe(201);
+    expect(Abnahme.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        terminId: 'UT-1000',
+        status: 'submitted',
+        einwilligungGeburtsdatum: '1955-04-12',
+        unterschriftEinwilligung: expect.stringContaining('data:image/png;base64,'),
+      })
+    );
+
+    expect(postTimelineComment).toHaveBeenCalledTimes(1);
+    const bitrixCall = postTimelineComment.mock.calls[0][0];
+    expect(bitrixCall.entityId).toBe(77);
+    const einwilligungAttachment = bitrixCall.attachments.find(a =>
+      a.filename.startsWith('08-einwilligung-zur-abrechnung')
+    );
+    expect(einwilligungAttachment).toBeDefined();
+    expect(einwilligungAttachment.filename).toBe('08-einwilligung-zur-abrechnung-max-muster.pdf');
+    expect(Buffer.from(einwilligungAttachment.base64, 'base64').slice(0, 4).toString('binary')).toBe('%PDF');
+  });
+
   it('proxies arbeitsbericht pdf generation through the other node app', async () => {
     const handlers = findRouteHandlers('/arbeitsbericht/pdf', 'post');
     global.fetch = jest.fn().mockResolvedValue({

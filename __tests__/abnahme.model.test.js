@@ -37,4 +37,19 @@ describe('Abnahme model', () => {
 
     expect(error.errors.artDesTermins).toBeDefined();
   });
+
+  it('persists Einwilligung fields', () => {
+    const zeit = new Date('2026-04-21T10:15:00Z');
+    const doc = new Abnahme({
+      terminId: 'UT-1000',
+      einwilligungGeburtsdatum: '1955-04-12',
+      unterschriftEinwilligung: 'data:image/png;base64,AAAA',
+      unterschriftEinwilligungZeitpunkt: zeit,
+    });
+
+    expect(doc.validateSync()).toBeUndefined();
+    expect(doc.einwilligungGeburtsdatum).toBe('1955-04-12');
+    expect(doc.unterschriftEinwilligung).toBe('data:image/png;base64,AAAA');
+    expect(doc.unterschriftEinwilligungZeitpunkt).toEqual(zeit);
+  });
 });
