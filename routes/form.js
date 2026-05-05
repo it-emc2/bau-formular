@@ -13,7 +13,7 @@ const { postTimelineComment, updateDealFields } = require('../services/bitrix');
 const { buildStepDocumentAttachments } = require('../services/stepDocuments');
 
 const router = express.Router();
-const uploadsDir = path.join(__dirname, '..', 'uploads');
+const uploadsDir = process.env.UPLOADS_DIR || path.join(__dirname, '..', 'uploads');
 
 fs.mkdirSync(uploadsDir, { recursive: true });
 
@@ -164,6 +164,7 @@ async function trySendDocumentToBitrix(data = {}) {
   const entityId = Number(data.bitrixAuftragId || 0);
 
   if (!Number.isFinite(entityId) || entityId <= 0) {
+    console.warn('[bitrix] skipped: no valid bitrixAuftragId', { received: data.bitrixAuftragId });
     return { attempted: false, sent: false };
   }
 
@@ -172,6 +173,8 @@ async function trySendDocumentToBitrix(data = {}) {
   const attachments = await buildStepDocumentAttachments(data, {
     includeDebug: String(data.debugMode || '').toLowerCase() === 'true',
   });
+
+  console.log('[bitrix] posting to deal', entityId, 'with', attachments.length, 'attachments');
 
   try {
     await postTimelineComment({
@@ -193,17 +196,19 @@ async function trySendDocumentToBitrix(data = {}) {
     if (Object.keys(dealFields).length) {
       try {
         await updateDealFields({ dealId: entityId, fields: dealFields });
-      } catch (_err) {
-        // Deal field update is best-effort; don't fail the whole submission
+      } catch (err) {
+        console.warn('[bitrix] deal field update failed (non-fatal):', err.message);
       }
     }
 
+    console.log('[bitrix] timeline comment posted to deal', entityId);
     return {
       attempted: true,
       sent: true,
       entityId,
     };
   } catch (error) {
+    console.error('[bitrix] post failed for deal', entityId, '—', error.message);
     return {
       attempted: true,
       sent: false,

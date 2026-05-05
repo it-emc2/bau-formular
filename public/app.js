@@ -103,6 +103,8 @@
   let fileStore     = {};       // { fieldName: File[] }
   let signaturePads = {};       // { fieldName: SignaturePad }
   let signaturePadDataUrls = {}; // cached data URLs for pads whose canvas may have been 0-sized when loaded
+  let copiedSignatureDataUrl = null;
+  const pasteSigButtons = new Set();
   let devMode       = localStorage.getItem('bauFormularDevMode') === 'true';
   let bitrixDeals   = [];
   let activeBitrixDealId = null;
@@ -2151,7 +2153,9 @@ function syncDevSidebarVisibility() {
       requiredUploads.forEach(({ name, label }) => {
         const wrapper = $(`.file-upload[data-name="${name}"]`, section);
         if (!wrapper) return;
-        const hasFiles = fileStore[name] && fileStore[name].length > 0;
+        const hasFreshFiles = fileStore[name] && fileStore[name].length > 0;
+        const hasSavedFiles = !!$('.file-thumb', wrapper);
+        const hasFiles = hasFreshFiles || hasSavedFiles;
         const drop = $('.file-drop', wrapper);
         if (!hasFiles) {
           if (drop) {
@@ -2590,12 +2594,12 @@ function syncDevSidebarVisibility() {
         fetchDrafts();
         if (json.bitrixSync?.attempted && json.bitrixSync?.sent) {
           setDocumentStatus(`Dokumenttext wurde automatisch an Bitrix-Auftrag ${json.bitrixSync.entityId} gesendet.`, 'success');
-          showToast('Erfolgreich übermittelt und an Bitrix gesendet! ✓', 'success');
+          showToast('Erfolgreich übermittelt und an Bitrix gesendet! ✓', 'success', 'big');
         } else if (json.bitrixSync?.attempted && !json.bitrixSync?.sent) {
           setDocumentStatus(`Formular übermittelt, Bitrix-Sendung fehlgeschlagen: ${json.bitrixSync.error}`, 'error');
           showToast('Formular übermittelt, aber Bitrix konnte nicht aktualisiert werden.', 'error');
         } else {
-          showToast('Erfolgreich übermittelt! ✓', 'success');
+          showToast('Erfolgreich übermittelt! ✓', 'success', 'big');
         }
         // Clear file store after successful submit
         fileStore = {};
@@ -2984,6 +2988,10 @@ function syncDevSidebarVisibility() {
   }
 
   // ── Signature Pads ─────────────────────────────────────
+  function refreshPasteSigButtons() {
+    pasteSigButtons.forEach(btn => { btn.disabled = !copiedSignatureDataUrl; });
+  }
+
   function initSignaturePads() {
     $$('.signature-wrapper').forEach(wrapper => {
       const name   = wrapper.dataset.name;
@@ -2994,8 +3002,48 @@ function syncDevSidebarVisibility() {
       });
       signaturePads[name] = pad;
 
-      // Clear button
-      $('.btn-clear-sig', wrapper).addEventListener('click', () => {
+      const clearBtn = $('.btn-clear-sig', wrapper);
+      const actions = document.createElement('div');
+      actions.className = 'sig-actions';
+
+      const copyBtn = document.createElement('button');
+      copyBtn.type = 'button';
+      copyBtn.className = 'btn-copy-sig';
+      copyBtn.textContent = 'Kopieren';
+
+      const pasteBtn = document.createElement('button');
+      pasteBtn.type = 'button';
+      pasteBtn.className = 'btn-paste-sig';
+      pasteBtn.textContent = 'Einfügen';
+      pasteBtn.disabled = !copiedSignatureDataUrl;
+      pasteSigButtons.add(pasteBtn);
+
+      clearBtn.parentNode.insertBefore(actions, clearBtn);
+      actions.appendChild(copyBtn);
+      actions.appendChild(pasteBtn);
+      actions.appendChild(clearBtn);
+
+      copyBtn.addEventListener('click', () => {
+        if (pad.isEmpty()) {
+          showToast('Unterschrift ist leer — nichts zu kopieren.', 'error');
+          return;
+        }
+        copiedSignatureDataUrl = pad.toDataURL();
+        refreshPasteSigButtons();
+        showToast('Unterschrift kopiert.', 'success');
+      });
+
+      pasteBtn.addEventListener('click', () => {
+        if (!copiedSignatureDataUrl) return;
+        applySignatureDataUrl(pad, copiedSignatureDataUrl);
+        signaturePadDataUrls[name] = copiedSignatureDataUrl;
+        wrapper.style.borderColor = '';
+        wrapper.style.boxShadow = '';
+        markFormDirty();
+        showToast('Unterschrift eingefügt.', 'success');
+      });
+
+      clearBtn.addEventListener('click', () => {
         pad.clear();
         delete signaturePadDataUrls[name];
         wrapper.style.borderColor = '';
@@ -3092,9 +3140,9 @@ function syncDevSidebarVisibility() {
   }
 
   // ── Toast Notifications ────────────────────────────────
-  function showToast(msg, type = '') {
+  function showToast(msg, type = '', size = '') {
     toast.textContent = msg;
-    toast.className = 'toast visible ' + type;
+    toast.className = ['toast', 'visible', type, size].filter(Boolean).join(' ');
     clearTimeout(toast._timer);
     toast._timer = setTimeout(() => { toast.className = 'toast'; }, 3500);
   }

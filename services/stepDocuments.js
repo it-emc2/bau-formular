@@ -221,6 +221,27 @@ async function buildEinwilligungPdf(data = {}) {
     text('(vollständige Bezeichnung bzw. Praxis-/', leftBoxX + pad, ly, { size: 9, color: rgb(0.2, 0.2, 0.2) });
     ly -= 11;
     text('Firmenstempel)', leftBoxX + pad, ly, { size: 9, color: rgb(0.2, 0.2, 0.2) });
+
+    try {
+      const stempelPath = path.join(__dirname, '..', 'public', 'assets', 'stempel.png');
+      const stempelBytes = fs.readFileSync(stempelPath);
+      const stempelImage = await pdfDoc.embedPng(stempelBytes);
+      const innerWidth = boxWidth - 2 * pad;
+      const labelBottom = ly - 6;
+      const availHeight = labelBottom - (boxBottom + pad);
+      const ratio = stempelImage.width / stempelImage.height;
+      let drawHeight = Math.min(availHeight, 90);
+      let drawWidth = drawHeight * ratio;
+      if (drawWidth > innerWidth) {
+        drawWidth = innerWidth;
+        drawHeight = drawWidth / ratio;
+      }
+      const drawX = leftBoxX + pad + (innerWidth - drawWidth) / 2;
+      const drawY = boxBottom + pad + (availHeight - drawHeight) / 2;
+      page.drawImage(stempelImage, { x: drawX, y: drawY, width: drawWidth, height: drawHeight });
+    } catch (_err) {
+      // Stempel image missing — leave the box empty
+    }
   }
 
   // Right box content
@@ -674,7 +695,7 @@ async function buildStepDocumentAttachments(data = {}, { includeDebug = false, f
     'bilderFertigerUmbau', 'videoDesAblaufs', 'fotosAbdichtung',
     'bilderBehobeneMaengel', 'weitereBilder', 'weitereBilder2', 'weitereBilder3',
   ];
-  const uploadsDir = path.join(__dirname, '..', 'uploads');
+  const uploadsDir = process.env.UPLOADS_DIR || path.join(__dirname, '..', 'uploads');
   let fileIndex = 0;
 
   for (const fieldName of fileFields) {

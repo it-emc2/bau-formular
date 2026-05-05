@@ -8,6 +8,13 @@ primary_region = 'fra'
 
 [build]
 
+[env]
+  UPLOADS_DIR = '/data/uploads'
+
+[[mounts]]
+  source = 'bau_uploads'
+  destination = '/data'
+
 [http_service]
   internal_port = 3000
   force_https = true
