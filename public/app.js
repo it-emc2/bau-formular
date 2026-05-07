@@ -3067,10 +3067,44 @@ function syncDevSidebarVisibility() {
       pasteBtn.disabled = !copiedSignatureDataUrl;
       pasteSigButtons.add(pasteBtn);
 
+      const uploadBtn = document.createElement('button');
+      uploadBtn.type = 'button';
+      uploadBtn.className = 'btn-upload-sig';
+      uploadBtn.textContent = 'Bild hochladen';
+
+      const uploadInput = document.createElement('input');
+      uploadInput.type = 'file';
+      uploadInput.accept = 'image/*';
+      uploadInput.style.display = 'none';
+
       clearBtn.parentNode.insertBefore(actions, clearBtn);
+      actions.appendChild(uploadBtn);
       actions.appendChild(copyBtn);
       actions.appendChild(pasteBtn);
       actions.appendChild(clearBtn);
+      actions.appendChild(uploadInput);
+
+      uploadBtn.addEventListener('click', () => uploadInput.click());
+
+      uploadInput.addEventListener('change', async () => {
+        const file = uploadInput.files && uploadInput.files[0];
+        uploadInput.value = '';
+        if (!file) return;
+        try {
+          const processed = await convertImageToSignatureDataUrl(file);
+          applySignatureDataUrl(pad, processed);
+          signaturePadDataUrls[name] = processed;
+          copiedSignatureDataUrl = processed;
+          refreshPasteSigButtons();
+          wrapper.style.borderColor = '';
+          wrapper.style.boxShadow = '';
+          markFormDirty();
+          showToast('Unterschrift aus Bild übernommen — kann nun auch in andere Felder eingefügt werden.', 'success');
+        } catch (err) {
+          console.error('Signature image conversion failed', err);
+          showToast('Bild konnte nicht als Unterschrift verarbeitet werden.', 'error');
+        }
+      });
 
       copyBtn.addEventListener('click', () => {
         if (pad.isEmpty()) {
@@ -3107,6 +3141,84 @@ function syncDevSidebarVisibility() {
     });
     resizeAllSignatureCanvases();
     window.addEventListener('resize', () => resizeAllSignatureCanvases());
+  }
+
+  function convertImageToSignatureDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('read failed'));
+      reader.onload = () => {
+        const img = new Image();
+        img.onerror = () => reject(new Error('image load failed'));
+        img.onload = () => {
+          try {
+            const MAX_DIM = 1600;
+            let sw = img.naturalWidth, sh = img.naturalHeight;
+            const scale = Math.min(1, MAX_DIM / Math.max(sw, sh));
+            sw = Math.max(1, Math.round(sw * scale));
+            sh = Math.max(1, Math.round(sh * scale));
+            const src = document.createElement('canvas');
+            src.width = sw; src.height = sh;
+            const sctx = src.getContext('2d');
+            sctx.drawImage(img, 0, 0, sw, sh);
+            const data = sctx.getImageData(0, 0, sw, sh);
+            const px = data.data;
+
+            const THRESH = 190;
+            let minX = sw, minY = sh, maxX = -1, maxY = -1;
+            for (let y = 0; y < sh; y++) {
+              for (let x = 0; x < sw; x++) {
+                const i = (y * sw + x) * 4;
+                const a = px[i + 3];
+                if (a < 16) continue;
+                const lum = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+                if (lum < THRESH) {
+                  if (x < minX) minX = x;
+                  if (y < minY) minY = y;
+                  if (x > maxX) maxX = x;
+                  if (y > maxY) maxY = y;
+                }
+              }
+            }
+            if (maxX < 0) {
+              reject(new Error('no signature ink detected'));
+              return;
+            }
+
+            const cropW = maxX - minX + 1;
+            const cropH = maxY - minY + 1;
+            const out = document.createElement('canvas');
+            out.width = cropW;
+            out.height = cropH;
+            const octx = out.getContext('2d');
+            const outImg = octx.createImageData(cropW, cropH);
+            const op = outImg.data;
+            for (let y = 0; y < cropH; y++) {
+              for (let x = 0; x < cropW; x++) {
+                const si = ((y + minY) * sw + (x + minX)) * 4;
+                const di = (y * cropW + x) * 4;
+                const a = px[si + 3];
+                const lum = a < 16 ? 255
+                  : 0.299 * px[si] + 0.587 * px[si + 1] + 0.114 * px[si + 2];
+                if (lum < THRESH) {
+                  const t = Math.max(0, Math.min(1, (THRESH - lum) / THRESH));
+                  op[di] = 0; op[di + 1] = 0; op[di + 2] = 0;
+                  op[di + 3] = Math.round(255 * (0.4 + 0.6 * t));
+                } else {
+                  op[di] = 255; op[di + 1] = 255; op[di + 2] = 255; op[di + 3] = 255;
+                }
+              }
+            }
+            octx.putImageData(outImg, 0, 0);
+            resolve(out.toDataURL('image/png'));
+          } catch (e) {
+            reject(e);
+          }
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
   }
 
   function applySignatureDataUrl(pad, dataUrl) {

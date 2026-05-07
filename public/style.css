@@ -1155,7 +1155,8 @@ input[type="radio"], input[type="checkbox"] {
   right: auto;
 }
 .btn-copy-sig,
-.btn-paste-sig {
+.btn-paste-sig,
+.btn-upload-sig {
   background: rgba(0,0,0,.06);
   border: none;
   padding: 4px 12px;
@@ -1164,7 +1165,8 @@ input[type="radio"], input[type="checkbox"] {
   cursor: pointer;
 }
 .btn-copy-sig:hover,
-.btn-paste-sig:hover { background: rgba(0,0,0,.12); }
+.btn-paste-sig:hover,
+.btn-upload-sig:hover { background: rgba(0,0,0,.12); }
 .btn-paste-sig:disabled { opacity: .45; cursor: not-allowed; }
 .btn-paste-sig:disabled:hover { background: rgba(0,0,0,.06); }
 
