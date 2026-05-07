@@ -160,6 +160,102 @@ function findAttachmentForDealField(attachments, prefix) {
   return attachments.find(att => att.filename.startsWith(prefix));
 }
 
+async function buildBitrixDebugPayload(data = {}) {
+  const entityId = Number(data.bitrixAuftragId || 0);
+
+  if (!Number.isFinite(entityId) || entityId <= 0) {
+    return {
+      attempted: false,
+      reason: 'Keine gueltige Bitrix-Auftrag-ID',
+      receivedBitrixAuftragId: data.bitrixAuftragId ?? null,
+    };
+  }
+
+  const document = buildDocumentPackage(data);
+  const comment = [document.title, '', document.text].join('\n');
+  const attachments = await buildStepDocumentAttachments(data, {
+    includeDebug: String(data.debugMode || '').toLowerCase() === 'true',
+  });
+
+  const timelineFieldsRedacted = {
+    ENTITY_ID: entityId,
+    ENTITY_TYPE: 'deal',
+    COMMENT: comment,
+  };
+  if (attachments.length) {
+    timelineFieldsRedacted.FILES = attachments.map(att => [
+      att.filename,
+      `[base64 length=${att.base64?.length || 0}]`,
+    ]);
+  }
+
+  const requests = [];
+
+  const timelineEntry = {
+    label: 'Timeline-Kommentar mit Anhaengen',
+    method: 'POST',
+    url: '<BITRIX_WEBHOOK_BASE>/crm.timeline.comment.add.json',
+    contentType: 'application/json',
+    body: { fields: timelineFieldsRedacted },
+  };
+  try {
+    timelineEntry.response = await postTimelineComment({
+      entityType: 'deal',
+      entityId,
+      comment,
+      attachments,
+    });
+    timelineEntry.ok = true;
+  } catch (err) {
+    timelineEntry.ok = false;
+    timelineEntry.error = err.message;
+  }
+  requests.push(timelineEntry);
+
+  const dealFieldsFull = {};
+  const dealFieldsRedacted = {};
+  for (const [prefix, fieldName] of Object.entries(DEAL_FIELD_DOC_MAP)) {
+    const att = findAttachmentForDealField(attachments, prefix);
+    if (att) {
+      dealFieldsFull[fieldName] = [att.filename, att.base64];
+      dealFieldsRedacted[fieldName] = [att.filename, `[base64 length=${att.base64?.length || 0}]`];
+    }
+  }
+
+  if (Object.keys(dealFieldsFull).length) {
+    const dealEntry = {
+      label: 'Auftragsfelder (Datei-Uploads)',
+      method: 'POST',
+      url: '<BITRIX_WEBHOOK_BASE>/crm.item.update.json',
+      contentType: 'application/json',
+      body: {
+        entityTypeId: 2,
+        id: entityId,
+        fields: dealFieldsRedacted,
+        useOriginalUfNames: 'Y',
+      },
+    };
+    try {
+      dealEntry.response = await updateDealFields({ dealId: entityId, fields: dealFieldsFull });
+      dealEntry.ok = true;
+    } catch (err) {
+      dealEntry.ok = false;
+      dealEntry.error = err.message;
+    }
+    requests.push(dealEntry);
+  }
+
+  return {
+    attempted: true,
+    entityId,
+    attachmentSummary: attachments.map(att => ({
+      filename: att.filename,
+      base64Length: att.base64?.length || 0,
+    })),
+    requests,
+  };
+}
+
 async function trySendDocumentToBitrix(data = {}) {
   const entityId = Number(data.bitrixAuftragId || 0);
 
@@ -189,7 +285,7 @@ async function trySendDocumentToBitrix(data = {}) {
     for (const [prefix, fieldName] of Object.entries(DEAL_FIELD_DOC_MAP)) {
       const att = findAttachmentForDealField(attachments, prefix);
       if (att) {
-        dealFields[fieldName] = { fileData: [att.filename, att.base64] };
+        dealFields[fieldName] = [att.filename, att.base64];
       }
     }
 
@@ -541,6 +637,17 @@ router.post('/document/bitrix', async (req, res) => {
     });
 
     return res.json({ success: true, result, document });
+  } catch (error) {
+    return res.status(400).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/debug-bitrix-payload', upload.any(), async (req, res) => {
+  try {
+    const parsed = parsePayload(req);
+    mergeUploadedFiles(parsed, req.files);
+    const result = await buildBitrixDebugPayload(parsed);
+    return res.json({ success: true, ...result });
   } catch (error) {
     return res.status(400).json({ success: false, error: error.message });
   }

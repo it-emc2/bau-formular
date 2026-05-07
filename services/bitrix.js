@@ -75,9 +75,11 @@ function postTimelineComment({ entityType, entityId, comment, attachments = [] }
 }
 
 function updateDealFields({ dealId, fields }) {
-  return bxPost('crm.deal.update', {
+  return bxPost('crm.item.update', {
+    entityTypeId: 2,
     id: dealId,
     fields,
+    useOriginalUfNames: 'Y',
   });
 }
 

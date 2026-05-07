@@ -840,7 +840,20 @@
       <button type="button" class="btn btn-back" id="btnBack">Zurück</button>
       <button type="button" class="btn btn-draft" id="btnDraft">Zwischenspeichern</button>
       <button type="button" class="btn btn-next" id="btnNext">Weiter</button>
+      <label class="stay-on-page" id="stayOnPageLabel" title="Nach dem Absenden auf dieser Seite bleiben">
+        <input type="checkbox" id="stayOnPage" />
+        <span>Auf Seite bleiben</span>
+      </label>
+      <button type="button" class="btn btn-debug-bitrix" id="btnDebugBitrix" title="Sendet die Bitrix-Requests jetzt und zeigt Request + Antwort. Achtung: erstellt echte Eintraege in Bitrix.">Bitrix-Request senden + Antwort</button>
       <button type="button" class="btn btn-submit" id="btnSubmit">Absenden</button>
+    </div>
+
+    <div class="bitrix-debug-panel hidden" id="bitrixDebugPanel">
+      <div class="bitrix-debug-head">
+        <strong>Bitrix-Request-Vorschau</strong>
+        <button type="button" class="bitrix-debug-close" id="btnDebugBitrixClose" aria-label="Schliessen">&times;</button>
+      </div>
+      <pre class="bitrix-debug-output" id="bitrixDebugOutput"></pre>
     </div>
 
     <div class="step-counter" id="stepCounter">1/11</div>

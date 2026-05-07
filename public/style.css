@@ -1188,6 +1188,57 @@ input[type="radio"], input[type="checkbox"] {
   gap: 10px;
   margin-top: 32px;
   justify-content: center;
+  align-items: center;
+}
+
+.stay-on-page {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: .9rem;
+  color: var(--clr-dark);
+  cursor: pointer;
+  user-select: none;
+}
+.stay-on-page input { cursor: pointer; }
+
+.btn-debug-bitrix {
+  background: #6b46c1;
+  color: #fff;
+}
+.btn-debug-bitrix:hover { background: #553c9a; }
+.btn-debug-bitrix:disabled { opacity: .6; cursor: not-allowed; }
+
+.bitrix-debug-panel {
+  margin-top: 16px;
+  background: #1e1e2e;
+  color: #e6e6e6;
+  border-radius: 8px;
+  padding: 12px 16px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .8rem;
+  max-height: 480px;
+  overflow: auto;
+}
+.bitrix-debug-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  color: #fff;
+}
+.bitrix-debug-close {
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 1.2rem;
+  cursor: pointer;
+  line-height: 1;
+}
+.bitrix-debug-output {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .btn {

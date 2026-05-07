@@ -554,6 +554,13 @@
       if (validateAllSteps()) saveForm('submit');
     });
 
+    const btnDebugBitrix = $('#btnDebugBitrix');
+    const btnDebugBitrixClose = $('#btnDebugBitrixClose');
+    if (btnDebugBitrix) btnDebugBitrix.addEventListener('click', () => debugBitrixRequest());
+    if (btnDebugBitrixClose) btnDebugBitrixClose.addEventListener('click', () => {
+      $('#bitrixDebugPanel')?.classList.add('hidden');
+    });
+
     // Draft modal buttons
     $('#btnCopyLink').addEventListener('click', () => {
       const input = $('#draftLink');
@@ -2559,6 +2566,45 @@ function syncDevSidebarVisibility() {
     input.addEventListener('keydown', onKey);
   }
 
+  // ── Debug: Bitrix Request Shape ────────────────────────
+  async function debugBitrixRequest() {
+    const panel = $('#bitrixDebugPanel');
+    const output = $('#bitrixDebugOutput');
+    const btn = $('#btnDebugBitrix');
+    if (!panel || !output) return;
+
+    const data = collectFormData();
+    const fd = new FormData();
+    fd.append('formData', JSON.stringify(data));
+    for (const [fieldName, files] of Object.entries(fileStore)) {
+      files.forEach(f => fd.append(fieldName, f));
+    }
+
+    if (btn) btn.disabled = true;
+    output.textContent = 'Lade …';
+    panel.classList.remove('hidden');
+
+    try {
+      const res = await fetch('/api/form/debug-bitrix-payload', { method: 'POST', body: fd });
+      const json = await res.json();
+      output.textContent = JSON.stringify(json, null, 2);
+      console.log('[bitrix-debug] result', json);
+      if (Array.isArray(json.requests)) {
+        json.requests.forEach((r, i) => {
+          console.log(`[bitrix-debug] request ${i + 1}: ${r.label} — ${r.ok ? 'OK' : 'FAIL'}`);
+          console.log('  request body:', r.body);
+          if (r.response) console.log('  response:', r.response);
+          if (r.error) console.log('  error:', r.error);
+        });
+      }
+    } catch (err) {
+      output.textContent = 'Fehler: ' + err.message;
+      console.error('[bitrix-debug] failed', err);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
   // ── Save / Submit ──────────────────────────────────────
   async function saveForm(action) {
     const data = collectFormData();
@@ -2603,9 +2649,12 @@ function syncDevSidebarVisibility() {
         }
         // Clear file store after successful submit
         fileStore = {};
-        setTimeout(() => {
-          window.location.href = '/';
-        }, 2000);
+        const stayOnPage = $('#stayOnPage')?.checked;
+        if (!stayOnPage) {
+          setTimeout(() => {
+            window.location.href = '/';
+          }, 2000);
+        }
       }
     } catch (err) {
       showToast('Fehler: ' + err.message, 'error');
