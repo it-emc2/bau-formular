@@ -226,6 +226,38 @@ describe('form routes', () => {
     expect(res.body).toEqual({ success: false, error: 'Formular nicht gefunden' });
   });
 
+  it('verifies the Testmodus password from the environment', async () => {
+    const handlers = findRouteHandlers('/dev-mode/verify', 'post');
+    const previousPassword = process.env.TESTMODUS_PASSWORD;
+    process.env.TESTMODUS_PASSWORD = 'secret-test';
+
+    const res = await runHandlers(handlers, {
+      body: { password: 'secret-test' },
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({ success: true });
+
+    if (previousPassword === undefined) delete process.env.TESTMODUS_PASSWORD;
+    else process.env.TESTMODUS_PASSWORD = previousPassword;
+  });
+
+  it('rejects an invalid Testmodus password', async () => {
+    const handlers = findRouteHandlers('/dev-mode/verify', 'post');
+    const previousPassword = process.env.TESTMODUS_PASSWORD;
+    process.env.TESTMODUS_PASSWORD = 'secret-test';
+
+    const res = await runHandlers(handlers, {
+      body: { password: 'wrong' },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.body).toEqual({ success: false, error: 'Passwort ungueltig' });
+
+    if (previousPassword === undefined) delete process.env.TESTMODUS_PASSWORD;
+    else process.env.TESTMODUS_PASSWORD = previousPassword;
+  });
+
   it('loads a form by share token', async () => {
     const handlers = findRouteHandlers('/token/:token', 'get');
     const req = { params: { token: 'abc123' } };

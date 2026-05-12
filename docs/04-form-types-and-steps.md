@@ -103,12 +103,13 @@ When the radio button `alleArbeitenNB` has value `"Nein"`, the div becomes visib
 
 ## Dev Mode (Testmodus)
 
-Toggled via the "Testmodus: An/Aus" button in the header. Persisted in `localStorage` (`bauFormularDevMode`).
+Toggled via the "Testmodus: An/Aus" button in the header. It starts as "Aus" on every page load and requires the server-side password from `TESTMODUS_PASSWORD` (fallback: `DEV_MODE_PASSWORD`) before it can be enabled.
 
 When active:
 - Step navigation skips validation (any step can be advanced without filling required fields)
 - Dev-only steps (7, 8, 9) become visible
 - Bitrix sidebar, draft panel, and debug fields become visible
+- "Bitrix-Request senden + Antwort" becomes visible
 - "Musterdaten einfüllen" (fill demo data) button appears
 - "Musterdaten komplett" header button appears
 - Document preview panel becomes visible on step 10

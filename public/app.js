@@ -18,6 +18,7 @@
   const btnNext       = $('#btnNext');
   const btnDraft      = $('#btnDraft');
   const btnSubmit     = $('#btnSubmit');
+  const btnDebugBitrix = $('#btnDebugBitrix');
   const devModeToggle = $('#devModeToggle');
   const devToolsPanel = $('#devToolsPanel');
   const devModeBadge  = $('#devModeBadge');
@@ -105,7 +106,7 @@
   let signaturePadDataUrls = {}; // cached data URLs for pads whose canvas may have been 0-sized when loaded
   let copiedSignatureDataUrl = null;
   const pasteSigButtons = new Set();
-  let devMode       = localStorage.getItem('bauFormularDevMode') === 'true';
+  let devMode       = false;
   let bitrixDeals   = [];
   let activeBitrixDealId = null;
   let bitrixSearchTerm = '';
@@ -554,7 +555,6 @@
       if (validateAllSteps()) saveForm('submit');
     });
 
-    const btnDebugBitrix = $('#btnDebugBitrix');
     const btnDebugBitrixClose = $('#btnDebugBitrixClose');
     if (btnDebugBitrix) btnDebugBitrix.addEventListener('click', () => debugBitrixRequest());
     if (btnDebugBitrixClose) btnDebugBitrixClose.addEventListener('click', () => {
@@ -615,6 +615,30 @@
     $$('.dev-step-pdf-wrapper', form).forEach(el => el.classList.toggle('hidden', !devMode));
   }
 
+  async function parseJsonResponse(response) {
+    const text = await response.text();
+    let json = null;
+
+    if (text) {
+      try {
+        json = JSON.parse(text);
+      } catch (_error) {
+        const preview = text.slice(0, 240);
+        throw new Error(`Unerwartete Server-Antwort (HTTP ${response.status}): ${preview}`);
+      }
+    }
+
+    if (!json) {
+      throw new Error(`Leere Server-Antwort (HTTP ${response.status})`);
+    }
+
+    if (!response.ok) {
+      throw new Error(json.error || `HTTP ${response.status}`);
+    }
+
+    return json;
+  }
+
   async function downloadStepPdf(spec, btn) {
     const originalLabel = btn.textContent;
     btn.disabled = true;
@@ -659,16 +683,35 @@
     if (!devModeToggle) return;
 
     updateDevModeToggle();
-    devModeToggle.addEventListener('click', () => {
-      devMode = !devMode;
-      localStorage.setItem('bauFormularDevMode', String(devMode));
-      updateDevModeToggle();
-      showToast(
-        devMode
-          ? 'Testmodus aktiv: Seitenwechsel ohne Pflichtfelder.'
-          : 'Testmodus deaktiviert: Validierung wieder aktiv.',
-        'success'
-      );
+    devModeToggle.addEventListener('click', async () => {
+      if (devMode) {
+        devMode = false;
+        updateDevModeToggle();
+        showToast('Testmodus deaktiviert: Validierung wieder aktiv.', 'success');
+        return;
+      }
+
+      const password = window.prompt('Passwort fuer Testmodus eingeben:');
+      if (password === null) return;
+
+      devModeToggle.disabled = true;
+      try {
+        const res = await fetch('/api/form/dev-mode/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password }),
+        });
+        const json = await parseJsonResponse(res);
+        if (!json.success) throw new Error(json.error || 'Passwort ungueltig');
+
+        devMode = true;
+        updateDevModeToggle();
+        showToast('Testmodus aktiv: Seitenwechsel ohne Pflichtfelder.', 'success');
+      } catch (error) {
+        showToast('Testmodus konnte nicht aktiviert werden: ' + error.message, 'error');
+      } finally {
+        devModeToggle.disabled = false;
+      }
     });
   }
 
@@ -780,6 +823,7 @@
     if (devModeBadge) devModeBadge.classList.toggle('hidden', !devMode);
     if (bitrixTestActions) bitrixTestActions.classList.toggle('hidden', !devMode);
     if (btnHeaderDemoPrefill) btnHeaderDemoPrefill.classList.toggle('hidden', !devMode);
+    if (btnDebugBitrix) btnDebugBitrix.classList.toggle('hidden', !devMode);
     if (bitrixDebugFields) bitrixDebugFields.classList.toggle('hidden', !devMode);
     if (debugDocumentPanel) debugDocumentPanel.classList.toggle('hidden', !devMode);
     syncDevStepPdfButtons();
@@ -2586,11 +2630,12 @@ function syncDevSidebarVisibility() {
 
     try {
       const res = await fetch('/api/form/debug-bitrix-payload', { method: 'POST', body: fd });
-      const json = await res.json();
+      const json = await parseJsonResponse(res);
       output.textContent = JSON.stringify(json, null, 2);
       console.log('[bitrix-debug] result', json);
-      if (Array.isArray(json.requests)) {
-        json.requests.forEach((r, i) => {
+      const requests = json.requests || json.bitrixSync?.requests || [];
+      if (Array.isArray(requests)) {
+        requests.forEach((r, i) => {
           console.log(`[bitrix-debug] request ${i + 1}: ${r.label} — ${r.ok ? 'OK' : 'FAIL'}`);
           console.log('  request body:', r.body);
           if (r.response) console.log('  response:', r.response);
@@ -2621,7 +2666,7 @@ function syncDevSidebarVisibility() {
 
     try {
       const res  = await fetch(`/api/form/${action}`, { method: 'POST', body: fd });
-      const json = await res.json();
+      const json = await parseJsonResponse(res);
 
       if (!json.success) throw new Error(json.error);
 
@@ -2640,9 +2685,11 @@ function syncDevSidebarVisibility() {
         fetchDrafts();
         if (json.bitrixSync?.attempted && json.bitrixSync?.sent) {
           setDocumentStatus(`Dokumenttext wurde automatisch an Bitrix-Auftrag ${json.bitrixSync.entityId} gesendet.`, 'success');
+          console.log('[bitrix-submit] sync result', json.bitrixSync);
           showToast('Erfolgreich übermittelt und an Bitrix gesendet! ✓', 'success', 'big');
         } else if (json.bitrixSync?.attempted && !json.bitrixSync?.sent) {
           setDocumentStatus(`Formular übermittelt, Bitrix-Sendung fehlgeschlagen: ${json.bitrixSync.error}`, 'error');
+          console.warn('[bitrix-submit] sync failed', json.bitrixSync);
           showToast('Formular übermittelt, aber Bitrix konnte nicht aktualisiert werden.', 'error');
         } else {
           showToast('Erfolgreich übermittelt! ✓', 'success', 'big');

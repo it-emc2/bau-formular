@@ -17,6 +17,7 @@ The application uses `dotenv` to load environment variables from a `.env` file i
 | `PORT` | `3000` | Server port |
 | `MONGODB_DB` | _(from URI)_ | Database name override |
 | `BITRIX_WEBHOOK_BASE` | _(empty)_ | Bitrix24 webhook base URL. If empty, Bitrix features throw errors. |
+| `TESTMODUS_PASSWORD` | _(empty)_ | Password required to enable Testmodus in the frontend. If empty, Testmodus cannot be enabled. |
 | `SMTP_HOST` | _(empty)_ | SMTP server hostname |
 | `SMTP_PORT` | `587` | SMTP port |
 | `SMTP_SECURE` | _(empty)_ | Set to `"true"` for TLS. Auto-enabled for port 465. |

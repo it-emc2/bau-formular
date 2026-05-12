@@ -125,6 +125,19 @@ function sanitizeDocumentForCreate(document = {}) {
   return payload;
 }
 
+function isDevModePasswordValid(password = '') {
+  const expected = process.env.TESTMODUS_PASSWORD || process.env.DEV_MODE_PASSWORD || '';
+  const received = String(password || '');
+
+  if (!expected) return false;
+
+  const expectedBuffer = Buffer.from(expected);
+  const receivedBuffer = Buffer.from(received);
+  if (expectedBuffer.length !== receivedBuffer.length) return false;
+
+  return crypto.timingSafeEqual(expectedBuffer, receivedBuffer);
+}
+
 function mergeUploadedFiles(payload, files = []) {
   const groupedFiles = files.reduce((acc, file) => {
     if (!acc[file.fieldname]) acc[file.fieldname] = [];
@@ -160,12 +173,64 @@ function findAttachmentForDealField(attachments, prefix) {
   return attachments.find(att => att.filename.startsWith(prefix));
 }
 
-async function buildBitrixDebugPayload(data = {}) {
+function buildAttachmentSummary(attachments = []) {
+  return attachments.map(att => ({
+    filename: att.filename,
+    base64Length: att.base64?.length || 0,
+  }));
+}
+
+function buildTimelineRequestEntry({ entityId, comment, attachments = [] }) {
+  const fields = {
+    ENTITY_ID: entityId,
+    ENTITY_TYPE: 'deal',
+    COMMENT: comment,
+  };
+
+  if (attachments.length) {
+    fields.FILES = attachments.map(att => [
+      att.filename,
+      `[base64 length=${att.base64?.length || 0}]`,
+    ]);
+  }
+
+  return {
+    label: 'Timeline-Kommentar mit Anhaengen',
+    method: 'POST',
+    url: '<BITRIX_WEBHOOK_BASE>/crm.timeline.comment.add.json',
+    contentType: 'application/json',
+    body: { fields },
+  };
+}
+
+function buildDealFieldRequestEntry({ entityId, fields }) {
+  const redactedFields = {};
+  Object.entries(fields).forEach(([fieldName, value]) => {
+    const [filename, base64] = Array.isArray(value) ? value : ['', ''];
+    redactedFields[fieldName] = [filename, `[base64 length=${base64?.length || 0}]`];
+  });
+
+  return {
+    label: 'Auftragsfelder (Datei-Uploads)',
+    method: 'POST',
+    url: '<BITRIX_WEBHOOK_BASE>/crm.item.update.json',
+    contentType: 'application/json',
+    body: {
+      entityTypeId: 2,
+      id: entityId,
+      fields: redactedFields,
+      useOriginalUfNames: 'Y',
+    },
+  };
+}
+
+async function syncDocumentToBitrix(data = {}) {
   const entityId = Number(data.bitrixAuftragId || 0);
 
   if (!Number.isFinite(entityId) || entityId <= 0) {
     return {
       attempted: false,
+      sent: false,
       reason: 'Keine gueltige Bitrix-Auftrag-ID',
       receivedBitrixAuftragId: data.bitrixAuftragId ?? null,
     };
@@ -177,27 +242,8 @@ async function buildBitrixDebugPayload(data = {}) {
     includeDebug: String(data.debugMode || '').toLowerCase() === 'true',
   });
 
-  const timelineFieldsRedacted = {
-    ENTITY_ID: entityId,
-    ENTITY_TYPE: 'deal',
-    COMMENT: comment,
-  };
-  if (attachments.length) {
-    timelineFieldsRedacted.FILES = attachments.map(att => [
-      att.filename,
-      `[base64 length=${att.base64?.length || 0}]`,
-    ]);
-  }
-
   const requests = [];
-
-  const timelineEntry = {
-    label: 'Timeline-Kommentar mit Anhaengen',
-    method: 'POST',
-    url: '<BITRIX_WEBHOOK_BASE>/crm.timeline.comment.add.json',
-    contentType: 'application/json',
-    body: { fields: timelineFieldsRedacted },
-  };
+  const timelineEntry = buildTimelineRequestEntry({ entityId, comment, attachments });
   try {
     timelineEntry.response = await postTimelineComment({
       entityType: 'deal',
@@ -213,28 +259,15 @@ async function buildBitrixDebugPayload(data = {}) {
   requests.push(timelineEntry);
 
   const dealFieldsFull = {};
-  const dealFieldsRedacted = {};
   for (const [prefix, fieldName] of Object.entries(DEAL_FIELD_DOC_MAP)) {
     const att = findAttachmentForDealField(attachments, prefix);
     if (att) {
       dealFieldsFull[fieldName] = [att.filename, att.base64];
-      dealFieldsRedacted[fieldName] = [att.filename, `[base64 length=${att.base64?.length || 0}]`];
     }
   }
 
   if (Object.keys(dealFieldsFull).length) {
-    const dealEntry = {
-      label: 'Auftragsfelder (Datei-Uploads)',
-      method: 'POST',
-      url: '<BITRIX_WEBHOOK_BASE>/crm.item.update.json',
-      contentType: 'application/json',
-      body: {
-        entityTypeId: 2,
-        id: entityId,
-        fields: dealFieldsRedacted,
-        useOriginalUfNames: 'Y',
-      },
-    };
+    const dealEntry = buildDealFieldRequestEntry({ entityId, fields: dealFieldsFull });
     try {
       dealEntry.response = await updateDealFields({ dealId: entityId, fields: dealFieldsFull });
       dealEntry.ok = true;
@@ -245,70 +278,35 @@ async function buildBitrixDebugPayload(data = {}) {
     requests.push(dealEntry);
   }
 
+  const sent = Boolean(timelineEntry.ok);
+  const failed = requests.find(entry => !entry.ok);
+
   return {
     attempted: true,
+    sent,
     entityId,
-    attachmentSummary: attachments.map(att => ({
-      filename: att.filename,
-      base64Length: att.base64?.length || 0,
-    })),
+    error: sent ? undefined : failed?.error,
+    attachmentSummary: buildAttachmentSummary(attachments),
     requests,
   };
 }
 
 async function trySendDocumentToBitrix(data = {}) {
-  const entityId = Number(data.bitrixAuftragId || 0);
-
-  if (!Number.isFinite(entityId) || entityId <= 0) {
-    console.warn('[bitrix] skipped: no valid bitrixAuftragId', { received: data.bitrixAuftragId });
-    return { attempted: false, sent: false };
-  }
-
-  const document = buildDocumentPackage(data);
-  const comment = [document.title, '', document.text].join('\n');
-  const attachments = await buildStepDocumentAttachments(data, {
-    includeDebug: String(data.debugMode || '').toLowerCase() === 'true',
-  });
-
-  console.log('[bitrix] posting to deal', entityId, 'with', attachments.length, 'attachments');
-
   try {
-    await postTimelineComment({
-      entityType: 'deal',
-      entityId,
-      comment,
-      attachments,
-    });
-
-    // Upload PDFs to deal custom fields
-    const dealFields = {};
-    for (const [prefix, fieldName] of Object.entries(DEAL_FIELD_DOC_MAP)) {
-      const att = findAttachmentForDealField(attachments, prefix);
-      if (att) {
-        dealFields[fieldName] = [att.filename, att.base64];
-      }
+    const result = await syncDocumentToBitrix(data);
+    if (!result.attempted) {
+      console.warn('[bitrix] skipped: no valid bitrixAuftragId', { received: data.bitrixAuftragId });
+    } else if (result.sent) {
+      console.log('[bitrix] timeline comment posted to deal', result.entityId);
+    } else {
+      console.error('[bitrix] post failed for deal', result.entityId, '-', result.error);
     }
-
-    if (Object.keys(dealFields).length) {
-      try {
-        await updateDealFields({ dealId: entityId, fields: dealFields });
-      } catch (err) {
-        console.warn('[bitrix] deal field update failed (non-fatal):', err.message);
-      }
-    }
-
-    console.log('[bitrix] timeline comment posted to deal', entityId);
-    return {
-      attempted: true,
-      sent: true,
-      entityId,
-    };
+    return result;
   } catch (error) {
-    console.error('[bitrix] post failed for deal', entityId, '—', error.message);
+    console.error('[bitrix] sync failed before sending -', error.message);
     return {
       attempted: true,
       sent: false,
-      entityId,
       error: error.message,
     };
   }
@@ -567,6 +565,19 @@ router.post('/save', upload.any(), async (req, res) => {
   }
 });
 
+router.post('/dev-mode/verify', (req, res) => {
+  try {
+    const password = req.body?.password;
+    if (!isDevModePasswordValid(password)) {
+      return res.status(403).json({ success: false, error: 'Passwort ungueltig' });
+    }
+
+    return res.json({ success: true });
+  } catch (error) {
+    return res.status(400).json({ success: false, error: error.message });
+  }
+});
+
 router.get('/token/:token', async (req, res) => {
   try {
     const form =
@@ -646,8 +657,8 @@ router.post('/debug-bitrix-payload', upload.any(), async (req, res) => {
   try {
     const parsed = parsePayload(req);
     mergeUploadedFiles(parsed, req.files);
-    const result = await buildBitrixDebugPayload(parsed);
-    return res.json({ success: true, ...result });
+    const bitrixSync = await trySendDocumentToBitrix(parsed);
+    return res.json({ success: true, ...bitrixSync, bitrixSync });
   } catch (error) {
     return res.status(400).json({ success: false, error: error.message });
   }

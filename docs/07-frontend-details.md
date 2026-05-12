@@ -76,7 +76,6 @@ let documentDownloadFilename = null;
 
 | Key | Type | Purpose |
 |-----|------|---------|
-| `bauFormularDevMode` | `"true"/"false"` | Persists dev mode toggle across sessions |
 | `bauFormularDemoPreset` | `"badumbau"/"badewannentuer"/"handlaeufe"` | Selected demo data preset |
 
 ## Client-Side Routing

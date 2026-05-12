@@ -73,7 +73,7 @@ Tests use Jest (node environment, no supertest). Test files live in `__tests__/`
 
 ## Frontend State
 
-State is managed via module-scope JS variables in `app.js`: `currentStep`, `formId`, `shareToken`, `fileStore`, `signaturePads`, `devMode`, `bitrixDeals`, `drafts`. localStorage persists dev mode toggle and demo presets.
+State is managed via module-scope JS variables in `app.js`: `currentStep`, `formId`, `shareToken`, `fileStore`, `signaturePads`, `devMode`, `bitrixDeals`, `drafts`. Testmodus starts off on each page load and requires the server-side password; localStorage persists demo presets.
 
 ## Client-Side Routes
 
