@@ -102,10 +102,16 @@
   ];
   const BITRIX_TEST_ENTITY_TYPE_ID = 2;
   const BITRIX_STAGE_ID = 'C22:UC_T5EXSL';
+  const FILE_UPLOAD_FIELDS = [
+    'bilderFertigerUmbau', 'videoDesAblaufs', 'fotosAbdichtung',
+    'bilderBehobeneMaengel', 'weitereBilder', 'weitereBilder2', 'weitereBilder3',
+  ];
+  const SINGLE_FILE_UPLOAD_FIELDS = new Set(['videoDesAblaufs']);
   let currentStep   = 0;
   let formId        = null;     // Mongo _id once saved
   let shareToken    = null;
   let fileStore     = {};       // { fieldName: File[] }
+  let existingFileStore = {};    // { fieldName: "/uploads/..."[] }
   let signaturePads = {};       // { fieldName: SignaturePad }
   let signaturePadDataUrls = {}; // cached data URLs for pads whose canvas may have been 0-sized when loaded
   let copiedSignatureDataUrl = null;
@@ -2463,6 +2469,13 @@ function syncDevSidebarVisibility() {
     data.name = buildFullName(data);
     data.bitrixExecutionActivities = data.auszufuehrendeTaetigkeiten || '';
 
+    FILE_UPLOAD_FIELDS.forEach(fieldName => {
+      const urls = existingFileStore[fieldName] || [];
+      data[fieldName] = SINGLE_FILE_UPLOAD_FIELDS.has(fieldName)
+        ? (urls[0] || '')
+        : [...urls];
+    });
+
     // Signatures → write base64 to data + timestamp
     for (const [name, pad] of Object.entries(signaturePads)) {
       if (!pad.isEmpty()) {
@@ -2929,6 +2942,7 @@ function syncDevSidebarVisibility() {
     suppressDirtyTracking = true;
     form.reset();
     fileStore = {};
+    existingFileStore = {};
     signaturePadDataUrls = {};
     currentFormularTyp = FORMULAR_TYPE_DEFAULT;
     applyFormTypeUI();
@@ -3008,64 +3022,37 @@ function syncDevSidebarVisibility() {
       applySignatureDataUrl(pad, data[name]);
     }
 
-    // Existing file URLs → show as previews
-    const fileFields = [
-      'bilderFertigerUmbau', 'fotosAbdichtung', 'bilderBehobeneMaengel',
-      'weitereBilder', 'weitereBilder2', 'weitereBilder3'
-    ];
-    fileFields.forEach(fieldName => {
+    // Existing file URLs → show as previews and keep them in the next save.
+    FILE_UPLOAD_FIELDS.forEach(fieldName => {
       const urls = Array.isArray(data[fieldName]) ? data[fieldName] : (data[fieldName] ? [data[fieldName]] : []);
-      if (!urls.length) return;
+      existingFileStore[fieldName] = urls.filter(Boolean);
+      if (!existingFileStore[fieldName].length) return;
       const wrapper = $(`.file-upload[data-name="${fieldName}"]`);
       if (!wrapper) return;
       const preview = $('.file-preview', wrapper);
-      urls.forEach(url => {
+      existingFileStore[fieldName].forEach(url => {
         const thumb = document.createElement('div');
         thumb.className = 'file-thumb';
         const fileName = String(url).split('/').pop();
+        const isVideo = fieldName === 'videoDesAblaufs';
         thumb.innerHTML = `
-          <img src="${url}" alt="${fileName}" />
-          <div class="file-thumb-missing hidden">Datei nicht verfügbar<br><small>${fileName}</small></div>
+          ${isVideo ? `<video src="${url}" muted></video>` : `<img src="${url}" alt="${fileName}" />`}
+          <div class="file-thumb-missing hidden">${isVideo ? 'Video' : 'Datei'} nicht verfügbar<br><small>${fileName}</small></div>
           <button type="button" class="remove-file">✕</button>
         `;
-        const img = $('img', thumb);
-        img.addEventListener('error', () => {
-          img.classList.add('hidden');
+        const media = isVideo ? $('video', thumb) : $('img', thumb);
+        media.addEventListener('error', () => {
+          media.classList.add('hidden');
           $('.file-thumb-missing', thumb).classList.remove('hidden');
         });
         preview.appendChild(thumb);
         $('.remove-file', thumb).addEventListener('click', () => {
+          existingFileStore[fieldName] = (existingFileStore[fieldName] || []).filter(item => item !== url);
           thumb.remove();
           markFormDirty();
         });
       });
     });
-
-    // Video
-    if (data.videoDesAblaufs) {
-      const wrapper = $(`.file-upload[data-name="videoDesAblaufs"]`);
-      if (wrapper) {
-        const preview = $('.file-preview', wrapper);
-        const thumb = document.createElement('div');
-        thumb.className = 'file-thumb';
-        const fileName = String(data.videoDesAblaufs).split('/').pop();
-        thumb.innerHTML = `
-          <video src="${data.videoDesAblaufs}" muted></video>
-          <div class="file-thumb-missing hidden">Video nicht verfügbar<br><small>${fileName}</small></div>
-          <button type="button" class="remove-file">✕</button>
-        `;
-        const video = $('video', thumb);
-        video.addEventListener('error', () => {
-          video.classList.add('hidden');
-          $('.file-thumb-missing', thumb).classList.remove('hidden');
-        });
-        preview.appendChild(thumb);
-        $('.remove-file', thumb).addEventListener('click', () => {
-          thumb.remove();
-          markFormDirty();
-        });
-      }
-    }
 
     // Trigger conditional field visibility
     $$('input[type="radio"]:checked', form).forEach(el => el.dispatchEvent(new Event('change', { bubbles: true })));
@@ -3088,6 +3075,7 @@ function syncDevSidebarVisibility() {
       const dropZone  = $('.file-drop', wrapper);
 
       if (!fileStore[fieldName]) fileStore[fieldName] = [];
+      if (!existingFileStore[fieldName]) existingFileStore[fieldName] = [];
 
       // Click on drop zone or upload button → open file picker
       const openPicker = () => fileInput.click();
@@ -3128,8 +3116,12 @@ function syncDevSidebarVisibility() {
   }
 
   function addFiles(fieldName, files, previewEl, multi) {
+    if (!fileStore[fieldName]) fileStore[fieldName] = [];
+    if (!existingFileStore[fieldName]) existingFileStore[fieldName] = [];
+
     if (!multi) {
       fileStore[fieldName] = [];
+      existingFileStore[fieldName] = [];
       previewEl.innerHTML = '';
     }
 

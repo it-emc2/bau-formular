@@ -16,6 +16,7 @@ const { cleanupOrphanUploads } = require('../services/orphanUploads');
 
 const router = express.Router();
 const uploadsDir = getUploadsDir();
+const SINGLE_UPLOAD_FIELDS = new Set(['videoDesAblaufs']);
 
 fs.mkdirSync(uploadsDir, { recursive: true });
 
@@ -150,7 +151,16 @@ function mergeUploadedFiles(payload, files = []) {
   }, {});
 
   Object.entries(groupedFiles).forEach(([fieldName, urls]) => {
-    payload[fieldName] = urls.length === 1 ? urls[0] : urls;
+    if (SINGLE_UPLOAD_FIELDS.has(fieldName)) {
+      payload[fieldName] = urls[urls.length - 1] || '';
+      return;
+    }
+
+    const existingUrls = Array.isArray(payload[fieldName])
+      ? payload[fieldName]
+      : (payload[fieldName] ? [payload[fieldName]] : []);
+
+    payload[fieldName] = [...existingUrls, ...urls];
   });
 
   return payload;

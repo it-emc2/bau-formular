@@ -219,6 +219,43 @@ describe('form routes', () => {
     );
   });
 
+  it('keeps existing draft uploads when adding new files', async () => {
+    const handlers = findRouteHandlers('/save', 'post');
+    const save = jest.fn().mockResolvedValue();
+    const existing = {
+      _id: 'existing-id',
+      shareToken: 'share-1',
+      bilderFertigerUmbau: ['/uploads/existing-image.webp'],
+      videoDesAblaufs: '/uploads/existing-video.webm',
+      save,
+    };
+    const req = {
+      body: {
+        formData: JSON.stringify({
+          _id: 'existing-id',
+          bilderFertigerUmbau: ['/uploads/existing-image.webp'],
+          videoDesAblaufs: '/uploads/existing-video.webm',
+        }),
+      },
+      files: [
+        { fieldname: 'bilderFertigerUmbau', filename: 'new-image.webp' },
+        { fieldname: 'videoDesAblaufs', filename: 'new-video.webm' },
+      ],
+    };
+
+    Entwurf.findById.mockResolvedValue(existing);
+
+    const res = await runHandlers(handlers, req);
+
+    expect(res.statusCode).toBe(200);
+    expect(existing.bilderFertigerUmbau).toEqual([
+      '/uploads/existing-image.webp',
+      '/uploads/new-image.webp',
+    ]);
+    expect(existing.videoDesAblaufs).toBe('/uploads/new-video.webm');
+    expect(save).toHaveBeenCalled();
+  });
+
   it('returns 404 when updating a missing draft', async () => {
     const handlers = findRouteHandlers('/save', 'post');
     const req = { body: { formData: JSON.stringify({ _id: 'missing-id', terminId: 'UT-1000' }) } };
