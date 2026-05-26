@@ -29,6 +29,10 @@
   const btnDemoPrefill = $('#btnDemoPrefill');
   const btnHeaderDemoPrefill = $('#btnHeaderDemoPrefill');
   const demoActivityPresetSelect = $('#demoActivityPreset');
+  const adminCleanupPanel = $('#adminCleanupPanel');
+  const btnCleanupPreview = $('#btnCleanupPreview');
+  const btnCleanupDelete = $('#btnCleanupDelete');
+  const adminCleanupOutput = $('#adminCleanupOutput');
   const bitrixSearch  = $('#bitrixSearch');
   const bitrixDealList = $('#bitrixDealList');
   const draftSearch = $('#draftSearch');
@@ -107,6 +111,7 @@
   let copiedSignatureDataUrl = null;
   const pasteSigButtons = new Set();
   let devMode       = false;
+  let devModePassword = '';
   let bitrixDeals   = [];
   let activeBitrixDealId = null;
   let bitrixSearchTerm = '';
@@ -378,6 +383,7 @@
     bindArbeitsberichtLookup();
     bindDocumentActions();
     bindChecklistRules();
+    bindAdminCleanup();
     initSignaturePads();
     initWarenpruefungDatum();
     initDevModeToggle();
@@ -693,6 +699,7 @@
     devModeToggle.addEventListener('click', async () => {
       if (devMode) {
         devMode = false;
+        devModePassword = '';
         updateDevModeToggle();
         showToast('Testmodus deaktiviert: Validierung wieder aktiv.', 'success');
         return;
@@ -712,6 +719,7 @@
         if (!json.success) throw new Error(json.error || 'Passwort ungueltig');
 
         devMode = true;
+        devModePassword = password;
         updateDevModeToggle();
         showToast('Testmodus aktiv: Seitenwechsel ohne Pflichtfelder.', 'success');
       } catch (error) {
@@ -834,6 +842,12 @@
     if (btnDebugBitrix) btnDebugBitrix.classList.toggle('hidden', !devMode);
     if (bitrixDebugFields) bitrixDebugFields.classList.toggle('hidden', !devMode);
     if (debugDocumentPanel) debugDocumentPanel.classList.toggle('hidden', !devMode);
+    if (adminCleanupPanel) adminCleanupPanel.classList.toggle('hidden', !devMode);
+    if (!devMode && adminCleanupOutput) {
+      adminCleanupOutput.classList.add('hidden');
+      adminCleanupOutput.textContent = '';
+    }
+    if (!devMode && btnCleanupDelete) btnCleanupDelete.disabled = true;
     syncDevStepPdfButtons();
 
     // Hide Bitrix-Aufträge + Entwürfe completely when Testmodus is off
@@ -903,6 +917,104 @@ function syncDevSidebarVisibility() {
     } else if (state) {
       state.remove();
     }
+  }
+
+  function renderOrphanUploadReport(json) {
+    const report = json.report || {};
+    const files = Array.isArray(report.orphanFiles) ? report.orphanFiles : [];
+    const sample = files.slice(0, 20).map(file => {
+      const modifiedAt = file.modifiedAt ? new Date(file.modifiedAt).toLocaleString('de-DE') : '-';
+      return `- ${file.sizeLabel || ''} ${modifiedAt} ${file.relativePath || file.fullPath || ''}`.trim();
+    });
+
+    const lines = [
+      `Modus: ${json.mode === 'delete' ? 'Löschen' : 'Prüfung'}`,
+      `Datenbank: ${report.databaseName || '(aus MongoDB URI)'}`,
+      `Uploads: ${report.uploadsDir || '-'}`,
+      `Dokumente: ${report.documentsScanned?.abnahmen || 0} Abnahmen, ${report.documentsScanned?.entwuerfe || 0} Entwürfe`,
+      `Referenzen: ${report.referencesFound || 0}`,
+      `Dateien: ${report.storedFiles || 0}`,
+      `Orphans: ${report.orphanCount || 0} (${report.totalBytesLabel || '0 B'})`,
+    ];
+
+    if (json.mode === 'delete') {
+      lines.push(`Gelöscht: ${report.deletedCount || 0} (${report.deletedBytesLabel || '0 B'})`);
+    }
+
+    if (sample.length) {
+      lines.push('', 'Erste Dateien:', ...sample);
+      if (files.length > sample.length) {
+        lines.push(`... ${files.length - sample.length} weitere`);
+      }
+    }
+
+    return lines.join('\n');
+  }
+
+  async function requestOrphanUploadCleanup({ deleteFiles = false } = {}) {
+    if (!adminCleanupOutput) return null;
+
+    if (!devModePassword) {
+      const password = window.prompt('Passwort fuer Testmodus eingeben:');
+      if (password === null) return null;
+      devModePassword = password;
+    }
+
+    const response = await fetch('/api/form/admin/orphan-uploads', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        password: devModePassword,
+        delete: Boolean(deleteFiles),
+      }),
+    });
+
+    const json = await parseJsonResponse(response);
+    if (!json.success) throw new Error(json.error || 'Upload-Bereinigung fehlgeschlagen');
+    return json;
+  }
+
+  function bindAdminCleanup() {
+    if (!btnCleanupPreview || !btnCleanupDelete || !adminCleanupOutput) return;
+
+    btnCleanupPreview.addEventListener('click', async () => {
+      btnCleanupPreview.disabled = true;
+      btnCleanupDelete.disabled = true;
+      adminCleanupOutput.classList.remove('hidden');
+      adminCleanupOutput.textContent = 'Orphan Uploads werden geprüft...';
+
+      try {
+        const json = await requestOrphanUploadCleanup();
+        adminCleanupOutput.textContent = renderOrphanUploadReport(json);
+        btnCleanupDelete.disabled = !json.report?.orphanCount;
+      } catch (error) {
+        adminCleanupOutput.textContent = `Fehler: ${error.message}`;
+        showToast('Upload-Bereinigung konnte nicht geprüft werden: ' + error.message, 'error');
+      } finally {
+        btnCleanupPreview.disabled = false;
+      }
+    });
+
+    btnCleanupDelete.addEventListener('click', async () => {
+      const confirmed = window.confirm('Orphan Uploads wirklich vom aktuellen Server löschen? Bitte vorher die Prüfung kontrollieren.');
+      if (!confirmed) return;
+
+      btnCleanupPreview.disabled = true;
+      btnCleanupDelete.disabled = true;
+      adminCleanupOutput.classList.remove('hidden');
+      adminCleanupOutput.textContent = 'Orphan Uploads werden gelöscht...';
+
+      try {
+        const json = await requestOrphanUploadCleanup({ deleteFiles: true });
+        adminCleanupOutput.textContent = renderOrphanUploadReport(json);
+        showToast('Orphan Uploads gelöscht.', 'success');
+      } catch (error) {
+        adminCleanupOutput.textContent = `Fehler: ${error.message}`;
+        showToast('Upload-Bereinigung konnte nicht löschen: ' + error.message, 'error');
+      } finally {
+        btnCleanupPreview.disabled = false;
+      }
+    });
   }
 
   function bindBitrixAutofill() {

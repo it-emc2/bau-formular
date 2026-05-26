@@ -29,6 +29,24 @@ The application uses `dotenv` to load environment variables from a `.env` file i
 | `ALLOWED_ORIGINS` | _(empty)_ | Additional CORS origins, comma-separated |
 | `NODE_ENV` | _(empty)_ | Set to `production` in Docker. Hides error stack traces in responses. |
 
+### Local vs Production Database
+
+Local development and Fly.io production should use different MongoDB database names even when they use the same MongoDB cluster.
+
+Recommended setup:
+
+```env
+# Local .env
+MONGODB_DB="BauDB-test"
+```
+
+```env
+# Fly.io / production
+MONGODB_DB="BauDB"
+```
+
+This keeps local drafts and production drafts separated. It is especially important because upload references are stored in MongoDB as `/uploads/...` paths, while the actual files are stored on the filesystem of the environment that received the upload.
+
 ### SMTP Configuration
 
 Email sending requires both `SMTP_HOST` and `SMTP_FROM` to be set. If either is missing, the app falls back to generating `mailto:` URLs that open the user's local email client.
@@ -141,6 +159,16 @@ Use `scripts/cleanup-orphan-uploads.js` to find uploaded files that exist on dis
 - `Entwürfe`
 
 The script is safe by default. Without `--delete`, it only prints a dry-run report.
+
+The same cleanup is also available in the app UI for password-gated Testmodus/admin users:
+
+1. Open the hosted Fly.io app.
+2. Enable Testmodus with the admin password.
+3. Click **Orphan Uploads prüfen**.
+4. Review the reported database, uploads directory, orphan count, and file list.
+5. Click **Orphan Uploads löschen** only after confirming the preview.
+
+When used on Fly.io, the button checks production MongoDB (`BauDB`) against the Fly volume (`/data/uploads`). When used locally, it only checks the local `.env` database, for example `BauDB-test`, against the local `uploads/` folder.
 
 #### Local Cleanup
 

@@ -1,12 +1,6 @@
 # To Do
 
-## Separate Local And Production Data
-
-- Keep local development on a separate MongoDB database, for example `BauDB-test`.
-- Keep Fly.io production on the production database, for example `BauDB`.
-- This prevents local drafts and production drafts from sharing upload references that point to different physical upload folders.
-
-## Longer-Term Best Fix
+## Move Uploads To Cloudflare R2
 
 Move uploaded files and pictures to Cloudflare R2.
 

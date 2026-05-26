@@ -439,6 +439,46 @@ small { color: var(--clr-gray); font-size: .8rem; }
   border: 1px solid rgba(117,193,159,.35);
 }
 
+.btn-bitrix.danger {
+  background: #b3261e;
+  color: #fff;
+}
+
+.btn-bitrix.danger:hover {
+  background: #8c1d18;
+}
+
+.btn-bitrix.danger:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+}
+
+.admin-cleanup-panel {
+  margin-top: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.admin-cleanup-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.admin-cleanup-output {
+  margin: 0;
+  padding: 10px;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid rgba(117,193,159,.35);
+  border-radius: 8px;
+  background: #fff;
+  color: #263a33;
+  font-size: .78rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .dev-tools-hint {
   margin-top: 8px;
   color: #4d8a6e;

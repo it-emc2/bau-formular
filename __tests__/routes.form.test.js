@@ -20,10 +20,15 @@ jest.mock('../services/bitrix', () => ({
   postTimelineComment: jest.fn(),
 }));
 
+jest.mock('../services/orphanUploads', () => ({
+  cleanupOrphanUploads: jest.fn(),
+}));
+
 const Abnahme = require('../models/Abnahme');
 const Entwurf = require('../models/Entwurf');
 const nodemailer = require('nodemailer');
 const { postTimelineComment } = require('../services/bitrix');
+const { cleanupOrphanUploads } = require('../services/orphanUploads');
 const router = require('../routes/form');
 
 function findRouteHandlers(routePath, method) {
@@ -292,6 +297,59 @@ describe('form routes', () => {
       body: { password: 'wrong' },
     });
 
+    expect(res.statusCode).toBe(403);
+    expect(res.body).toEqual({ success: false, error: 'Passwort ungueltig' });
+
+    if (previousPassword === undefined) delete process.env.TESTMODUS_PASSWORD;
+    else process.env.TESTMODUS_PASSWORD = previousPassword;
+  });
+
+  it('runs an authenticated orphan upload dry-run', async () => {
+    const handlers = findRouteHandlers('/admin/orphan-uploads', 'post');
+    const previousPassword = process.env.TESTMODUS_PASSWORD;
+    process.env.TESTMODUS_PASSWORD = 'secret-test';
+    cleanupOrphanUploads.mockResolvedValue({
+      uploadsDir: '/data/uploads',
+      databaseName: 'BauDB',
+      orphanCount: 2,
+      totalBytesLabel: '12 KB',
+    });
+
+    const res = await runHandlers(handlers, {
+      body: { password: 'secret-test' },
+    });
+
+    expect(cleanupOrphanUploads).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deleteFiles: false,
+      })
+    );
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({
+      success: true,
+      mode: 'dry-run',
+      report: {
+        uploadsDir: '/data/uploads',
+        databaseName: 'BauDB',
+        orphanCount: 2,
+        totalBytesLabel: '12 KB',
+      },
+    });
+
+    if (previousPassword === undefined) delete process.env.TESTMODUS_PASSWORD;
+    else process.env.TESTMODUS_PASSWORD = previousPassword;
+  });
+
+  it('rejects orphan upload cleanup with an invalid password', async () => {
+    const handlers = findRouteHandlers('/admin/orphan-uploads', 'post');
+    const previousPassword = process.env.TESTMODUS_PASSWORD;
+    process.env.TESTMODUS_PASSWORD = 'secret-test';
+
+    const res = await runHandlers(handlers, {
+      body: { password: 'wrong', delete: true },
+    });
+
+    expect(cleanupOrphanUploads).not.toHaveBeenCalled();
     expect(res.statusCode).toBe(403);
     expect(res.body).toEqual({ success: false, error: 'Passwort ungueltig' });
 

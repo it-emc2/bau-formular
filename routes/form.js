@@ -12,6 +12,7 @@ const { buildDocumentPackage } = require('../services/documentLetter');
 const { postTimelineComment, updateDealFields } = require('../services/bitrix');
 const { buildStepDocumentAttachments } = require('../services/stepDocuments');
 const { getUploadsDir } = require('../services/uploadsPath');
+const { cleanupOrphanUploads } = require('../services/orphanUploads');
 
 const router = express.Router();
 const uploadsDir = getUploadsDir();
@@ -641,6 +642,29 @@ router.post('/dev-mode/verify', (req, res) => {
     }
 
     return res.json({ success: true });
+  } catch (error) {
+    return res.status(400).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/admin/orphan-uploads', async (req, res) => {
+  try {
+    const password = req.body?.password || req.get?.('x-admin-password');
+    if (!isDevModePasswordValid(password)) {
+      return res.status(403).json({ success: false, error: 'Passwort ungueltig' });
+    }
+
+    const shouldDelete = req.body?.delete === true;
+    const report = await cleanupOrphanUploads({
+      deleteFiles: shouldDelete,
+      uploadsDir,
+    });
+
+    return res.json({
+      success: true,
+      mode: shouldDelete ? 'delete' : 'dry-run',
+      report,
+    });
   } catch (error) {
     return res.status(400).json({ success: false, error: error.message });
   }
