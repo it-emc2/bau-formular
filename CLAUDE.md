@@ -34,7 +34,7 @@ Tests use Jest (node environment, no supertest). Test files live in `__tests__/`
 - `routes/form.js` — Form CRUD (`/api/form/*`): drafts, submit, document render/email, Arbeitsbericht PDF proxy
 - `routes/bitrix.js` — Bitrix CRM integration (`/api/bitrix/*`): contact lookup, deal listing, timeline comments
 - `models/Abnahme.js` — Mongoose schema for submitted forms (10-step structure with `createAbnahmeSchema` factory)
-- `models/Entwurf.js` — Draft model, reuses the same schema via `createAbnahmeSchema` but writes to a separate `Entwürfe` collection
+- `models/Entwurf.js` — Draft model, reuses the same schema via `createAbnahmeSchema` but writes to a separate `Entwürfe` collection; drafts do not require `terminId`
 - `services/bitrix.js` — Bitrix webhook REST client (all calls use GET, including writes — this is how Bitrix webhooks work)
 - `services/documentLetter.js` — HTML/Word document generation from form data
 - `services/stepDocuments.js` — PDF generation using pdf-lib
@@ -53,6 +53,7 @@ Tests use Jest (node environment, no supertest). Test files live in `__tests__/`
 - **Save (draft):** Form data → `POST /api/form/save` (multipart via multer) → `Entwurf` collection (status: `draft`)
 - **Submit:** Form data → `POST /api/form/submit` → creates `Abnahme` document (status: `submitted`), deletes the `Entwurf` if one existed, then sends to Bitrix timeline
 - **Share token:** Both drafts and submitted forms get a unique `shareToken` (32-char hex). `GET /api/form/token/:token` checks `Entwurf` first, then `Abnahme`
+- **Uploads:** Physical media files are stored in `UPLOADS_DIR` (`./uploads` locally, `/data/uploads` on Fly). The upload route recreates the directory before writing files.
 - `parsePayload` in `routes/form.js` handles both JSON body and multipart `formData` field (string or object)
 
 ## Key Integrations

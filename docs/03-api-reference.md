@@ -1,6 +1,20 @@
 # API Reference
 
-All API endpoints return JSON. Error responses follow the format `{ success: false, error: "message" }`.
+All API endpoints return JSON. Error responses follow the format `{ success: false, error: "message" }`. Some validation, upload, and parsing failures also include a `details` array with field-level diagnostics:
+
+```json
+{
+  "success": false,
+  "error": "Abnahme validation failed: terminId: Path `terminId` is required.",
+  "details": [
+    {
+      "field": "terminId",
+      "kind": "required",
+      "message": "Path `terminId` is required."
+    }
+  ]
+}
+```
 
 ## Form Routes (`/api/form`)
 
@@ -81,8 +95,9 @@ Save or update a draft form. Accepts `multipart/form-data` for file uploads.
 
 **Behavior:**
 - If `formData` contains `_id` or `id`: updates existing draft
+- If `_id`/`id` belongs to an already submitted form: creates a new draft copy with a fresh `shareToken`
 - Otherwise: creates new draft with generated `shareToken`
-- Uploaded files are saved to `/uploads/` and their URLs merged into the payload
+- Uploaded files are saved to the configured uploads directory and exposed as `/uploads/...` URLs merged into the payload
 
 **Response:**
 ```json

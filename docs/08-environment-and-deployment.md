@@ -121,7 +121,90 @@ jobs:
 
 ### File Storage Caveat
 
-Uploaded files are stored on the server filesystem in `/uploads/`. On Fly.io with `auto_stop_machines`, the filesystem is **ephemeral** — files may be lost when machines restart. For production use, this should be migrated to a persistent volume or cloud storage (S3, etc.).
+Uploaded files are stored on disk and exposed through the `/uploads/...` URL path.
+
+- Locally, files are stored in `uploads/` unless `UPLOADS_DIR` is set.
+- On Fly.io, `fly.toml` sets `UPLOADS_DIR=/data/uploads`.
+- The Fly volume `bau_uploads` is mounted at `/data`, so production uploads are persistent across app restarts.
+- Relative `UPLOADS_DIR` values such as `./uploads` are resolved from the repository/app root, so all upload readers and writers use the same physical folder.
+- The upload route recreates the uploads directory before writing each incoming file. If a local `uploads/` folder or Fly `/data/uploads` directory is missing, the next upload request creates it automatically.
+
+MongoDB stores upload references as URL paths such as `/uploads/filename.png`; it does not store the physical disk path. If local and production share the same MongoDB database, local uploads can create Mongo records whose files exist only in the local `uploads/` directory, not on the Fly volume.
+
+Deleting the uploads directory removes the physical media files only. Existing drafts/submissions may still open because their form data is in MongoDB, but image/video previews and exports for those records will be missing unless the files also exist in the active uploads directory.
+
+### Cleaning Orphan Uploads
+
+Use `scripts/cleanup-orphan-uploads.js` to find uploaded files that exist on disk but are no longer referenced by either MongoDB collection:
+
+- `Abnahmen`
+- `Entwürfe`
+
+The script is safe by default. Without `--delete`, it only prints a dry-run report.
+
+#### Local Cleanup
+
+Run this from the repository root:
+
+```bash
+node scripts/cleanup-orphan-uploads.js
+```
+
+Review the orphan list. To delete those local files:
+
+```bash
+node scripts/cleanup-orphan-uploads.js --delete
+```
+
+Local cleanup uses:
+
+- `MONGODB_URI` and `MONGODB_DB` from `.env`, if present
+- otherwise `mongodb://localhost:27017/bau-formular`
+- `UPLOADS_DIR` from `.env`, if present
+- otherwise `uploads/`
+
+Be careful when local `.env` points to the production MongoDB. In that setup, the script compares production Mongo references against local files, which is useful for cleaning local test uploads but should not be confused with cleaning the Fly volume.
+
+#### Fly.io Volume Cleanup
+
+Deploy the current code first so the cleanup script exists in the running image:
+
+```bash
+fly deploy -a bau-formular
+```
+
+Open a shell on the Fly machine:
+
+```bash
+fly ssh console -a bau-formular
+```
+
+Run the dry-run from inside the machine:
+
+```bash
+cd /app
+node scripts/cleanup-orphan-uploads.js
+```
+
+Review the printed list. To delete the orphan files from `/data/uploads`:
+
+```bash
+node scripts/cleanup-orphan-uploads.js --delete
+```
+
+The report includes:
+
+- scanned Mongo document counts
+- number of upload references found in MongoDB
+- number of stored files
+- orphan count
+- total space that would be freed
+
+To inspect the volume manually:
+
+```bash
+ls -lah /data/uploads
+```
 
 ## Development Setup
 

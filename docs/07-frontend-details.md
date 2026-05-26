@@ -217,6 +217,8 @@ Updated by `updateConfirmationLetterPreview()`, which reads current form values 
 - Auto-hides after 3.5 seconds
 - Styled with CSS class `.toast.visible`
 
+Validation and save/submit failures use a larger multiline toast. Client-side validation lists the missing fields/files/signatures by step. Server errors from `/api/form/save` and `/api/form/submit` include the backend message, and when the API returns `details`, the first entries are appended to the visible message for easier debugging.
+
 ## Dev Mode Features
 
 ### Demo Data Prefill
