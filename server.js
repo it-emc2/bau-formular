@@ -7,6 +7,7 @@ const cors = require('cors');
 
 const formRoutes = require('./routes/form');
 const bitrixRoutes = require('./routes/bitrix');
+const { getUploadsDir } = require('./services/uploadsPath');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -31,6 +32,28 @@ function corsOrigin(origin, callback) {
   return callback(new Error(`Origin ${origin} not allowed by CORS`));
 }
 
+function formatApiErrorDetails(err) {
+  if (!err) return [];
+
+  if (err.code && String(err.code).startsWith('LIMIT_')) {
+    return [{
+      field: err.field || 'upload',
+      kind: err.code,
+      message: err.message,
+    }];
+  }
+
+  if (err.type === 'entity.too.large') {
+    return [{
+      field: 'request',
+      kind: 'payload_too_large',
+      message: 'Die Anfrage ist zu gross. Bitte Bilder oder Videos verkleinern und erneut versuchen.',
+    }];
+  }
+
+  return [];
+}
+
 // ── Middleware ──────────────────────────────────────────────
 app.use(helmet({
   contentSecurityPolicy: {
@@ -51,7 +74,7 @@ app.use(cors({
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(express.static(path.join(__dirname, 'public')));
-app.use('/uploads', express.static(process.env.UPLOADS_DIR || path.join(__dirname, 'uploads')));
+app.use('/uploads', express.static(getUploadsDir()));
 
 // ── Routes ─────────────────────────────────────────────────
 app.use('/api/form', formRoutes);
@@ -69,9 +92,11 @@ app.use((err, req, res, next) => {
 
   if (req.path.startsWith('/api/')) {
     const status = err.status || err.statusCode || 500;
+    const details = formatApiErrorDetails(err);
     return res.status(status).json({
       success: false,
       error: err.message || 'Internal Server Error',
+      ...(details.length ? { details } : {}),
       ...(process.env.NODE_ENV === 'production' ? {} : { stack: err.stack }),
     });
   }

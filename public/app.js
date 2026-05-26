@@ -541,7 +541,7 @@
   // ── Navigation ─────────────────────────────────────────
   function bindNavigation() {
     btnNext.addEventListener('click', () => {
-      if (devMode || validateStep(currentStep)) {
+      if (devMode || validateCurrentStep()) {
         showStep(getNextVisibleStep(currentStep));
       }
     });
@@ -633,7 +633,14 @@
     }
 
     if (!response.ok) {
-      throw new Error(json.error || `HTTP ${response.status}`);
+      const details = Array.isArray(json.details)
+        ? json.details
+          .map(detail => detail.message || detail.field)
+          .filter(Boolean)
+          .slice(0, 6)
+        : [];
+      const detailText = details.length ? `\n${details.map(item => `- ${item}`).join('\n')}` : '';
+      throw new Error(`${json.error || `HTTP ${response.status}`}${detailText}`);
     }
 
     return json;
@@ -772,7 +779,7 @@
     });
   }
 
-  function validateChecklistBadumbau(section) {
+  function validateChecklistBadumbau(section, issues = []) {
     let valid = true;
 
     CHECKLIST_BADUMBAU_REQUIRED_CHECKBOXES.forEach(name => {
@@ -784,6 +791,7 @@
 
       if (!input.checked) {
         row?.classList.add('check-item-invalid');
+        addValidationIssue(issues, section, `${row?.textContent?.trim() || name} fehlt.`);
         valid = false;
       }
     });
@@ -799,7 +807,7 @@
         uebermittlungGroup.style.borderRadius = '18px';
         uebermittlungGroup.style.padding = '8px';
         uebermittlungGroup.style.boxShadow = '0 0 0 2px rgba(229,57,53,.18)';
-        if (valid) showToast('Bitte Übermittlungsweg auswählen.', 'error');
+        addValidationIssue(issues, section, 'Übermittlungsweg fehlt.');
         valid = false;
       } else {
         uebermittlungGroup.style.borderColor = '';
@@ -2111,13 +2119,53 @@ function syncDevSidebarVisibility() {
   }
 
   // ── Validation ─────────────────────────────────────────
-  function validateStep(n) {
+  function getStepTitle(section) {
+    return $('h2', section)?.textContent?.trim() || `Schritt ${section?.dataset?.step || ''}`.trim();
+  }
+
+  function getFieldLabel(el) {
+    const id = el.id;
+    const explicit = id ? $(`label[for="${id}"]`, form) : null;
+    if (explicit?.textContent?.trim()) return explicit.textContent.trim();
+
+    const container = el.closest('div, fieldset, section');
+    const label = container?.querySelector('.field-label');
+    if (label?.textContent?.trim()) return label.textContent.trim();
+
+    let node = container?.previousElementSibling || el.previousElementSibling;
+    while (node) {
+      if (node.classList?.contains('field-label')) return node.textContent.trim();
+      node = node.previousElementSibling;
+    }
+
+    return el.name || 'Feld';
+  }
+
+  function getRequiredGroupLabel(groupEl) {
+    let node = groupEl.previousElementSibling;
+    while (node) {
+      if (node.classList?.contains('field-label')) return node.textContent.trim();
+      node = node.previousElementSibling;
+    }
+    return groupEl.querySelector('input')?.name || 'Auswahl';
+  }
+
+  function addValidationIssue(issues, section, message) {
+    issues.push(`${getStepTitle(section)}: ${message}`);
+  }
+
+  function isSignatureRequired(wrapper) {
+    const label = wrapper.previousElementSibling;
+    return Boolean(label?.classList?.contains('field-label') && label.classList.contains('required'));
+  }
+
+  function validateStep(n, issues = []) {
     const section = $(`.form-step[data-step="${n}"]`);
     let valid = true;
 
     if (n === 0) {
       if (!currentFormularTyp) {
-        showToast('Bitte zuerst einen Formulartyp auswählen.', 'error');
+        addValidationIssue(issues, section, 'Bitte zuerst einen Formulartyp auswählen.');
         return false;
       }
       return true;
@@ -2133,29 +2181,35 @@ function syncDevSidebarVisibility() {
       el.classList.remove('invalid');
       if (!el.value.trim()) {
         el.classList.add('invalid');
+        addValidationIssue(issues, section, `${getFieldLabel(el)} fehlt.`);
         valid = false;
       }
     });
 
     // Required radio groups
-    const radioGroups = new Set();
-    $$('input[type="radio"]', section).forEach(r => radioGroups.add(r.name));
-    radioGroups.forEach(name => {
-      // Check if this group is in a visible required context
-      const radios = $$(`input[name="${name}"]`, section);
+    const radioGroups = $$('.choice-group, .radio-group', section)
+      .filter(group => group.previousElementSibling?.classList?.contains('required'));
+    radioGroups.forEach(group => {
+      if (group.closest('.hidden')) return;
+      const cond = group.closest('.conditional-field');
+      if (cond && !cond.classList.contains('visible')) return;
+      const radios = $$('input[type="radio"]', group);
       const checked = radios.some(r => r.checked);
-      // Only enforce if the parent label says "required"
-      const label = radios[0]?.closest('.form-step')?.querySelector(`.field-label.required`);
-      if (label && !checked) valid = false;
+      if (!checked) {
+        addValidationIssue(issues, section, `${getRequiredGroupLabel(group)} fehlt.`);
+        valid = false;
+      }
     });
 
     // Required signatures
     $$('.signature-wrapper', section).forEach(wrapper => {
       if (wrapper.closest('.hidden')) return;
+      if (!isSignatureRequired(wrapper)) return;
       const name = wrapper.dataset.name;
       const pad  = signaturePads[name];
       if (pad && pad.isEmpty()) {
         wrapper.style.borderColor = '#e53935';
+        addValidationIssue(issues, section, `${getRequiredGroupLabel(wrapper)} fehlt.`);
         valid = false;
       } else if (wrapper.style.borderColor === 'rgb(229, 57, 53)') {
         wrapper.style.borderColor = '';
@@ -2170,7 +2224,7 @@ function syncDevSidebarVisibility() {
         if (!anyChecked) {
           inspectionTable.style.borderColor = '#e53935';
           inspectionTable.style.boxShadow = '0 0 0 2px rgba(229,57,53,.18)';
-          showToast('Bitte mindestens eine Ware prüfen (I.O. oder Nicht I.O.).', 'error');
+          addValidationIssue(issues, section, 'Bitte mindestens eine Ware prüfen (I.O. oder Nicht I.O.).');
           valid = false;
         } else {
           inspectionTable.style.borderColor = '';
@@ -2185,7 +2239,7 @@ function syncDevSidebarVisibility() {
         if (pad && pad.isEmpty()) {
           sigWrapper.style.borderColor = '#e53935';
           sigWrapper.style.boxShadow = '0 0 0 2px rgba(229,57,53,.18)';
-          if (valid) showToast('Bitte Unterschrift nicht vergessen.', 'error');
+          addValidationIssue(issues, section, `${getRequiredGroupLabel(sigWrapper)} fehlt.`);
           valid = false;
         } else {
           sigWrapper.style.borderColor = '';
@@ -2213,7 +2267,7 @@ function syncDevSidebarVisibility() {
             drop.style.borderColor = '#e53935';
             drop.style.boxShadow = '0 0 0 2px rgba(229,57,53,.18)';
           }
-          if (valid) showToast(`Bitte "${label}" hochladen.`, 'error');
+          addValidationIssue(issues, section, `${label} fehlt.`);
           valid = false;
         } else if (drop) {
           drop.style.borderColor = '';
@@ -2223,19 +2277,40 @@ function syncDevSidebarVisibility() {
     }
 
     if (n === 11 && currentChecklistVariant === 'badumbau') {
-      if (!validateChecklistBadumbau(section)) {
+      const previousCount = issues.length;
+      if (!validateChecklistBadumbau(section, issues)) {
+        if (issues.length === previousCount) {
+          addValidationIssue(issues, section, 'Bitte die Checkliste vollständig ausfüllen.');
+        }
         valid = false;
       }
     }
 
-    if (!valid) showToast('Bitte alle Pflichtfelder ausfüllen.', 'error');
+    return valid;
+  }
+
+  function showValidationSummary(issues) {
+    const uniqueIssues = [...new Set(issues)];
+    const visibleIssues = uniqueIssues.slice(0, 8);
+    const suffix = uniqueIssues.length > visibleIssues.length
+      ? `\n...und ${uniqueIssues.length - visibleIssues.length} weitere Punkte.`
+      : '';
+    showToast(`Bitte korrigieren:\n${visibleIssues.map(item => `- ${item}`).join('\n')}${suffix}`, 'error', 'big validation');
+  }
+
+  function validateCurrentStep() {
+    const issues = [];
+    const valid = validateStep(currentStep, issues);
+    if (!valid) showValidationSummary(issues);
     return valid;
   }
 
   function validateAllSteps() {
+    const issues = [];
     for (const step of getVisibleStepNumbers()) {
-      if (!validateStep(step)) {
+      if (!validateStep(step, issues)) {
         showStep(step);
+        showValidationSummary(issues);
         return false;
       }
     }
@@ -2704,7 +2779,8 @@ function syncDevSidebarVisibility() {
         }
       }
     } catch (err) {
-      showToast('Fehler: ' + err.message, 'error');
+      console.error(`[form-${action}] failed`, err);
+      showToast(`Fehler beim ${action === 'save' ? 'Speichern' : 'Absenden'}:\n${err.message}`, 'error', 'big validation');
     } finally {
       [btnDraft, btnSubmit, btnNext].forEach(b => b.disabled = false);
     }

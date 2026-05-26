@@ -1,11 +1,14 @@
 const mongoose = require('mongoose');
 
 const Abnahme = require('../models/Abnahme');
+const Entwurf = require('../models/Entwurf');
 
 describe('Abnahme model', () => {
   afterAll(() => {
     delete mongoose.connection.models.Abnahme;
     delete mongoose.models.Abnahme;
+    delete mongoose.connection.models.Entwurf;
+    delete mongoose.models.Entwurf;
   });
 
   it('requires terminId', async () => {
@@ -13,6 +16,12 @@ describe('Abnahme model', () => {
     const error = doc.validateSync();
 
     expect(error.errors.terminId).toBeDefined();
+  });
+
+  it('allows drafts without terminId', () => {
+    const doc = new Entwurf({});
+
+    expect(doc.validateSync()).toBeUndefined();
   });
 
   it('applies expected defaults', () => {

@@ -11,14 +11,17 @@ const Entwurf = require('../models/Entwurf');
 const { buildDocumentPackage } = require('../services/documentLetter');
 const { postTimelineComment, updateDealFields } = require('../services/bitrix');
 const { buildStepDocumentAttachments } = require('../services/stepDocuments');
+const { getUploadsDir } = require('../services/uploadsPath');
 
 const router = express.Router();
-const uploadsDir = process.env.UPLOADS_DIR || path.join(__dirname, '..', 'uploads');
+const uploadsDir = getUploadsDir();
 
 fs.mkdirSync(uploadsDir, { recursive: true });
 
 const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadsDir),
+  destination: (_req, _file, cb) => {
+    fs.mkdir(uploadsDir, { recursive: true }, err => cb(err, uploadsDir));
+  },
   filename: (_req, file, cb) => {
     const safeName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '-');
     cb(null, `${Date.now()}-${crypto.randomBytes(4).toString('hex')}-${safeName}`);
@@ -160,6 +163,58 @@ function buildSuccessResponse(form) {
     shareLink: `/form/${form.shareToken}`,
     data: form,
   };
+}
+
+function formatErrorDetails(error) {
+  if (!error) return [];
+
+  if (error.name === 'ValidationError' && error.errors) {
+    return Object.values(error.errors).map(err => ({
+      field: err.path,
+      kind: err.kind,
+      message: err.message,
+      value: err.value,
+    }));
+  }
+
+  if (error.name === 'CastError') {
+    return [{
+      field: error.path,
+      kind: error.kind,
+      message: `Ungueltiger Wert fuer ${error.path || 'Feld'}: ${error.value}`,
+      value: error.value,
+    }];
+  }
+
+  if (error.code === 11000) {
+    return Object.entries(error.keyValue || {}).map(([field, value]) => ({
+      field,
+      kind: 'duplicate',
+      message: `Der Wert "${value}" wird bereits verwendet.`,
+      value,
+    }));
+  }
+
+  if (error instanceof SyntaxError) {
+    return [{
+      field: 'formData',
+      kind: 'invalid_json',
+      message: 'Die gesendeten Formulardaten sind kein gueltiges JSON.',
+    }];
+  }
+
+  return [];
+}
+
+function sendRouteError(res, error, fallbackMessage = 'Formular konnte nicht verarbeitet werden') {
+  const details = formatErrorDetails(error);
+  const message = error?.message || fallbackMessage;
+
+  return res.status(400).json({
+    success: false,
+    error: message,
+    ...(details.length ? { details } : {}),
+  });
 }
 
 const DEAL_FIELD_DOC_MAP = {
@@ -543,14 +598,27 @@ router.post('/save', upload.any(), async (req, res) => {
     if (formId) {
       const existing = await Entwurf.findById(formId);
 
-      if (!existing) {
+      if (existing) {
+        Object.assign(existing, payload);
+        await existing.save();
+
+        return res.json(buildSuccessResponse(existing));
+      }
+
+      const submitted = await Abnahme.findById(formId);
+
+      if (!submitted) {
         return res.status(404).json({ success: false, error: 'Formular nicht gefunden' });
       }
 
-      Object.assign(existing, payload);
-      await existing.save();
+      const draft = await Entwurf.create({
+        ...sanitizeDocumentForCreate(submitted.toObject()),
+        ...payload,
+        shareToken: createShareToken(),
+        status: 'draft',
+      });
 
-      return res.json(buildSuccessResponse(existing));
+      return res.status(201).json(buildSuccessResponse(draft));
     }
 
     const form = await Entwurf.create({
@@ -561,7 +629,7 @@ router.post('/save', upload.any(), async (req, res) => {
 
     return res.status(201).json(buildSuccessResponse(form));
   } catch (error) {
-    return res.status(400).json({ success: false, error: error.message });
+    return sendRouteError(res, error, 'Entwurf konnte nicht gespeichert werden');
   }
 });
 
@@ -765,7 +833,7 @@ router.post('/submit', upload.any(), async (req, res) => {
       bitrixSync,
     });
   } catch (error) {
-    return res.status(400).json({ success: false, error: error.message });
+    return sendRouteError(res, error, 'Formular konnte nicht abgesendet werden');
   }
 });
 

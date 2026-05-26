@@ -1376,6 +1376,12 @@ input[type="radio"], input[type="checkbox"] {
 .toast.big.visible {
   transform: translate(-50%, -50%) scale(1);
 }
+.toast.validation {
+  font-size: 1rem;
+  font-weight: 500;
+  text-align: left;
+  white-space: pre-line;
+}
 @media (max-width: 600px) {
   .toast.big {
     font-size: 1.15rem;
