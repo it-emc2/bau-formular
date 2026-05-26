@@ -219,11 +219,52 @@ describe('form routes', () => {
     const req = { body: { formData: JSON.stringify({ _id: 'missing-id', terminId: 'UT-1000' }) } };
 
     Entwurf.findById.mockResolvedValue(null);
+    Abnahme.findById.mockResolvedValue(null);
 
     const res = await runHandlers(handlers, req);
 
     expect(res.statusCode).toBe(404);
     expect(res.body).toEqual({ success: false, error: 'Formular nicht gefunden' });
+  });
+
+  it('creates a new draft when saving changes from a submitted form', async () => {
+    const handlers = findRouteHandlers('/save', 'post');
+    const submitted = {
+      _id: 'submitted-id',
+      terminId: 'OLD',
+      shareToken: 'submitted-token',
+      status: 'submitted',
+      toObject: jest.fn().mockReturnValue({
+        _id: 'submitted-id',
+        terminId: 'OLD',
+        shareToken: 'submitted-token',
+        status: 'submitted',
+      }),
+    };
+    const req = { body: { formData: JSON.stringify({ _id: 'submitted-id', terminId: 'NEW-ID' }) } };
+
+    Entwurf.findById.mockResolvedValue(null);
+    Abnahme.findById.mockResolvedValue(submitted);
+    Entwurf.create.mockImplementation(async payload => ({ _id: 'draft-copy-id', ...payload }));
+
+    const res = await runHandlers(handlers, req);
+
+    expect(res.statusCode).toBe(201);
+    expect(Entwurf.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        terminId: 'NEW-ID',
+        status: 'draft',
+        shareToken: expect.any(String),
+      })
+    );
+    expect(Entwurf.create.mock.calls[0][0].shareToken).not.toBe('submitted-token');
+    expect(res.body).toEqual(
+      expect.objectContaining({
+        success: true,
+        id: 'draft-copy-id',
+        shareToken: expect.any(String),
+      })
+    );
   });
 
   it('verifies the Testmodus password from the environment', async () => {
@@ -630,5 +671,38 @@ describe('form routes', () => {
 
     expect(res.statusCode).toBe(400);
     expect(res.body).toEqual({ success: false, error: 'terminId is required' });
+  });
+
+  it('returns validation details when submit fails schema validation', async () => {
+    const handlers = findRouteHandlers('/submit', 'post');
+    const req = { body: { formData: JSON.stringify({}) } };
+    const validationError = new Error('Abnahme validation failed: terminId: Path `terminId` is required.');
+    validationError.name = 'ValidationError';
+    validationError.errors = {
+      terminId: {
+        path: 'terminId',
+        kind: 'required',
+        message: 'Path `terminId` is required.',
+        value: undefined,
+      },
+    };
+
+    Abnahme.create.mockRejectedValue(validationError);
+
+    const res = await runHandlers(handlers, req);
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toEqual({
+      success: false,
+      error: validationError.message,
+      details: [
+        {
+          field: 'terminId',
+          kind: 'required',
+          message: 'Path `terminId` is required.',
+          value: undefined,
+        },
+      ],
+    });
   });
 });

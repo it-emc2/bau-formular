@@ -9,11 +9,11 @@ The application uses two MongoDB collections that share the same schema:
 | `Abnahmen` | `Abnahme` | Submitted (final) forms |
 | `Entwürfe` | `Entwurf` | Draft (in-progress) forms |
 
-Both are defined through `createAbnahmeSchema()` in `models/Abnahme.js`. The `Entwurf` model in `models/Entwurf.js` simply calls `createAbnahmeSchema('Entwürfe')` to create a schema targeting a different collection.
+Both are defined through `createAbnahmeSchema()` in `models/Abnahme.js`. The `Entwurf` model in `models/Entwurf.js` calls `createAbnahmeSchema('Entwürfe', { requireTerminId: false })` so incomplete forms can be saved as drafts.
 
 ## Schema Definition
 
-The schema has **10 logical steps** plus system fields. All fields except `terminId` are optional.
+The schema has **10 logical steps** plus system fields. For submitted forms, all fields except `terminId` are optional. Drafts may be saved before `terminId` is known.
 
 ### System Fields
 
@@ -28,7 +28,7 @@ The schema has **10 logical steps** plus system fields. All fields except `termi
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `terminId` | String (**required**) | Appointment/termin ID, e.g., "UT-12345" or "BITRIX-123" |
+| `terminId` | String (**required for submitted forms**) | Appointment/termin ID, e.g., "UT-12345" or "BITRIX-123" |
 | `formularTyp` | String enum | `baustellenabnahme` (default), `zusaetzliche_leistungen`, `nachbesserung`, `schadensmeldung` |
 | `kundennummer` | String | Customer number |
 | `artDesTermins` | String enum | `Umbau` (default), `Nachbesserung`, `Service` |
@@ -181,6 +181,8 @@ Each form (draft or submitted) gets a unique `shareToken` — a 32-character hex
 
 2. User continues editing → POST /api/form/save (with _id)
    → Updates existing Entwurf
+
+   If the _id belongs to an already submitted Abnahme, the save endpoint creates a new Entwurf copy with a fresh shareToken instead of failing.
 
 3. User submits → POST /api/form/submit (with _id of draft)
    → Creates new Abnahme (status: 'submitted') in 'Abnahmen' collection

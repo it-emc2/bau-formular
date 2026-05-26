@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { PDFDocument, PDFArray, PDFName, StandardFonts, rgb, decodePDFRawStream } = require('pdf-lib');
 const { buildDocumentPackage } = require('./documentLetter');
+const { getUploadsDir } = require('./uploadsPath');
 
 function normalizeWhitespace(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
@@ -695,7 +696,7 @@ async function buildStepDocumentAttachments(data = {}, { includeDebug = false, f
     'bilderFertigerUmbau', 'videoDesAblaufs', 'fotosAbdichtung',
     'bilderBehobeneMaengel', 'weitereBilder', 'weitereBilder2', 'weitereBilder3',
   ];
-  const uploadsDir = process.env.UPLOADS_DIR || path.join(__dirname, '..', 'uploads');
+  const uploadsDir = getUploadsDir();
   let fileIndex = 0;
 
   for (const fieldName of fileFields) {

@@ -126,8 +126,16 @@ const schemaDefinition = {
   shareToken: { type: String, unique: true, sparse: true },
 };
 
-function createAbnahmeSchema(collectionName) {
-  return new mongoose.Schema(schemaDefinition, {
+function createAbnahmeSchema(collectionName, options = {}) {
+  const definition = {
+    ...schemaDefinition,
+    terminId: {
+      ...schemaDefinition.terminId,
+      required: options.requireTerminId !== false,
+    },
+  };
+
+  return new mongoose.Schema(definition, {
     timestamps: true,
     collection: collectionName,
   });
