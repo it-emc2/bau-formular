@@ -145,4 +145,6 @@ Bestaetigung erfolgreicher Umbau
 
 ## Error Handling
 
-Bitrix sync errors do NOT prevent form submission. The response includes `bitrixSync.sent: false` with the error message, but the form is still saved to MongoDB. This ensures no data is lost even if Bitrix is unreachable.
+Submit success means both Bitrix and MongoDB finished successfully. The app first saves a recovery draft, then sends to Bitrix outside a MongoDB transaction. If Bitrix fails, the response includes `bitrixSync.sent: false` and the recovery draft remains available for an admin/user retry.
+
+After Bitrix succeeds, the app opens a short MongoDB transaction to create/update the Abnahme and delete the recovery draft. If this final MongoDB commit fails, the draft remains and the admin operation logs show the edge case so a retry can be handled deliberately.

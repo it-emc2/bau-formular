@@ -119,10 +119,10 @@ Submit a form (final). Accepts `multipart/form-data`.
 **Request Body:** Same as `/save`
 
 **Behavior:**
-1. If no `_id`: creates new Abnahme directly (status: submitted)
-2. If `_id` matches an Entwurf: creates Abnahme from draft data, deletes draft
-3. If `_id` matches an Abnahme: updates existing Abnahme
-4. After creating/updating: attempts Bitrix sync if `bitrixAuftragId` is set
+1. Saves/updates a recovery draft first.
+2. Attempts Bitrix sync outside any MongoDB transaction.
+3. If Bitrix fails, keeps the recovery draft and returns an error with the draft id/share link.
+4. If Bitrix succeeds, opens a short MongoDB transaction to create/update the Abnahme and delete the recovery draft.
 
 **Response:**
 ```json
@@ -143,7 +143,7 @@ Submit a form (final). Accepts `multipart/form-data`.
 **bitrixSync states:**
 - `{ attempted: false, sent: false }` — no bitrixAuftragId provided
 - `{ attempted: true, sent: true, entityId }` — successfully posted to Bitrix
-- `{ attempted: true, sent: false, entityId, error }` — Bitrix posting failed
+- `{ attempted: true, sent: false, entityId, error }` — Bitrix posting failed; the recovery draft remains available
 
 ---
 

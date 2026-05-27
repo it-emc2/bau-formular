@@ -453,19 +453,22 @@ small { color: var(--clr-gray); font-size: .8rem; }
   cursor: not-allowed;
 }
 
-.admin-cleanup-panel {
+.admin-cleanup-panel,
+.admin-log-panel {
   margin-top: 12px;
   display: grid;
   gap: 10px;
 }
 
-.admin-cleanup-actions {
+.admin-cleanup-actions,
+.admin-log-actions {
   display: grid;
   grid-template-columns: 1fr;
   gap: 8px;
 }
 
-.admin-cleanup-output {
+.admin-cleanup-output,
+.admin-log-output {
   margin: 0;
   padding: 10px;
   max-height: 220px;

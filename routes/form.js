@@ -15,6 +15,7 @@ const { postTimelineComment, updateDealFields } = require('../services/bitrix');
 const { buildStepDocumentAttachments } = require('../services/stepDocuments');
 const { getUploadsDir } = require('../services/uploadsPath');
 const { cleanupOrphanUploads } = require('../services/orphanUploads');
+const { addOperationLog, listOperationLogs } = require('../services/operationLogs');
 
 const router = express.Router();
 const uploadsDir = getUploadsDir();
@@ -167,6 +168,22 @@ function mergeUploadedFiles(payload, files = []) {
   });
 
   return payload;
+}
+
+function buildRequestLogContext(parsed = {}, files = [], extra = {}) {
+  return {
+    terminId: parsed.terminId,
+    bitrixAuftragId: parsed.bitrixAuftragId,
+    auftragsNummer: parsed.auftragsNummer,
+    formId: parsed._id || parsed.id,
+    uploadCount: files?.length || 0,
+    uploads: (files || []).map(file => ({
+      fieldname: file.fieldname,
+      filename: file.filename,
+      size: file.size,
+    })),
+    ...extra,
+  };
 }
 
 function assertDocumentSizeFitsMongo(document, label = 'Formular') {
@@ -726,10 +743,23 @@ router.get('/drafts/:id', async (req, res) => {
 });
 
 router.post('/save', upload.any(), async (req, res) => {
+  let logContext = { uploadCount: req.files?.length || 0 };
   try {
     const parsed = parsePayload(req);
+    logContext = buildRequestLogContext(parsed, req.files);
+    await addOperationLog({
+      event: 'draft.save.received',
+      message: 'Entwurf-Speicherung empfangen.',
+      context: logContext,
+    });
+
     const payload = mergeUploadedFiles(pickPayload(parsed), req.files);
     const formId = parsed._id || parsed.id;
+    await addOperationLog({
+      event: 'draft.save.uploads_merged',
+      message: 'Upload-Referenzen fuer Entwurf vorbereitet.',
+      context: buildRequestLogContext(parsed, req.files, { formId }),
+    });
 
     if (formId) {
       const existing = await Entwurf.findById(formId);
@@ -739,12 +769,26 @@ router.post('/save', upload.any(), async (req, res) => {
         assertDocumentSizeFitsMongo(toPlainDocument(existing), 'Entwurf');
         await existing.save();
 
+        await addOperationLog({
+          event: 'draft.save.updated',
+          message: 'Bestehender Entwurf erfolgreich gespeichert.',
+          context: buildRequestLogContext(parsed, req.files, {
+            draftId: existing._id,
+            shareToken: existing.shareToken,
+          }),
+        });
         return res.json(buildSuccessResponse(existing));
       }
 
       const submitted = await Abnahme.findById(formId);
 
       if (!submitted) {
+        await addOperationLog({
+          level: 'error',
+          event: 'draft.save.source_missing',
+          message: 'Entwurf konnte nicht gespeichert werden, weil Formular-ID weder Entwurf noch Abnahme findet.',
+          context: buildRequestLogContext(parsed, req.files, { formId }),
+        });
         return res.status(404).json({ success: false, error: 'Formular nicht gefunden' });
       }
 
@@ -757,6 +801,15 @@ router.post('/save', upload.any(), async (req, res) => {
       assertDocumentSizeFitsMongo(draftPayload, 'Entwurf');
       const draft = await Entwurf.create(draftPayload);
 
+      await addOperationLog({
+        event: 'draft.save.created_from_submission',
+        message: 'Neuer Entwurf aus bestehender Abnahme erfolgreich gespeichert.',
+        context: buildRequestLogContext(parsed, req.files, {
+          draftId: draft._id,
+          formId,
+          shareToken: draft.shareToken,
+        }),
+      });
       return res.status(201).json(buildSuccessResponse(draft));
     }
 
@@ -768,9 +821,27 @@ router.post('/save', upload.any(), async (req, res) => {
     assertDocumentSizeFitsMongo(draftPayload, 'Entwurf');
     const form = await Entwurf.create(draftPayload);
 
+    await addOperationLog({
+      event: 'draft.save.created',
+      message: 'Neuer Entwurf erfolgreich gespeichert.',
+      context: buildRequestLogContext(parsed, req.files, {
+        draftId: form._id,
+        shareToken: form.shareToken,
+      }),
+    });
     return res.status(201).json(buildSuccessResponse(form));
   } catch (error) {
     await deleteUploadedRequestFiles(req.files);
+    await addOperationLog({
+      level: 'error',
+      event: 'draft.save.failed',
+      message: error?.message || 'Entwurf konnte nicht gespeichert werden.',
+      context: {
+        ...logContext,
+        details: formatErrorDetails(error),
+        uploadedFilesDeleted: true,
+      },
+    });
     return sendRouteError(res, error, 'Entwurf konnte nicht gespeichert werden');
   }
 });
@@ -805,6 +876,22 @@ router.post('/admin/orphan-uploads', async (req, res) => {
       success: true,
       mode: shouldDelete ? 'delete' : 'dry-run',
       report,
+    });
+  } catch (error) {
+    return res.status(400).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/admin/logs', async (req, res) => {
+  try {
+    const password = req.body?.password || req.get?.('x-admin-password');
+    if (!isDevModePasswordValid(password)) {
+      return res.status(403).json({ success: false, error: 'Passwort ungueltig' });
+    }
+
+    return res.json({
+      success: true,
+      logs: await listOperationLogs({ limit: req.body?.limit || 100 }),
     });
   } catch (error) {
     return res.status(400).json({ success: false, error: error.message });
@@ -933,18 +1020,84 @@ router.post('/arbeitsbericht/pdf', async (req, res) => {
 router.post('/submit', upload.any(), async (req, res) => {
   let recoveryDraft = null;
   let uploadedFilesProtectedByDraft = false;
+  let logContext = { uploadCount: req.files?.length || 0 };
 
   try {
     const parsed = parsePayload(req);
+    logContext = buildRequestLogContext(parsed, req.files);
+    await addOperationLog({
+      event: 'submit.received',
+      message: 'Absenden empfangen. Zuerst wird ein Recovery-Entwurf gespeichert.',
+      context: logContext,
+    });
+
     const payload = mergeUploadedFiles(pickPayload(parsed), req.files);
     const formId = parsed._id || parsed.id;
     const recovery = await runMongoTransaction(session => persistSubmitRecoveryDraft({ formId, payload, session }));
     recoveryDraft = recovery.draft;
     uploadedFilesProtectedByDraft = true;
+    logContext = buildRequestLogContext(parsed, req.files, {
+      draftId: recoveryDraft._id,
+      shareToken: recoveryDraft.shareToken,
+      recoverySource: recovery.source,
+      submittedId: recovery.submitted?._id,
+    });
+    await addOperationLog({
+      event: 'submit.recovery_draft.saved',
+      message: 'Recovery-Entwurf erfolgreich gespeichert. Uploads sind durch diesen Entwurf referenziert.',
+      context: logContext,
+    });
 
     const draftData = sanitizeDocumentForCreate(toPlainDocument(recoveryDraft));
+    const bitrixPayload = {
+      ...draftData,
+      ...parsed,
+      ...payload,
+    };
 
-    return await runMongoTransaction(async session => {
+    await addOperationLog({
+      event: 'submit.bitrix.started',
+      message: 'Bitrix-Sendung gestartet. MongoDB-Transaktion ist dabei nicht offen.',
+      context: logContext,
+    });
+    const bitrixSync = await trySendDocumentToBitrix(bitrixPayload);
+    try {
+      assertBitrixSubmitSucceeded(bitrixSync);
+    } catch (error) {
+      await addOperationLog({
+        level: 'error',
+        event: 'submit.bitrix.failed',
+        message: error.message,
+        context: {
+          ...logContext,
+          bitrixSync,
+        },
+      });
+      throw error;
+    }
+    await addOperationLog({
+      event: 'submit.bitrix.succeeded',
+      message: 'Bitrix hat die Dokumente akzeptiert. Danach startet die kurze MongoDB-Transaktion.',
+      context: {
+        ...logContext,
+        bitrixAttempted: bitrixSync.attempted,
+        bitrixSent: bitrixSync.sent,
+      },
+    });
+    await addOperationLog({
+      level: 'warn',
+      event: 'submit.edge.bitrix_sent_before_mongo_commit',
+      message: 'Bitrix ist erfolgreich, die finale MongoDB-Transaktion ist noch nicht abgeschlossen. Falls der Server genau jetzt stoppt, bleibt der Entwurf bestehen und Bitrix kann beim erneuten Versuch doppelte Dokumente erhalten.',
+      context: logContext,
+    });
+
+    const submitResult = await runMongoTransaction(async session => {
+      await addOperationLog({
+        event: 'submit.transaction.started',
+        message: 'Kurze MongoDB-Transaktion fuer Abnahme und Entwurf-Loeschung gestartet.',
+        context: logContext,
+      });
+
       if (recovery.submitted) {
         const submitted = await findByIdWithSession(Abnahme, recovery.submitted._id, session);
 
@@ -962,23 +1115,32 @@ router.post('/submit', upload.any(), async (req, res) => {
         });
         assertDocumentSizeFitsMongo(toPlainDocument(submitted), 'Abnahme');
         await submitted.save({ session });
-
-        const bitrixSync = await trySendDocumentToBitrix({
-          ...draftData,
-          ...parsed,
-          ...payload,
-          ...toPlainDocument(submitted),
+        await addOperationLog({
+          event: 'submit.abnahme.updated',
+          message: 'Bestehende Abnahme in MongoDB innerhalb der Transaktion gespeichert.',
+          context: {
+            ...logContext,
+            submittedId: submitted._id,
+          },
         });
-        assertBitrixSubmitSucceeded(bitrixSync);
 
         const draftToDelete = await findByIdWithSession(Entwurf, recoveryDraft._id, session);
         await deleteDraftDocument(draftToDelete, session);
+        await addOperationLog({
+          event: 'submit.recovery_draft.deleted',
+          message: 'Recovery-Entwurf innerhalb der Transaktion zur Loeschung markiert.',
+          context: logContext,
+        });
 
         const response = buildSuccessResponse(submitted);
-        return res.json({
-          ...response,
-          bitrixSync,
-        });
+        return {
+          statusCode: 200,
+          response: {
+            ...response,
+            bitrixSync,
+          },
+          submittedId: submitted._id,
+        };
       }
 
       const submitPayload = {
@@ -988,24 +1150,43 @@ router.post('/submit', upload.any(), async (req, res) => {
       };
       assertDocumentSizeFitsMongo(submitPayload, 'Abnahme');
       const submitted = await createDocument(Abnahme, submitPayload, session);
-
-      const bitrixSync = await trySendDocumentToBitrix({
-        ...draftData,
-        ...parsed,
-        ...payload,
-        ...toPlainDocument(submitted),
+      await addOperationLog({
+        event: 'submit.abnahme.created',
+        message: 'Neue Abnahme in MongoDB innerhalb der Transaktion gespeichert.',
+        context: {
+          ...logContext,
+          submittedId: submitted._id,
+        },
       });
-      assertBitrixSubmitSucceeded(bitrixSync);
 
       const draftToDelete = await findByIdWithSession(Entwurf, recoveryDraft._id, session);
       await deleteDraftDocument(draftToDelete, session);
+      await addOperationLog({
+        event: 'submit.recovery_draft.deleted',
+        message: 'Recovery-Entwurf innerhalb der Transaktion zur Loeschung markiert.',
+        context: logContext,
+      });
 
       const response = buildSuccessResponse(submitted);
-      return res.status(recovery.source === 'new' ? 201 : 200).json({
-        ...response,
-        bitrixSync,
-      });
+      return {
+        statusCode: recovery.source === 'new' ? 201 : 200,
+        response: {
+          ...response,
+          bitrixSync,
+        },
+        submittedId: submitted._id,
+      };
     });
+
+    await addOperationLog({
+      event: 'submit.transaction.committed',
+      message: 'MongoDB-Transaktion abgeschlossen. Abnahme ist gespeichert und Recovery-Entwurf geloescht.',
+      context: {
+        ...logContext,
+        submittedId: submitResult.submittedId,
+      },
+    });
+    return res.status(submitResult.statusCode).json(submitResult.response);
   } catch (error) {
     if (!uploadedFilesProtectedByDraft) {
       await deleteUploadedRequestFiles(req.files);
@@ -1027,6 +1208,22 @@ router.post('/submit', upload.any(), async (req, res) => {
     if (details.length) response.details = details;
     if (error?.bitrixSync) response.bitrixSync = error.bitrixSync;
 
+    await addOperationLog({
+      level: 'error',
+      event: recoveryDraft ? 'submit.failed.draft_available' : 'submit.failed.no_draft',
+      message: recoveryDraft
+        ? `${response.error} Der Stand wurde als Entwurf gesichert.`
+        : `${response.error} Es konnte kein Recovery-Entwurf gesichert werden.`,
+      context: {
+        ...logContext,
+        draftId: recoveryDraft?._id,
+        shareToken: recoveryDraft?.shareToken,
+        draftSaved: Boolean(recoveryDraft),
+        uploadedFilesDeleted: !uploadedFilesProtectedByDraft,
+        details,
+        bitrixSync: error?.bitrixSync,
+      },
+    });
     return res.status(error?.status || error?.statusCode || 400).json(response);
   }
 });

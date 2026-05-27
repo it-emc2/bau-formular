@@ -33,6 +33,9 @@
   const btnCleanupPreview = $('#btnCleanupPreview');
   const btnCleanupDelete = $('#btnCleanupDelete');
   const adminCleanupOutput = $('#adminCleanupOutput');
+  const adminLogPanel = $('#adminLogPanel');
+  const btnAdminLogsRefresh = $('#btnAdminLogsRefresh');
+  const adminLogOutput = $('#adminLogOutput');
   const bitrixSearch  = $('#bitrixSearch');
   const bitrixDealList = $('#bitrixDealList');
   const draftSearch = $('#draftSearch');
@@ -393,6 +396,7 @@
     bindDocumentActions();
     bindChecklistRules();
     bindAdminCleanup();
+    bindAdminLogs();
     initSignaturePads();
     initWarenpruefungDatum();
     initDevModeToggle();
@@ -855,9 +859,14 @@
     if (bitrixDebugFields) bitrixDebugFields.classList.toggle('hidden', !devMode);
     if (debugDocumentPanel) debugDocumentPanel.classList.toggle('hidden', !devMode);
     if (adminCleanupPanel) adminCleanupPanel.classList.toggle('hidden', !devMode);
+    if (adminLogPanel) adminLogPanel.classList.toggle('hidden', !devMode);
     if (!devMode && adminCleanupOutput) {
       adminCleanupOutput.classList.add('hidden');
       adminCleanupOutput.textContent = '';
+    }
+    if (!devMode && adminLogOutput) {
+      adminLogOutput.classList.add('hidden');
+      adminLogOutput.textContent = '';
     }
     if (!devMode && btnCleanupDelete) btnCleanupDelete.disabled = true;
     syncDevStepPdfButtons();
@@ -1025,6 +1034,75 @@ function syncDevSidebarVisibility() {
         showToast('Upload-Bereinigung konnte nicht löschen: ' + error.message, 'error');
       } finally {
         btnCleanupPreview.disabled = false;
+      }
+    });
+  }
+
+  function formatAdminLog(entry) {
+    const timestamp = entry.timestamp ? new Date(entry.timestamp).toLocaleString('de-DE') : '-';
+    const level = String(entry.level || 'info').toUpperCase();
+    const dealId = entry.dealId || entry.bitrixAuftragId || entry.terminId || '-';
+    const ids = [
+      entry.draftId ? `Entwurf: ${entry.draftId}` : '',
+      entry.formId ? `Abnahme: ${entry.formId}` : '',
+    ].filter(Boolean).join(' | ');
+    const details = entry.context?.details?.length
+      ? `\nDetails: ${entry.context.details.map(detail => detail.message || detail.field || '').filter(Boolean).join(' | ')}`
+      : '';
+
+    return [
+      `[${timestamp}] ${level} ${entry.event || 'operation'}`,
+      `Deal: ${dealId}${ids ? ` | ${ids}` : ''}`,
+      entry.message || '',
+      details.trim(),
+    ].filter(Boolean).join('\n');
+  }
+
+  function renderAdminLogs(logs = []) {
+    if (!adminLogOutput) return '';
+    if (!logs.length) return 'Noch keine Save/Submit-Logs vorhanden.';
+    return logs.map(formatAdminLog).join('\n\n');
+  }
+
+  async function requestAdminLogs() {
+    if (!adminLogOutput) return null;
+
+    if (!devModePassword) {
+      const password = window.prompt('Passwort fuer Testmodus eingeben:');
+      if (password === null) return null;
+      devModePassword = password;
+    }
+
+    const response = await fetch('/api/form/admin/logs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        password: devModePassword,
+        limit: 100,
+      }),
+    });
+
+    const json = await parseJsonResponse(response);
+    if (!json.success) throw new Error(json.error || 'Logs konnten nicht geladen werden');
+    return json.logs || [];
+  }
+
+  function bindAdminLogs() {
+    if (!btnAdminLogsRefresh || !adminLogOutput) return;
+
+    btnAdminLogsRefresh.addEventListener('click', async () => {
+      btnAdminLogsRefresh.disabled = true;
+      adminLogOutput.classList.remove('hidden');
+      adminLogOutput.textContent = 'Logs werden geladen...';
+
+      try {
+        const logs = await requestAdminLogs();
+        if (logs) adminLogOutput.textContent = renderAdminLogs(logs);
+      } catch (error) {
+        adminLogOutput.textContent = `Fehler: ${error.message}`;
+        showToast('Logs konnten nicht geladen werden: ' + error.message, 'error');
+      } finally {
+        btnAdminLogsRefresh.disabled = false;
       }
     });
   }

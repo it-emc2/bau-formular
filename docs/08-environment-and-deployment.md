@@ -170,6 +170,17 @@ The same cleanup is also available in the app UI for password-gated Testmodus/ad
 
 When used on Fly.io, the button checks production MongoDB (`BauDB`) against the Fly volume (`/data/uploads`). When used locally, it only checks the local `.env` database, for example `BauDB-test`, against the local `uploads/` folder.
 
+### Admin Operation Logs
+
+Save and submit diagnostics are stored in the MongoDB collection `OperationLogs` in the active database:
+
+- local development writes to `BauDB-test`
+- Fly.io production writes to `BauDB`
+
+The app creates the collection automatically on the first save/submit log entry. Logs are visible only in Testmodus/admin mode via **Logs aktualisieren**. Entries include timestamp, deal/termin id, draft id, submitted form id, the completed step, and sanitized error details. Large payloads, signatures, and passwords are redacted before storage.
+
+The collection has a 30-day TTL index on `createdAt`, so old diagnostic records are removed automatically by MongoDB.
+
 #### Local Cleanup
 
 Run this from the repository root:

@@ -24,6 +24,11 @@ jest.mock('../services/orphanUploads', () => ({
   cleanupOrphanUploads: jest.fn(),
 }));
 
+jest.mock('../services/operationLogs', () => ({
+  addOperationLog: jest.fn(),
+  listOperationLogs: jest.fn(),
+}));
+
 jest.mock('mongoose', () => ({
   startSession: jest.fn(),
 }));
@@ -34,6 +39,7 @@ const nodemailer = require('nodemailer');
 const mongoose = require('mongoose');
 const { postTimelineComment } = require('../services/bitrix');
 const { cleanupOrphanUploads } = require('../services/orphanUploads');
+const { addOperationLog, listOperationLogs } = require('../services/operationLogs');
 const router = require('../routes/form');
 
 function findRouteHandlers(routePath, method) {
@@ -432,6 +438,41 @@ describe('form routes', () => {
     else process.env.TESTMODUS_PASSWORD = previousPassword;
   });
 
+  it('returns authenticated admin operation logs', async () => {
+    const handlers = findRouteHandlers('/admin/logs', 'post');
+    const previousPassword = process.env.TESTMODUS_PASSWORD;
+    process.env.TESTMODUS_PASSWORD = 'secret-test';
+    listOperationLogs.mockReturnValue([
+      {
+        timestamp: '2026-05-27T10:00:00.000Z',
+        level: 'info',
+        event: 'submit.recovery_draft.saved',
+        dealId: '64738',
+      },
+    ]);
+
+    const res = await runHandlers(handlers, {
+      body: { password: 'secret-test', limit: 25 },
+    });
+
+    expect(listOperationLogs).toHaveBeenCalledWith({ limit: 25 });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({
+      success: true,
+      logs: [
+        {
+          timestamp: '2026-05-27T10:00:00.000Z',
+          level: 'info',
+          event: 'submit.recovery_draft.saved',
+          dealId: '64738',
+        },
+      ],
+    });
+
+    if (previousPassword === undefined) delete process.env.TESTMODUS_PASSWORD;
+    else process.env.TESTMODUS_PASSWORD = previousPassword;
+  });
+
   it('loads a form by share token', async () => {
     const handlers = findRouteHandlers('/token/:token', 'get');
     const req = { params: { token: 'abc123' } };
@@ -618,7 +659,7 @@ describe('form routes', () => {
     );
   });
 
-  it('keeps the recovery draft and rolls back the submitted form when Bitrix submit fails', async () => {
+  it('keeps the recovery draft and does not create a submitted form when Bitrix submit fails', async () => {
     const handlers = findRouteHandlers('/submit', 'post');
     const draftDeleteOne = jest.fn().mockResolvedValue();
     const submittedDeleteOne = jest.fn().mockResolvedValue();
@@ -659,17 +700,11 @@ describe('form routes', () => {
       })],
       expect.objectContaining({ session: expect.any(Object) })
     );
-    expect(Abnahme.create).toHaveBeenCalledWith(
-      [expect.objectContaining({
-        terminId: 'UT-1000',
-        status: 'submitted',
-      })],
-      expect.objectContaining({ session: expect.any(Object) })
-    );
+    expect(Abnahme.create).not.toHaveBeenCalled();
     expect(submittedDeleteOne).not.toHaveBeenCalled();
     expect(draftDeleteOne).not.toHaveBeenCalled();
     expect(sessionMocks[0].commitTransaction).toHaveBeenCalled();
-    expect(sessionMocks[1].abortTransaction).toHaveBeenCalled();
+    expect(sessionMocks).toHaveLength(1);
     expect(res.body).toEqual(
       expect.objectContaining({
         success: false,
