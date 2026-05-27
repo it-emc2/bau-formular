@@ -24,9 +24,14 @@ jest.mock('../services/orphanUploads', () => ({
   cleanupOrphanUploads: jest.fn(),
 }));
 
+jest.mock('mongoose', () => ({
+  startSession: jest.fn(),
+}));
+
 const Abnahme = require('../models/Abnahme');
 const Entwurf = require('../models/Entwurf');
 const nodemailer = require('nodemailer');
+const mongoose = require('mongoose');
 const { postTimelineComment } = require('../services/bitrix');
 const { cleanupOrphanUploads } = require('../services/orphanUploads');
 const router = require('../routes/form');
@@ -68,8 +73,35 @@ async function runHandlers(handlers, req) {
   return res;
 }
 
+function createDraftMock(payload = {}) {
+  return {
+    _id: payload._id || 'draft-backup-id',
+    ...payload,
+    save: jest.fn().mockResolvedValue(),
+    deleteOne: jest.fn().mockResolvedValue(),
+    toObject() {
+      const { save, deleteOne, toObject, ...plain } = this;
+      return plain;
+    },
+  };
+}
+
+function createSessionMock() {
+  return {
+    startTransaction: jest.fn(),
+    commitTransaction: jest.fn().mockResolvedValue(),
+    abortTransaction: jest.fn().mockResolvedValue(),
+    endSession: jest.fn().mockResolvedValue(),
+  };
+}
+
+function firstCreatePayload(payload) {
+  return Array.isArray(payload) ? payload[0] : payload;
+}
+
 describe('form routes', () => {
   const originalFetch = global.fetch;
+  let sessionMocks;
 
   beforeEach(() => {
     jest.resetAllMocks();
@@ -80,6 +112,12 @@ describe('form routes', () => {
     delete process.env.SMTP_USER;
     delete process.env.SMTP_PASS;
     delete process.env.ARBEITSBERICHT_PDF_URL;
+    sessionMocks = [];
+    mongoose.startSession.mockImplementation(async () => {
+      const session = createSessionMock();
+      sessionMocks.push(session);
+      return session;
+    });
   });
 
   afterAll(() => {
@@ -530,10 +568,14 @@ describe('form routes', () => {
   it('submits a form and automatically sends the document to bitrix when bitrixAuftragId is present', async () => {
     const handlers = findRouteHandlers('/submit', 'post');
     postTimelineComment.mockResolvedValue({ result: 999 });
+    Entwurf.create.mockImplementation(async payload => createDraftMock({
+      _id: 'draft-before-submit',
+      ...firstCreatePayload(payload),
+    }));
     Abnahme.create.mockImplementation(async payload => ({
       _id: 'submitted-22',
-      ...payload,
-      toObject: () => ({ _id: 'submitted-22', ...payload }),
+      ...firstCreatePayload(payload),
+      toObject: () => ({ _id: 'submitted-22', ...firstCreatePayload(payload) }),
     }));
 
     const req = {
@@ -551,6 +593,13 @@ describe('form routes', () => {
     const res = await runHandlers(handlers, req);
 
     expect(res.statusCode).toBe(201);
+    expect(Entwurf.create).toHaveBeenCalledWith(
+      [expect.objectContaining({
+        terminId: 'UT-1000',
+        status: 'draft',
+      })],
+      expect.objectContaining({ session: expect.any(Object) })
+    );
     expect(postTimelineComment).toHaveBeenCalledWith(
       expect.objectContaining({
         entityType: 'deal',
@@ -569,13 +618,85 @@ describe('form routes', () => {
     );
   });
 
+  it('keeps the recovery draft and rolls back the submitted form when Bitrix submit fails', async () => {
+    const handlers = findRouteHandlers('/submit', 'post');
+    const draftDeleteOne = jest.fn().mockResolvedValue();
+    const submittedDeleteOne = jest.fn().mockResolvedValue();
+
+    postTimelineComment.mockRejectedValue(new Error('Bitrix offline'));
+    Entwurf.create.mockImplementation(async payload => {
+      const draft = createDraftMock({
+        _id: 'draft-before-submit',
+        shareToken: 'draft-token',
+        ...firstCreatePayload(payload),
+      });
+      draft.deleteOne = draftDeleteOne;
+      return draft;
+    });
+    Abnahme.create.mockImplementation(async payload => ({
+      _id: 'submitted-22',
+      ...firstCreatePayload(payload),
+      deleteOne: submittedDeleteOne,
+      toObject: () => ({ _id: 'submitted-22', ...firstCreatePayload(payload) }),
+    }));
+
+    const req = {
+      body: {
+        formData: JSON.stringify({
+          terminId: 'UT-1000',
+          bitrixAuftragId: '55',
+        }),
+      },
+    };
+
+    const res = await runHandlers(handlers, req);
+
+    expect(res.statusCode).toBe(502);
+    expect(Entwurf.create).toHaveBeenCalledWith(
+      [expect.objectContaining({
+        terminId: 'UT-1000',
+        status: 'draft',
+      })],
+      expect.objectContaining({ session: expect.any(Object) })
+    );
+    expect(Abnahme.create).toHaveBeenCalledWith(
+      [expect.objectContaining({
+        terminId: 'UT-1000',
+        status: 'submitted',
+      })],
+      expect.objectContaining({ session: expect.any(Object) })
+    );
+    expect(submittedDeleteOne).not.toHaveBeenCalled();
+    expect(draftDeleteOne).not.toHaveBeenCalled();
+    expect(sessionMocks[0].commitTransaction).toHaveBeenCalled();
+    expect(sessionMocks[1].abortTransaction).toHaveBeenCalled();
+    expect(res.body).toEqual(
+      expect.objectContaining({
+        success: false,
+        draftSaved: true,
+        draftId: 'draft-before-submit',
+        shareToken: expect.any(String),
+        shareLink: expect.stringMatching(/^\/form\//),
+        bitrixSync: expect.objectContaining({
+          attempted: true,
+          sent: false,
+          error: 'Bitrix offline',
+        }),
+      })
+    );
+  });
+
   it('persists Einwilligung fields and uploads the PDF to Bitrix on submit', async () => {
     const handlers = findRouteHandlers('/submit', 'post');
     postTimelineComment.mockResolvedValue({ result: 777 });
+    Entwurf.create.mockImplementation(async payload => createDraftMock({
+      _id: 'draft-before-submit',
+      ...firstCreatePayload(payload),
+    }));
     Abnahme.create.mockImplementation(async payload => ({
       _id: 'submitted-99',
-      ...payload,
-      toObject: () => ({ _id: 'submitted-99', ...payload }),
+      ...firstCreatePayload(payload),
+      toObject: () => ({ _id: 'submitted-99', ...firstCreatePayload(payload) }),
     }));
 
     const req = {
@@ -595,12 +716,13 @@ describe('form routes', () => {
 
     expect(res.statusCode).toBe(201);
     expect(Abnahme.create).toHaveBeenCalledWith(
-      expect.objectContaining({
+      [expect.objectContaining({
         terminId: 'UT-1000',
         status: 'submitted',
         einwilligungGeburtsdatum: '1955-04-12',
         unterschriftEinwilligung: expect.stringContaining('data:image/png;base64,'),
-      })
+      })],
+      expect.objectContaining({ session: expect.any(Object) })
     );
 
     expect(postTimelineComment).toHaveBeenCalledTimes(1);
@@ -690,25 +812,35 @@ describe('form routes', () => {
       shareToken: 'abc123',
       status: 'draft',
       terminId: 'OLD',
-      toObject: jest.fn().mockReturnValue({ _id: 'form-1', shareToken: 'abc123', status: 'draft', terminId: 'OLD' }),
+      save: jest.fn().mockResolvedValue(),
+      toObject() {
+        return {
+          _id: this._id,
+          shareToken: this.shareToken,
+          status: this.status,
+          terminId: this.terminId,
+        };
+      },
       deleteOne,
     };
     const req = { body: { formData: JSON.stringify({ _id: 'form-1', terminId: 'UT-1000', status: 'draft' }) } };
 
     Entwurf.findById.mockResolvedValue(existing);
-    Abnahme.create.mockImplementation(async payload => ({ _id: 'submitted-1', ...payload }));
+    Abnahme.create.mockImplementation(async payload => ({ _id: 'submitted-1', ...firstCreatePayload(payload) }));
 
     const res = await runHandlers(handlers, req);
 
     expect(res.statusCode).toBe(200);
     expect(Abnahme.create).toHaveBeenCalledWith(
-      expect.objectContaining({
+      [expect.objectContaining({
         terminId: 'UT-1000',
         status: 'submitted',
         shareToken: 'abc123',
-      })
+      })],
+      expect.objectContaining({ session: expect.any(Object) })
     );
     expect(deleteOne).toHaveBeenCalled();
+    expect(existing.save).toHaveBeenCalled();
     expect(res.body).toEqual(
       expect.objectContaining({
         success: true,
@@ -722,17 +854,29 @@ describe('form routes', () => {
     const handlers = findRouteHandlers('/submit', 'post');
     const req = { body: { formData: JSON.stringify({ terminId: 'UT-1000' }) } };
 
-    Abnahme.create.mockImplementation(async payload => ({ _id: 'submitted-1', ...payload }));
+    Entwurf.create.mockImplementation(async payload => createDraftMock({
+      _id: 'draft-before-submit',
+      ...firstCreatePayload(payload),
+    }));
+    Abnahme.create.mockImplementation(async payload => ({ _id: 'submitted-1', ...firstCreatePayload(payload) }));
 
     const res = await runHandlers(handlers, req);
 
     expect(res.statusCode).toBe(201);
+    expect(Entwurf.create).toHaveBeenCalledWith(
+      [expect.objectContaining({
+        terminId: 'UT-1000',
+        status: 'draft',
+      })],
+      expect.objectContaining({ session: expect.any(Object) })
+    );
     expect(Abnahme.create).toHaveBeenCalledWith(
-      expect.objectContaining({
+      [expect.objectContaining({
         terminId: 'UT-1000',
         status: 'submitted',
         shareToken: expect.any(String),
-      })
+      })],
+      expect.objectContaining({ session: expect.any(Object) })
     );
     expect(res.body).toEqual(
       expect.objectContaining({
@@ -744,16 +888,36 @@ describe('form routes', () => {
     );
   });
 
-  it('returns 404 when submitting a missing form', async () => {
+  it('creates a recovery draft when submitting a missing form id', async () => {
     const handlers = findRouteHandlers('/submit', 'post');
     const req = { body: { formData: JSON.stringify({ _id: 'missing-id', terminId: 'UT-1000' }) } };
 
+    Entwurf.findById.mockResolvedValue(null);
     Abnahme.findById.mockResolvedValue(null);
+    Entwurf.create.mockImplementation(async payload => createDraftMock({
+      _id: 'draft-before-submit',
+      ...firstCreatePayload(payload),
+    }));
+    Abnahme.create.mockImplementation(async payload => ({ _id: 'submitted-1', ...firstCreatePayload(payload) }));
 
     const res = await runHandlers(handlers, req);
 
-    expect(res.statusCode).toBe(404);
-    expect(res.body).toEqual({ success: false, error: 'Formular nicht gefunden' });
+    expect(res.statusCode).toBe(201);
+    expect(Entwurf.create).toHaveBeenCalledWith(
+      [expect.objectContaining({
+        terminId: 'UT-1000',
+        status: 'draft',
+      })],
+      expect.objectContaining({ session: expect.any(Object) })
+    );
+    expect(Abnahme.create).toHaveBeenCalledWith(
+      [expect.objectContaining({
+        terminId: 'UT-1000',
+        status: 'submitted',
+      })],
+      expect.objectContaining({ session: expect.any(Object) })
+    );
+    expect(res.body).toEqual(expect.objectContaining({ success: true, id: 'submitted-1' }));
   });
 
   it('returns 400 when create fails validation', async () => {
@@ -771,6 +935,11 @@ describe('form routes', () => {
   it('returns validation details when submit fails schema validation', async () => {
     const handlers = findRouteHandlers('/submit', 'post');
     const req = { body: { formData: JSON.stringify({}) } };
+    const recoveryDraft = createDraftMock({
+      _id: 'draft-before-submit',
+      shareToken: 'draft-token',
+      status: 'draft',
+    });
     const validationError = new Error('Abnahme validation failed: terminId: Path `terminId` is required.');
     validationError.name = 'ValidationError';
     validationError.errors = {
@@ -782,6 +951,7 @@ describe('form routes', () => {
       },
     };
 
+    Entwurf.create.mockResolvedValue(recoveryDraft);
     Abnahme.create.mockRejectedValue(validationError);
 
     const res = await runHandlers(handlers, req);
@@ -790,6 +960,10 @@ describe('form routes', () => {
     expect(res.body).toEqual({
       success: false,
       error: validationError.message,
+      draftSaved: true,
+      draftId: 'draft-before-submit',
+      shareToken: 'draft-token',
+      shareLink: '/form/draft-token',
       details: [
         {
           field: 'terminId',

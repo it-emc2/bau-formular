@@ -6,6 +6,7 @@ const multer = require('multer');
 const nodemailer = require('nodemailer');
 const archiver = require('archiver');
 const { BSON } = require('bson');
+const mongoose = require('mongoose');
 
 const Abnahme = require('../models/Abnahme');
 const Entwurf = require('../models/Entwurf');
@@ -191,6 +192,98 @@ async function deleteUploadedRequestFiles(files = []) {
       ? fs.promises.rm(file.path, { force: true }).catch(() => {})
       : Promise.resolve()
   )));
+}
+
+async function runMongoTransaction(work) {
+  const session = await mongoose.startSession();
+  try {
+    session.startTransaction();
+    const result = await work(session);
+    await session.commitTransaction();
+    return result;
+  } catch (error) {
+    await session.abortTransaction().catch(() => {});
+    throw error;
+  } finally {
+    await session.endSession();
+  }
+}
+
+async function deleteDraftDocument(draft, session = null) {
+  if (draft?.deleteOne) {
+    await draft.deleteOne(session ? { session } : undefined);
+  }
+}
+
+async function deleteSubmittedDocument(form, session = null) {
+  if (form?.deleteOne) {
+    await form.deleteOne(session ? { session } : undefined);
+  } else if (form?._id) {
+    const query = Abnahme.findByIdAndDelete?.(form._id);
+    if (query?.session && session) {
+      await query.session(session);
+    } else if (query) {
+      await query;
+    }
+  }
+}
+
+async function createDocument(Model, payload, session = null) {
+  if (!session) return Model.create(payload);
+
+  const result = await Model.create([payload], { session });
+  return Array.isArray(result) ? result[0] : result;
+}
+
+async function findByIdWithSession(Model, id, session = null) {
+  const query = Model.findById(id);
+  if (!query) return null;
+  return query.session && session ? query.session(session) : query;
+}
+
+function assertBitrixSubmitSucceeded(bitrixSync) {
+  if (!bitrixSync?.attempted || bitrixSync?.sent) return;
+
+  const error = new Error(`Bitrix-Sendung fehlgeschlagen: ${bitrixSync.error || 'Unbekannter Fehler'}`);
+  error.status = 502;
+  error.bitrixSync = bitrixSync;
+  throw error;
+}
+
+async function persistSubmitRecoveryDraft({ formId, payload, session = null }) {
+  if (formId) {
+    const existingDraft = await findByIdWithSession(Entwurf, formId, session);
+
+    if (existingDraft) {
+      Object.assign(existingDraft, payload, { status: 'draft' });
+      assertDocumentSizeFitsMongo(toPlainDocument(existingDraft), 'Entwurf');
+      await existingDraft.save(session ? { session } : undefined);
+      return { draft: existingDraft, source: 'draft' };
+    }
+
+    const submitted = await findByIdWithSession(Abnahme, formId, session);
+
+    if (submitted) {
+      const draftPayload = {
+        ...sanitizeDocumentForCreate(toPlainDocument(submitted)),
+        ...payload,
+        shareToken: createShareToken(),
+        status: 'draft',
+      };
+      assertDocumentSizeFitsMongo(draftPayload, 'Entwurf');
+      const draft = await createDocument(Entwurf, draftPayload, session);
+      return { draft, submitted, source: 'submitted' };
+    }
+  }
+
+  const draftPayload = {
+    ...payload,
+    shareToken: createShareToken(),
+    status: 'draft',
+  };
+  assertDocumentSizeFitsMongo(draftPayload, 'Entwurf');
+  const draft = await createDocument(Entwurf, draftPayload, session);
+  return { draft, source: 'new' };
 }
 
 function buildSuccessResponse(form) {
@@ -838,80 +931,103 @@ router.post('/arbeitsbericht/pdf', async (req, res) => {
 });
 
 router.post('/submit', upload.any(), async (req, res) => {
+  let recoveryDraft = null;
+  let uploadedFilesProtectedByDraft = false;
+
   try {
     const parsed = parsePayload(req);
     const payload = mergeUploadedFiles(pickPayload(parsed), req.files);
     const formId = parsed._id || parsed.id;
-    let response;
+    const recovery = await runMongoTransaction(session => persistSubmitRecoveryDraft({ formId, payload, session }));
+    recoveryDraft = recovery.draft;
+    uploadedFilesProtectedByDraft = true;
 
-    if (!formId) {
+    const draftData = sanitizeDocumentForCreate(toPlainDocument(recoveryDraft));
+
+    return await runMongoTransaction(async session => {
+      if (recovery.submitted) {
+        const submitted = await findByIdWithSession(Abnahme, recovery.submitted._id, session);
+
+        if (!submitted) {
+          const error = new Error('Formular nicht gefunden');
+          error.status = 404;
+          throw error;
+        }
+
+        const existingShareToken = submitted.shareToken || createShareToken();
+        Object.assign(submitted, {
+          ...draftData,
+          shareToken: existingShareToken,
+          status: 'submitted',
+        });
+        assertDocumentSizeFitsMongo(toPlainDocument(submitted), 'Abnahme');
+        await submitted.save({ session });
+
+        const bitrixSync = await trySendDocumentToBitrix({
+          ...draftData,
+          ...parsed,
+          ...payload,
+          ...toPlainDocument(submitted),
+        });
+        assertBitrixSubmitSucceeded(bitrixSync);
+
+        const draftToDelete = await findByIdWithSession(Entwurf, recoveryDraft._id, session);
+        await deleteDraftDocument(draftToDelete, session);
+
+        const response = buildSuccessResponse(submitted);
+        return res.json({
+          ...response,
+          bitrixSync,
+        });
+      }
+
       const submitPayload = {
-        ...payload,
-        shareToken: createShareToken(),
+        ...draftData,
+        shareToken: recoveryDraft.shareToken || createShareToken(),
         status: 'submitted',
       };
       assertDocumentSizeFitsMongo(submitPayload, 'Abnahme');
-      const form = await Abnahme.create(submitPayload);
+      const submitted = await createDocument(Abnahme, submitPayload, session);
 
-      response = buildSuccessResponse(form);
-      const bitrixSync = await trySendDocumentToBitrix({ ...parsed, ...payload, ...form.toObject?.() });
-      return res.status(201).json({
-        ...response,
-        bitrixSync,
-      });
-    }
-
-    const draft = await Entwurf.findById(formId);
-
-    if (draft) {
-      const submitPayload = {
-        ...sanitizeDocumentForCreate(draft.toObject()),
-        ...payload,
-        shareToken: draft.shareToken || createShareToken(),
-        status: 'submitted',
-      };
-      assertDocumentSizeFitsMongo(submitPayload, 'Abnahme');
-      const submitted = await Abnahme.create(submitPayload);
-
-      await draft.deleteOne();
-
-      response = buildSuccessResponse(submitted);
       const bitrixSync = await trySendDocumentToBitrix({
-        ...sanitizeDocumentForCreate(draft.toObject()),
+        ...draftData,
         ...parsed,
         ...payload,
-        ...submitted.toObject?.(),
+        ...toPlainDocument(submitted),
       });
-      return res.json({
+      assertBitrixSubmitSucceeded(bitrixSync);
+
+      const draftToDelete = await findByIdWithSession(Entwurf, recoveryDraft._id, session);
+      await deleteDraftDocument(draftToDelete, session);
+
+      const response = buildSuccessResponse(submitted);
+      return res.status(recovery.source === 'new' ? 201 : 200).json({
         ...response,
         bitrixSync,
       });
-    }
-
-    const form = await Abnahme.findById(formId);
-
-    if (!form) {
-      return res.status(404).json({ success: false, error: 'Formular nicht gefunden' });
-    }
-
-    Object.assign(form, payload, { status: 'submitted' });
-    assertDocumentSizeFitsMongo(toPlainDocument(form), 'Abnahme');
-    await form.save();
-
-    response = buildSuccessResponse(form);
-    const bitrixSync = await trySendDocumentToBitrix({
-      ...parsed,
-      ...payload,
-      ...form.toObject?.(),
-    });
-
-    return res.json({
-      ...response,
-      bitrixSync,
     });
   } catch (error) {
-    await deleteUploadedRequestFiles(req.files);
-    return sendRouteError(res, error, 'Formular konnte nicht abgesendet werden');
+    if (!uploadedFilesProtectedByDraft) {
+      await deleteUploadedRequestFiles(req.files);
+    }
+
+    const response = {
+      success: false,
+      error: error?.message || 'Formular konnte nicht abgesendet werden',
+    };
+
+    if (recoveryDraft) {
+      response.draftSaved = true;
+      response.draftId = recoveryDraft._id;
+      response.shareToken = recoveryDraft.shareToken;
+      response.shareLink = recoveryDraft.shareToken ? `/form/${recoveryDraft.shareToken}` : undefined;
+    }
+
+    const details = formatErrorDetails(error);
+    if (details.length) response.details = details;
+    if (error?.bitrixSync) response.bitrixSync = error.bitrixSync;
+
+    return res.status(error?.status || error?.statusCode || 400).json(response);
   }
 });
 

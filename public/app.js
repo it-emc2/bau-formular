@@ -655,7 +655,10 @@
           .slice(0, 6)
         : [];
       const detailText = details.length ? `\n${details.map(item => `- ${item}`).join('\n')}` : '';
-      throw new Error(`${json.error || `HTTP ${response.status}`}${detailText}`);
+      const recoveryText = json.draftSaved
+        ? `\nAktueller Stand wurde als Entwurf gesichert${json.draftId ? `: ${json.draftId}` : '.'}`
+        : '';
+      throw new Error(`${json.error || `HTTP ${response.status}`}${recoveryText}${detailText}`);
     }
 
     return json;
