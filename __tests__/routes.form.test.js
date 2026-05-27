@@ -473,6 +473,53 @@ describe('form routes', () => {
     else process.env.TESTMODUS_PASSWORD = previousPassword;
   });
 
+  it('accepts whitelisted client validation logs', async () => {
+    const handlers = findRouteHandlers('/client-log', 'post');
+
+    const res = await runHandlers(handlers, {
+      body: {
+        event: 'client.validation.blocked',
+        level: 'warn',
+        message: 'Weiter blockiert: 2 Validierungsfehler.',
+        terminId: 'UT-1000',
+        bitrixAuftragId: '64738',
+        action: 'next',
+        step: 4,
+        stepTitle: 'Fotos & Video',
+        issues: ['Fotos & Video: Bilder des fertigen Umbaus fehlt.'],
+      },
+    });
+
+    expect(addOperationLog).toHaveBeenCalledWith(expect.objectContaining({
+      level: 'warn',
+      event: 'client.validation.blocked',
+      message: 'Weiter blockiert: 2 Validierungsfehler.',
+      context: expect.objectContaining({
+        terminId: 'UT-1000',
+        bitrixAuftragId: '64738',
+        action: 'next',
+        step: 4,
+        stepTitle: 'Fotos & Video',
+      }),
+    }));
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({ success: true });
+  });
+
+  it('rejects unknown client log events', async () => {
+    const handlers = findRouteHandlers('/client-log', 'post');
+
+    const res = await runHandlers(handlers, {
+      body: {
+        event: 'client.anything',
+        message: 'not allowed',
+      },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toEqual({ success: false, error: 'Log event not allowed' });
+  });
+
   it('loads a form by share token', async () => {
     const handlers = findRouteHandlers('/token/:token', 'get');
     const req = { params: { token: 'abc123' } };
@@ -1009,4 +1056,5 @@ describe('form routes', () => {
       ],
     });
   });
+
 });

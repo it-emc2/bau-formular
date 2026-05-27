@@ -397,6 +397,7 @@
     bindChecklistRules();
     bindAdminCleanup();
     bindAdminLogs();
+    initClientErrorLogging();
     initSignaturePads();
     initWarenpruefungDatum();
     initDevModeToggle();
@@ -560,7 +561,7 @@
   // ── Navigation ─────────────────────────────────────────
   function bindNavigation() {
     btnNext.addEventListener('click', () => {
-      if (devMode || validateCurrentStep()) {
+      if (devMode || validateCurrentStep('next')) {
         showStep(getNextVisibleStep(currentStep));
       }
     });
@@ -571,7 +572,7 @@
 
     btnDraft.addEventListener('click', () => showDraftNameModal());
     btnSubmit.addEventListener('click', () => {
-      if (validateAllSteps()) saveForm('submit');
+      if (validateAllSteps('submit')) saveForm('submit');
     });
 
     const btnDebugBitrixClose = $('#btnDebugBitrixClose');
@@ -778,6 +779,32 @@
         window.location.href = '/home';
       });
     }
+  }
+
+  function initClientErrorLogging() {
+    window.addEventListener('error', event => {
+      logClientEvent({
+        level: 'error',
+        event: 'client.error',
+        message: event.message || 'Unbekannter Browser-Fehler',
+        step: currentStep,
+        stepTitle: getStepTitle($(`.form-step[data-step="${currentStep}"]`)),
+        issues: [
+          event.filename ? `${event.filename}:${event.lineno || 0}:${event.colno || 0}` : '',
+        ].filter(Boolean),
+      });
+    });
+
+    window.addEventListener('unhandledrejection', event => {
+      const reason = event.reason;
+      logClientEvent({
+        level: 'error',
+        event: 'client.unhandled_rejection',
+        message: reason?.message || String(reason || 'Unbehandelte Promise-Ablehnung'),
+        step: currentStep,
+        stepTitle: getStepTitle($(`.form-step[data-step="${currentStep}"]`)),
+      });
+    });
   }
 
   function syncChecklistAutoSelections() {
@@ -2356,6 +2383,60 @@ function syncDevSidebarVisibility() {
     issues.push(`${getStepTitle(section)}: ${message}`);
   }
 
+  function getClientLogIdentifiers() {
+    return {
+      terminId: $('[name="terminId"]', form)?.value || '',
+      bitrixAuftragId: $('[name="bitrixAuftragId"]', form)?.value || '',
+      auftragsNummer: $('[name="auftragsNummer"]', form)?.value || '',
+      formId,
+      draftId: formId,
+    };
+  }
+
+  function getFileSummary() {
+    return FILE_UPLOAD_FIELDS.reduce((acc, name) => {
+      const freshFiles = fileStore[name] || [];
+      const savedFiles = existingFileStore[name] || [];
+      acc[name] = {
+        freshCount: freshFiles.length,
+        freshBytes: freshFiles.reduce((sum, file) => sum + (file.size || 0), 0),
+        savedCount: savedFiles.length,
+      };
+      return acc;
+    }, {});
+  }
+
+  function logClientEvent(payload = {}) {
+    const body = {
+      ...getClientLogIdentifiers(),
+      browser: navigator.userAgent,
+      path: window.location.pathname,
+      ...payload,
+    };
+
+    fetch('/api/form/client-log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      keepalive: true,
+    }).catch(() => {});
+  }
+
+  function logValidationBlocked({ action, step, issues }) {
+    const uniqueIssues = [...new Set(issues)];
+    const section = $(`.form-step[data-step="${step}"]`);
+    logClientEvent({
+      level: 'warn',
+      event: 'client.validation.blocked',
+      message: `${action === 'submit' ? 'Absenden' : 'Weiter'} blockiert: ${uniqueIssues.length} Validierungsfehler.`,
+      action,
+      step,
+      stepTitle: getStepTitle(section),
+      issues: uniqueIssues,
+      fileSummary: getFileSummary(),
+    });
+  }
+
   function isSignatureRequired(wrapper) {
     const label = wrapper.previousElementSibling;
     return Boolean(label?.classList?.contains('field-label') && label.classList.contains('required'));
@@ -2500,19 +2581,23 @@ function syncDevSidebarVisibility() {
     showToast(`Bitte korrigieren:\n${visibleIssues.map(item => `- ${item}`).join('\n')}${suffix}`, 'error', 'big validation');
   }
 
-  function validateCurrentStep() {
+  function validateCurrentStep(action = 'next') {
     const issues = [];
     const valid = validateStep(currentStep, issues);
-    if (!valid) showValidationSummary(issues);
+    if (!valid) {
+      showValidationSummary(issues);
+      logValidationBlocked({ action, step: currentStep, issues });
+    }
     return valid;
   }
 
-  function validateAllSteps() {
+  function validateAllSteps(action = 'submit') {
     const issues = [];
     for (const step of getVisibleStepNumbers()) {
       if (!validateStep(step, issues)) {
         showStep(step);
         showValidationSummary(issues);
+        logValidationBlocked({ action, step, issues });
         return false;
       }
     }

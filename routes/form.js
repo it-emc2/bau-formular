@@ -36,6 +36,39 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
+function uploadAny(req, res, next) {
+  if (!req.headers || !String(req.headers['content-type'] || '').toLowerCase().includes('multipart/form-data')) {
+    req.files = req.files || [];
+    return next();
+  }
+
+  upload.any()(req, res, async error => {
+    if (!error) return next();
+
+    const status = error instanceof multer.MulterError ? 400 : 400;
+    const message = error.message || 'Upload konnte nicht verarbeitet werden.';
+
+    await addOperationLog({
+      level: 'error',
+      event: 'upload.rejected',
+      message,
+      context: {
+        uploadErrorCode: error.code,
+      },
+    });
+
+    return res.status(status).json({
+      success: false,
+      error: message,
+      details: [{
+        field: 'uploads',
+        kind: error.code || 'upload_error',
+        message,
+      }],
+    });
+  });
+}
+
 function createShareToken() {
   return crypto.randomBytes(16).toString('hex');
 }
@@ -171,12 +204,14 @@ function mergeUploadedFiles(payload, files = []) {
 }
 
 function buildRequestLogContext(parsed = {}, files = [], extra = {}) {
+  const uploadBytes = (files || []).reduce((sum, file) => sum + (file.size || 0), 0);
   return {
     terminId: parsed.terminId,
     bitrixAuftragId: parsed.bitrixAuftragId,
     auftragsNummer: parsed.auftragsNummer,
     formId: parsed._id || parsed.id,
     uploadCount: files?.length || 0,
+    uploadBytes,
     uploads: (files || []).map(file => ({
       fieldname: file.fieldname,
       filename: file.filename,
@@ -814,7 +849,7 @@ router.get('/drafts/:id', async (req, res) => {
   }
 });
 
-router.post('/save', upload.any(), async (req, res) => {
+router.post('/save', uploadAny, async (req, res) => {
   let logContext = { uploadCount: req.files?.length || 0 };
   try {
     const parsed = parsePayload(req);
@@ -970,6 +1005,46 @@ router.post('/admin/logs', async (req, res) => {
   }
 });
 
+router.post('/client-log', async (req, res) => {
+  try {
+    const payload = req.body || {};
+    const event = String(payload.event || '');
+    const allowedEvents = new Set([
+      'client.validation.blocked',
+      'client.error',
+      'client.unhandled_rejection',
+    ]);
+
+    if (!allowedEvents.has(event)) {
+      return res.status(400).json({ success: false, error: 'Log event not allowed' });
+    }
+
+    await addOperationLog({
+      level: payload.level === 'error' ? 'error' : 'warn',
+      event,
+      message: String(payload.message || '').slice(0, 500),
+      context: {
+        terminId: payload.terminId,
+        bitrixAuftragId: payload.bitrixAuftragId,
+        auftragsNummer: payload.auftragsNummer,
+        formId: payload.formId,
+        draftId: payload.draftId,
+        action: payload.action,
+        step: payload.step,
+        stepTitle: payload.stepTitle,
+        issues: Array.isArray(payload.issues) ? payload.issues.slice(0, 20) : [],
+        browser: payload.browser,
+        path: payload.path,
+        fileSummary: payload.fileSummary,
+      },
+    });
+
+    return res.json({ success: true });
+  } catch (error) {
+    return res.status(400).json({ success: false, error: error.message });
+  }
+});
+
 router.get('/token/:token', async (req, res) => {
   try {
     const form =
@@ -1045,7 +1120,7 @@ router.post('/document/bitrix', async (req, res) => {
   }
 });
 
-router.post('/debug-bitrix-payload', upload.any(), async (req, res) => {
+router.post('/debug-bitrix-payload', uploadAny, async (req, res) => {
   try {
     const parsed = parsePayload(req);
     mergeUploadedFiles(parsed, req.files);
@@ -1089,7 +1164,7 @@ router.post('/arbeitsbericht/pdf', async (req, res) => {
   }
 });
 
-router.post('/submit', upload.any(), async (req, res) => {
+router.post('/submit', uploadAny, async (req, res) => {
   let recoveryDraft = null;
   let uploadedFilesProtectedByDraft = false;
   let logContext = { uploadCount: req.files?.length || 0 };

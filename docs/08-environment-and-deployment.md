@@ -177,7 +177,7 @@ Save and submit diagnostics are stored in the MongoDB collection `OperationLogs`
 - local development writes to `BauDB-test`
 - Fly.io production writes to `BauDB`
 
-The app creates the collection automatically on the first save/submit log entry. Logs are visible only in Testmodus/admin mode via **Logs aktualisieren**. Entries include timestamp, deal/termin id, draft id, submitted form id, the completed step, and sanitized error details. Large payloads, signatures, and passwords are redacted before storage.
+The app creates the collection automatically on the first save/submit/frontend validation log entry. Logs are visible only in Testmodus/admin mode via **Logs aktualisieren**. Entries include timestamp, deal/termin id, draft id, submitted form id, the completed step, browser-side validation blockers, and sanitized error details. Large payloads, signatures, and passwords are redacted before storage.
 
 The collection has a 30-day TTL index on `createdAt`, so old diagnostic records are removed automatically by MongoDB.
 
