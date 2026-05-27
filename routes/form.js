@@ -388,6 +388,12 @@ function buildAttachmentSummary(attachments = []) {
   }));
 }
 
+function formatDuration(ms) {
+  if (!Number.isFinite(ms)) return '-';
+  if (ms < 1000) return `${ms} ms`;
+  return `${(ms / 1000).toFixed(1)} s`;
+}
+
 function buildTimelineRequestEntry({ entityId, comment, attachments = [] }) {
   const fields = {
     ENTITY_ID: entityId,
@@ -432,7 +438,9 @@ function buildDealFieldRequestEntry({ entityId, fields }) {
   };
 }
 
-async function syncDocumentToBitrix(data = {}) {
+async function syncDocumentToBitrix(data = {}, options = {}) {
+  const onProgress = typeof options.onProgress === 'function' ? options.onProgress : async () => {};
+  const startedAt = Date.now();
   const entityId = Number(data.bitrixAuftragId || 0);
 
   if (!Number.isFinite(entityId) || entityId <= 0) {
@@ -444,27 +452,31 @@ async function syncDocumentToBitrix(data = {}) {
     };
   }
 
+  let stepStartedAt = Date.now();
   const document = buildDocumentPackage(data);
+  await onProgress({
+    event: 'submit.bitrix.document_package.built',
+    message: `Bitrix-Textdokument vorbereitet (${formatDuration(Date.now() - stepStartedAt)}).`,
+    context: { durationMs: Date.now() - stepStartedAt },
+  });
+
   const comment = [document.title, '', document.text].join('\n');
+  stepStartedAt = Date.now();
   const attachments = await buildStepDocumentAttachments(data, {
     includeDebug: String(data.debugMode || '').toLowerCase() === 'true',
+  });
+  await onProgress({
+    event: 'submit.bitrix.attachments.built',
+    message: `${attachments.length} Bitrix-PDF-Anhaenge vorbereitet (${formatDuration(Date.now() - stepStartedAt)}).`,
+    context: {
+      durationMs: Date.now() - stepStartedAt,
+      attachmentCount: attachments.length,
+      attachmentSummary: buildAttachmentSummary(attachments),
+    },
   });
 
   const requests = [];
   const timelineEntry = buildTimelineRequestEntry({ entityId, comment, attachments });
-  try {
-    timelineEntry.response = await postTimelineComment({
-      entityType: 'deal',
-      entityId,
-      comment,
-      attachments,
-    });
-    timelineEntry.ok = true;
-  } catch (err) {
-    timelineEntry.ok = false;
-    timelineEntry.error = err.message;
-  }
-  requests.push(timelineEntry);
 
   const dealFieldsFull = {};
   for (const [prefix, fieldName] of Object.entries(DEAL_FIELD_DOC_MAP)) {
@@ -474,17 +486,76 @@ async function syncDocumentToBitrix(data = {}) {
     }
   }
 
+  const timelinePromise = (async () => {
+    const timelineStartedAt = Date.now();
+    await onProgress({
+      event: 'submit.bitrix.timeline.started',
+      message: `Bitrix-Timeline-Upload gestartet (${attachments.length} Anhaenge).`,
+      context: { attachmentCount: attachments.length },
+    });
+    try {
+      timelineEntry.response = await postTimelineComment({
+        entityType: 'deal',
+        entityId,
+        comment,
+        attachments,
+      });
+      timelineEntry.ok = true;
+    } catch (err) {
+      timelineEntry.ok = false;
+      timelineEntry.error = err.message;
+    }
+    await onProgress({
+      level: timelineEntry.ok ? 'info' : 'error',
+      event: timelineEntry.ok ? 'submit.bitrix.timeline.succeeded' : 'submit.bitrix.timeline.failed',
+      message: timelineEntry.ok
+        ? `Bitrix-Timeline-Upload abgeschlossen (${formatDuration(Date.now() - timelineStartedAt)}).`
+        : `Bitrix-Timeline-Upload fehlgeschlagen (${formatDuration(Date.now() - timelineStartedAt)}): ${timelineEntry.error}`,
+      context: {
+        durationMs: Date.now() - timelineStartedAt,
+        attachmentCount: attachments.length,
+        error: timelineEntry.error,
+      },
+    });
+    return timelineEntry;
+  })();
+
+  let dealPromise = Promise.resolve(null);
   if (Object.keys(dealFieldsFull).length) {
     const dealEntry = buildDealFieldRequestEntry({ entityId, fields: dealFieldsFull });
-    try {
-      dealEntry.response = await updateDealFields({ dealId: entityId, fields: dealFieldsFull });
-      dealEntry.ok = true;
-    } catch (err) {
-      dealEntry.ok = false;
-      dealEntry.error = err.message;
-    }
-    requests.push(dealEntry);
+    dealPromise = (async () => {
+      const dealStartedAt = Date.now();
+      await onProgress({
+        event: 'submit.bitrix.deal_fields.started',
+        message: `Bitrix-Auftragsfelder-Upload gestartet (${Object.keys(dealFieldsFull).length} Felder).`,
+        context: { fieldCount: Object.keys(dealFieldsFull).length },
+      });
+      try {
+        dealEntry.response = await updateDealFields({ dealId: entityId, fields: dealFieldsFull });
+        dealEntry.ok = true;
+      } catch (err) {
+        dealEntry.ok = false;
+        dealEntry.error = err.message;
+      }
+      await onProgress({
+        level: dealEntry.ok ? 'info' : 'error',
+        event: dealEntry.ok ? 'submit.bitrix.deal_fields.succeeded' : 'submit.bitrix.deal_fields.failed',
+        message: dealEntry.ok
+          ? `Bitrix-Auftragsfelder-Upload abgeschlossen (${formatDuration(Date.now() - dealStartedAt)}).`
+          : `Bitrix-Auftragsfelder-Upload fehlgeschlagen (${formatDuration(Date.now() - dealStartedAt)}): ${dealEntry.error}`,
+        context: {
+          durationMs: Date.now() - dealStartedAt,
+          fieldCount: Object.keys(dealFieldsFull).length,
+          error: dealEntry.error,
+        },
+      });
+      return dealEntry;
+    })();
   }
+
+  const [finishedTimelineEntry, finishedDealEntry] = await Promise.all([timelinePromise, dealPromise]);
+  requests.push(finishedTimelineEntry);
+  if (finishedDealEntry) requests.push(finishedDealEntry);
 
   const sent = Boolean(timelineEntry.ok);
   const failed = requests.find(entry => !entry.ok);
@@ -495,13 +566,14 @@ async function syncDocumentToBitrix(data = {}) {
     entityId,
     error: sent ? undefined : failed?.error,
     attachmentSummary: buildAttachmentSummary(attachments),
+    durationMs: Date.now() - startedAt,
     requests,
   };
 }
 
-async function trySendDocumentToBitrix(data = {}) {
+async function trySendDocumentToBitrix(data = {}, options = {}) {
   try {
-    const result = await syncDocumentToBitrix(data);
+    const result = await syncDocumentToBitrix(data, options);
     if (!result.attempted) {
       console.warn('[bitrix] skipped: no valid bitrixAuftragId', { received: data.bitrixAuftragId });
     } else if (result.sent) {
@@ -1060,7 +1132,17 @@ router.post('/submit', upload.any(), async (req, res) => {
       message: 'Bitrix-Sendung gestartet. MongoDB-Transaktion ist dabei nicht offen.',
       context: logContext,
     });
-    const bitrixSync = await trySendDocumentToBitrix(bitrixPayload);
+    const bitrixSync = await trySendDocumentToBitrix(bitrixPayload, {
+      onProgress: progress => addOperationLog({
+        level: progress.level || 'info',
+        event: progress.event,
+        message: progress.message,
+        context: {
+          ...logContext,
+          ...(progress.context || {}),
+        },
+      }),
+    });
     try {
       assertBitrixSubmitSucceeded(bitrixSync);
     } catch (error) {
