@@ -107,6 +107,8 @@
     'bilderBehobeneMaengel', 'weitereBilder', 'weitereBilder2', 'weitereBilder3',
   ];
   const SINGLE_FILE_UPLOAD_FIELDS = new Set(['videoDesAblaufs']);
+  const SIGNATURE_EXPORT_WIDTH = 600;
+  const SIGNATURE_EXPORT_HEIGHT = 200;
   let currentStep   = 0;
   let formId        = null;     // Mongo _id once saved
   let shareToken    = null;
@@ -118,6 +120,7 @@
   const pasteSigButtons = new Set();
   let devMode       = false;
   let devModePassword = '';
+  let saveInProgress = false;
   let bitrixDeals   = [];
   let activeBitrixDealId = null;
   let bitrixSearchTerm = '';
@@ -2479,9 +2482,8 @@ function syncDevSidebarVisibility() {
     // Signatures → write base64 to data + timestamp
     for (const [name, pad] of Object.entries(signaturePads)) {
       if (!pad.isEmpty()) {
-        data[name] = pad.toDataURL('image/png');
+        data[name] = compactSignaturePadDataUrl(pad);
         // set corresponding timestamp
-        const tsField = name.replace('unterschrift', 'unterschrift') + 'Zeitpunkt';
         // map the names properly
         const tsMap = {
           unterschriftZusaetzlicheLeistungen: 'unterschriftZusaetzlicheLeistungenZeitpunkt',
@@ -2852,6 +2854,12 @@ function syncDevSidebarVisibility() {
 
   // ── Save / Submit ──────────────────────────────────────
   async function saveForm(action) {
+    if (saveInProgress) {
+      showToast('Speichern läuft bereits. Bitte kurz warten.', 'error');
+      return;
+    }
+
+    saveInProgress = true;
     const data = collectFormData();
     const fd   = new FormData();
     fd.append('formData', JSON.stringify(data));
@@ -2907,6 +2915,7 @@ function syncDevSidebarVisibility() {
       console.error(`[form-${action}] failed`, err);
       showToast(`Fehler beim ${action === 'save' ? 'Speichern' : 'Absenden'}:\n${err.message}`, 'error', 'big validation');
     } finally {
+      saveInProgress = false;
       [btnDraft, btnSubmit, btnNext].forEach(b => b.disabled = false);
     }
   }
@@ -3338,7 +3347,7 @@ function syncDevSidebarVisibility() {
           showToast('Unterschrift ist leer — nichts zu kopieren.', 'error');
           return;
         }
-        copiedSignatureDataUrl = pad.toDataURL();
+        copiedSignatureDataUrl = compactSignaturePadDataUrl(pad);
         refreshPasteSigButtons();
         showToast('Unterschrift kopiert.', 'success');
       });
@@ -3362,6 +3371,7 @@ function syncDevSidebarVisibility() {
 
       // On signature begin → clear validation error
       pad.addEventListener('beginStroke', () => {
+        delete signaturePadDataUrls[name];
         wrapper.style.borderColor = '';
         markFormDirty();
       });
@@ -3446,6 +3456,17 @@ function syncDevSidebarVisibility() {
       };
       reader.readAsDataURL(file);
     });
+  }
+
+  function compactSignaturePadDataUrl(pad) {
+    const out = document.createElement('canvas');
+    out.width = SIGNATURE_EXPORT_WIDTH;
+    out.height = SIGNATURE_EXPORT_HEIGHT;
+    const ctx = out.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, out.width, out.height);
+    ctx.drawImage(pad.canvas, 0, 0, out.width, out.height);
+    return out.toDataURL('image/png');
   }
 
   function applySignatureDataUrl(pad, dataUrl) {

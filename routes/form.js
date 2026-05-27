@@ -5,6 +5,7 @@ const express = require('express');
 const multer = require('multer');
 const nodemailer = require('nodemailer');
 const archiver = require('archiver');
+const { BSON } = require('bson');
 
 const Abnahme = require('../models/Abnahme');
 const Entwurf = require('../models/Entwurf');
@@ -17,6 +18,7 @@ const { cleanupOrphanUploads } = require('../services/orphanUploads');
 const router = express.Router();
 const uploadsDir = getUploadsDir();
 const SINGLE_UPLOAD_FIELDS = new Set(['videoDesAblaufs']);
+const MAX_MONGO_DOCUMENT_BYTES = 15 * 1024 * 1024;
 
 fs.mkdirSync(uploadsDir, { recursive: true });
 
@@ -166,6 +168,31 @@ function mergeUploadedFiles(payload, files = []) {
   return payload;
 }
 
+function assertDocumentSizeFitsMongo(document, label = 'Formular') {
+  const size = BSON.calculateObjectSize(document);
+
+  if (size <= MAX_MONGO_DOCUMENT_BYTES) return;
+
+  const sizeMb = (size / 1024 / 1024).toFixed(1);
+  const limitMb = (MAX_MONGO_DOCUMENT_BYTES / 1024 / 1024).toFixed(0);
+  const error = new Error(`${label} ist zu gross zum Speichern (${sizeMb} MB, Limit ${limitMb} MB). Bitte Signaturen oder eingebettete Bilddaten reduzieren.`);
+  error.status = 413;
+  error.details = [{ field: 'formData', message: error.message }];
+  throw error;
+}
+
+function toPlainDocument(document) {
+  return document?.toObject ? document.toObject() : document;
+}
+
+async function deleteUploadedRequestFiles(files = []) {
+  await Promise.all((files || []).map(file => (
+    file?.path
+      ? fs.promises.rm(file.path, { force: true }).catch(() => {})
+      : Promise.resolve()
+  )));
+}
+
 function buildSuccessResponse(form) {
   return {
     success: true,
@@ -186,6 +213,10 @@ function formatErrorDetails(error) {
       message: err.message,
       value: err.value,
     }));
+  }
+
+  if (Array.isArray(error.details)) {
+    return error.details;
   }
 
   if (error.name === 'CastError') {
@@ -220,8 +251,9 @@ function formatErrorDetails(error) {
 function sendRouteError(res, error, fallbackMessage = 'Formular konnte nicht verarbeitet werden') {
   const details = formatErrorDetails(error);
   const message = error?.message || fallbackMessage;
+  const status = error?.status || error?.statusCode || 400;
 
-  return res.status(400).json({
+  return res.status(status).json({
     success: false,
     error: message,
     ...(details.length ? { details } : {}),
@@ -611,6 +643,7 @@ router.post('/save', upload.any(), async (req, res) => {
 
       if (existing) {
         Object.assign(existing, payload);
+        assertDocumentSizeFitsMongo(toPlainDocument(existing), 'Entwurf');
         await existing.save();
 
         return res.json(buildSuccessResponse(existing));
@@ -622,24 +655,29 @@ router.post('/save', upload.any(), async (req, res) => {
         return res.status(404).json({ success: false, error: 'Formular nicht gefunden' });
       }
 
-      const draft = await Entwurf.create({
+      const draftPayload = {
         ...sanitizeDocumentForCreate(submitted.toObject()),
         ...payload,
         shareToken: createShareToken(),
         status: 'draft',
-      });
+      };
+      assertDocumentSizeFitsMongo(draftPayload, 'Entwurf');
+      const draft = await Entwurf.create(draftPayload);
 
       return res.status(201).json(buildSuccessResponse(draft));
     }
 
-    const form = await Entwurf.create({
+    const draftPayload = {
       ...payload,
       shareToken: createShareToken(),
       status: 'draft',
-    });
+    };
+    assertDocumentSizeFitsMongo(draftPayload, 'Entwurf');
+    const form = await Entwurf.create(draftPayload);
 
     return res.status(201).json(buildSuccessResponse(form));
   } catch (error) {
+    await deleteUploadedRequestFiles(req.files);
     return sendRouteError(res, error, 'Entwurf konnte nicht gespeichert werden');
   }
 });
@@ -807,11 +845,13 @@ router.post('/submit', upload.any(), async (req, res) => {
     let response;
 
     if (!formId) {
-      const form = await Abnahme.create({
+      const submitPayload = {
         ...payload,
         shareToken: createShareToken(),
         status: 'submitted',
-      });
+      };
+      assertDocumentSizeFitsMongo(submitPayload, 'Abnahme');
+      const form = await Abnahme.create(submitPayload);
 
       response = buildSuccessResponse(form);
       const bitrixSync = await trySendDocumentToBitrix({ ...parsed, ...payload, ...form.toObject?.() });
@@ -824,12 +864,14 @@ router.post('/submit', upload.any(), async (req, res) => {
     const draft = await Entwurf.findById(formId);
 
     if (draft) {
-      const submitted = await Abnahme.create({
+      const submitPayload = {
         ...sanitizeDocumentForCreate(draft.toObject()),
         ...payload,
         shareToken: draft.shareToken || createShareToken(),
         status: 'submitted',
-      });
+      };
+      assertDocumentSizeFitsMongo(submitPayload, 'Abnahme');
+      const submitted = await Abnahme.create(submitPayload);
 
       await draft.deleteOne();
 
@@ -853,6 +895,7 @@ router.post('/submit', upload.any(), async (req, res) => {
     }
 
     Object.assign(form, payload, { status: 'submitted' });
+    assertDocumentSizeFitsMongo(toPlainDocument(form), 'Abnahme');
     await form.save();
 
     response = buildSuccessResponse(form);
@@ -867,6 +910,7 @@ router.post('/submit', upload.any(), async (req, res) => {
       bitrixSync,
     });
   } catch (error) {
+    await deleteUploadedRequestFiles(req.files);
     return sendRouteError(res, error, 'Formular konnte nicht abgesendet werden');
   }
 });
