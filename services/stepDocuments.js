@@ -1,5 +1,7 @@
 const fs = require('fs');
 const path = require('path');
+const { spawn, spawnSync } = require('child_process');
+const sharp = require('sharp');
 const { PDFDocument, PDFArray, PDFName, StandardFonts, rgb, decodePDFRawStream } = require('pdf-lib');
 const { buildDocumentPackage } = require('./documentLetter');
 const { getUploadsDir } = require('./uploadsPath');
@@ -599,9 +601,102 @@ async function buildStepPdf({ title, subtitle = '', lines = [], signatureDataUrl
   };
 }
 
+const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.avi', '.webm', '.mkv', '.wmv', '.flv', '.m4v']);
+const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif', '.tif', '.tiff']);
+const MAX_UPLOAD_BYTES = 40 * 1024 * 1024; // 40 MB base64 total across all uploaded media files
+const IMAGE_MAX_DIMENSION = 1600;
+const IMAGE_JPEG_QUALITY = 76;
+const VIDEO_MAX_HEIGHT = 720;
+let ffmpegAvailable = null;
+
+function isFfmpegAvailable() {
+  if (ffmpegAvailable !== null) return ffmpegAvailable;
+  const result = spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' });
+  ffmpegAvailable = result.status === 0;
+  return ffmpegAvailable;
+}
+
+function runFfmpeg(args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('ffmpeg', args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderr = '';
+    child.stderr.on('data', chunk => {
+      stderr += chunk.toString();
+      if (stderr.length > 2000) stderr = stderr.slice(-2000);
+    });
+    child.on('error', reject);
+    child.on('close', code => {
+      if (code === 0) resolve();
+      else reject(new Error(stderr.trim() || `ffmpeg exited with ${code}`));
+    });
+  });
+}
+
+async function optimizeImageBuffer(fileBuffer) {
+  const output = await sharp(fileBuffer, { failOn: 'none' })
+    .rotate()
+    .resize({
+      width: IMAGE_MAX_DIMENSION,
+      height: IMAGE_MAX_DIMENSION,
+      fit: 'inside',
+      withoutEnlargement: true,
+    })
+    .jpeg({
+      quality: IMAGE_JPEG_QUALITY,
+      mozjpeg: true,
+    })
+    .toBuffer();
+
+  if (output.length >= fileBuffer.length) {
+    return { buffer: fileBuffer, extension: null, optimized: false };
+  }
+
+  return { buffer: output, extension: '.jpg', optimized: true };
+}
+
+async function optimizeVideoBuffer(fullPath, basename, fileBuffer, uploadsDir) {
+  if (!isFfmpegAvailable()) {
+    return {
+      buffer: fileBuffer,
+      extension: null,
+      optimized: false,
+      unavailable: true,
+    };
+  }
+
+  const outputName = `.bitrix-${Date.now()}-${process.pid}-${basename.replace(/[^a-zA-Z0-9._-]/g, '-')}.mp4`;
+  const outputPath = path.join(uploadsDir, outputName);
+
+  try {
+    await runFfmpeg([
+      '-y',
+      '-i', fullPath,
+      '-vf', `scale='min(1280,iw)':'min(${VIDEO_MAX_HEIGHT},ih)':force_original_aspect_ratio=decrease`,
+      '-c:v', 'libx264',
+      '-preset', 'veryfast',
+      '-crf', '30',
+      '-c:a', 'aac',
+      '-b:a', '96k',
+      '-movflags', '+faststart',
+      outputPath,
+    ]);
+
+    const output = fs.readFileSync(outputPath);
+    if (output.length >= fileBuffer.length) {
+      return { buffer: fileBuffer, extension: null, optimized: false };
+    }
+
+    return { buffer: output, extension: '.mp4', optimized: true };
+  } finally {
+    fs.rmSync(outputPath, { force: true });
+  }
+}
+
 async function buildStepDocumentAttachments(data = {}, { includeDebug = false, forceAll = false } = {}) {
   const customerSlug = sanitizeFilenamePart(buildCustomerName(data), 'kunde');
   const attachments = [];
+  const skippedFiles = [];
+  const optimizedFiles = [];
   const checklistVariant = getChecklistVariant(data);
   const docSpecs = [
     {
@@ -698,6 +793,7 @@ async function buildStepDocumentAttachments(data = {}, { includeDebug = false, f
   ];
   const uploadsDir = getUploadsDir();
   let fileIndex = 0;
+  let totalUploadBytes = 0;
 
   for (const fieldName of fileFields) {
     const paths = Array.isArray(data[fieldName]) ? data[fieldName] : (data[fieldName] ? [data[fieldName]] : []);
@@ -705,17 +801,90 @@ async function buildStepDocumentAttachments(data = {}, { includeDebug = false, f
       const normalized = String(filePath || '').trim();
       if (!normalized) continue;
       const basename = path.basename(normalized);
+      const ext = path.extname(basename).toLowerCase() || '.bin';
       const fullPath = path.join(uploadsDir, basename);
       try {
         const fileBuffer = fs.readFileSync(fullPath);
+        const fileSizeKB = Math.round(fileBuffer.length / 1024);
+
+        let attachmentBuffer = fileBuffer;
+        let attachmentExt = ext;
+        let attachmentFilename = `${String(fileIndex + 1).padStart(2, '0')}-${fieldName}${attachmentExt}`;
+
+        if (IMAGE_EXTENSIONS.has(ext)) {
+          try {
+            const optimizedImage = await optimizeImageBuffer(fileBuffer);
+            attachmentBuffer = optimizedImage.buffer;
+            if (optimizedImage.extension) attachmentExt = optimizedImage.extension;
+            attachmentFilename = `${String(fileIndex + 1).padStart(2, '0')}-${fieldName}${attachmentExt}`;
+            if (optimizedImage.optimized) {
+              optimizedFiles.push({
+                filename: basename,
+                outputFilename: attachmentFilename,
+                fieldName,
+                originalSizeKB: fileSizeKB,
+                optimizedSizeKB: Math.round(attachmentBuffer.length / 1024),
+                kind: 'image',
+              });
+            }
+          } catch (err) {
+            skippedFiles.push({ filename: basename, fieldName, sizeKB: fileSizeKB, reason: `Bild konnte nicht optimiert werden: ${err.message}` });
+            continue;
+          }
+        } else if (VIDEO_EXTENSIONS.has(ext)) {
+          let optimizedVideo;
+          try {
+            optimizedVideo = await optimizeVideoBuffer(fullPath, basename, fileBuffer, uploadsDir);
+          } catch (err) {
+            skippedFiles.push({ filename: basename, fieldName, sizeKB: fileSizeKB, reason: `Video konnte nicht komprimiert werden: ${err.message}` });
+            continue;
+          }
+
+          if (optimizedVideo.unavailable) {
+            skippedFiles.push({ filename: basename, fieldName, sizeKB: fileSizeKB, reason: 'Video-Komprimierung nicht verfuegbar (ffmpeg fehlt)' });
+            continue;
+          }
+
+          attachmentBuffer = optimizedVideo.buffer;
+          if (optimizedVideo.extension) attachmentExt = optimizedVideo.extension;
+          attachmentFilename = `${String(fileIndex + 1).padStart(2, '0')}-${fieldName}${attachmentExt}`;
+          if (!optimizedVideo.optimized) {
+            optimizedFiles.push({
+              filename: basename,
+              outputFilename: attachmentFilename,
+              fieldName,
+              originalSizeKB: fileSizeKB,
+              optimizedSizeKB: Math.round(attachmentBuffer.length / 1024),
+              kind: 'video',
+              note: 'Originalvideo verwendet, weil die komprimierte Version nicht kleiner war',
+            });
+          }
+          if (optimizedVideo.optimized) {
+            optimizedFiles.push({
+              filename: basename,
+              outputFilename: attachmentFilename,
+              fieldName,
+              originalSizeKB: fileSizeKB,
+              optimizedSizeKB: Math.round(attachmentBuffer.length / 1024),
+              kind: 'video',
+            });
+          }
+        }
+
+        const base64Size = Math.ceil(attachmentBuffer.length * 4 / 3);
+        if (totalUploadBytes + base64Size > MAX_UPLOAD_BYTES) {
+          skippedFiles.push({ filename: basename, fieldName, sizeKB: fileSizeKB, reason: `Gesamtgroesse ueberschritten (Limit ${MAX_UPLOAD_BYTES / 1024 / 1024} MB)` });
+          continue;
+        }
+
         fileIndex++;
-        const ext = path.extname(basename).toLowerCase() || '.bin';
         attachments.push({
-          filename: `${String(fileIndex).padStart(2, '0')}-${fieldName}${ext}`,
-          base64: fileBuffer.toString('base64'),
+          filename: attachmentFilename,
+          base64: attachmentBuffer.toString('base64'),
         });
+        totalUploadBytes += base64Size;
       } catch (_err) {
-        // File not found on disk — skip
+        // File not found on disk — skip silently
       }
     }
   }
@@ -747,7 +916,7 @@ async function buildStepDocumentAttachments(data = {}, { includeDebug = false, f
     }
   }
 
-  return attachments;
+  return { attachments, skippedFiles, optimizedFiles };
 }
 
 async function buildConfirmationLetterPdf(data = {}) {

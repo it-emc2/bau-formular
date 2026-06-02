@@ -65,7 +65,7 @@ describe('bitrix routes', () => {
 
     expect(global.fetch).toHaveBeenCalledWith(
       expect.stringContaining('/crm.contact.get.json?id=42'),
-      { method: 'GET' }
+      expect.objectContaining({ method: 'GET' })
     );
     expect(res.statusCode).toBe(200);
     expect(res.body.result.NAME).toBe('Max');
@@ -138,7 +138,7 @@ describe('bitrix routes', () => {
 
     expect(global.fetch).toHaveBeenCalledWith(
       expect.stringContaining('/crm.item.list.json?'),
-      { method: 'GET' }
+      expect.objectContaining({ method: 'GET' })
     );
     const calledUrl = global.fetch.mock.calls[0][0];
     expect(calledUrl).toContain('entityTypeId=2');

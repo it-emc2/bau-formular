@@ -21,6 +21,7 @@ const router = express.Router();
 const uploadsDir = getUploadsDir();
 const SINGLE_UPLOAD_FIELDS = new Set(['videoDesAblaufs']);
 const MAX_MONGO_DOCUMENT_BYTES = 15 * 1024 * 1024;
+const BITRIX_TIMELINE_MAX_BATCH_BASE64_BYTES = 8 * 1024 * 1024;
 
 fs.mkdirSync(uploadsDir, { recursive: true });
 
@@ -452,6 +453,65 @@ function buildTimelineRequestEntry({ entityId, comment, attachments = [] }) {
   };
 }
 
+function getAttachmentBase64Length(attachment = {}) {
+  return attachment.base64?.length || 0;
+}
+
+function createTimelineAttachmentBatches(attachments = [], maxBase64Bytes = BITRIX_TIMELINE_MAX_BATCH_BASE64_BYTES) {
+  if (!attachments.length) return [[]];
+
+  const batches = [];
+  let currentBatch = [];
+  let currentBytes = 0;
+
+  for (const attachment of attachments) {
+    const attachmentBytes = getAttachmentBase64Length(attachment);
+    const wouldExceedBatch = currentBatch.length > 0 && currentBytes + attachmentBytes > maxBase64Bytes;
+
+    if (wouldExceedBatch) {
+      batches.push(currentBatch);
+      currentBatch = [];
+      currentBytes = 0;
+    }
+
+    currentBatch.push(attachment);
+    currentBytes += attachmentBytes;
+  }
+
+  if (currentBatch.length) batches.push(currentBatch);
+  return batches;
+}
+
+function splitTimelineAttachmentsBySize(attachments = [], maxBase64Bytes = BITRIX_TIMELINE_MAX_BATCH_BASE64_BYTES) {
+  const sendableAttachments = [];
+  const oversizedAttachments = [];
+
+  for (const attachment of attachments) {
+    const base64Length = getAttachmentBase64Length(attachment);
+    if (base64Length > maxBase64Bytes) {
+      oversizedAttachments.push({
+        filename: attachment.filename,
+        sizeKB: Math.round(base64Length / 1024),
+        reason: `Einzeldatei ueberschreitet Bitrix-Timeline-Limit (${Math.round(maxBase64Bytes / 1024)} KB base64)`,
+      });
+    } else {
+      sendableAttachments.push(attachment);
+    }
+  }
+
+  return { sendableAttachments, oversizedAttachments };
+}
+
+function buildTimelineBatchComment({ baseComment, batchIndex, batchCount }) {
+  if (batchIndex === 0) return baseComment;
+  return `Weitere Anhaenge zur Baudokumentation (${batchIndex + 1}/${batchCount}).`;
+}
+
+function buildTimelineBatchLabel(batchIndex, batchCount) {
+  if (batchCount <= 1) return 'Timeline-Kommentar mit Anhaengen';
+  return `Timeline-Kommentar mit Anhaengen (${batchIndex + 1}/${batchCount})`;
+}
+
 function buildDealFieldRequestEntry({ entityId, fields }) {
   const redactedFields = {};
   Object.entries(fields).forEach(([fieldName, value]) => {
@@ -495,23 +555,77 @@ async function syncDocumentToBitrix(data = {}, options = {}) {
     context: { durationMs: Date.now() - stepStartedAt },
   });
 
-  const comment = [document.title, '', document.text].join('\n');
+  let comment = [document.title, '', document.text].join('\n');
   stepStartedAt = Date.now();
-  const attachments = await buildStepDocumentAttachments(data, {
+  const { attachments, skippedFiles, optimizedFiles = [] } = await buildStepDocumentAttachments(data, {
     includeDebug: String(data.debugMode || '').toLowerCase() === 'true',
   });
+
+  if (skippedFiles.length > 0) {
+    comment += '\n\nHinweis — folgende Dateien konnten nicht uebertragen werden:\n'
+      + skippedFiles.map(f => `- ${f.filename}: ${f.reason}`).join('\n');
+    await onProgress({
+      level: 'warn',
+      event: 'submit.bitrix.attachments.skipped',
+      message: `${skippedFiles.length} Datei(en) uebersprungen: ${skippedFiles.map(f => `${f.filename} (${f.reason})`).join(', ')}`,
+      context: { skippedFiles },
+    });
+  }
+
+  const totalBase64Bytes = attachments.reduce((sum, att) => sum + (att.base64?.length || 0), 0);
+  const totalPayloadKB = Math.round(totalBase64Bytes / 1024);
+
+  if (optimizedFiles.length > 0) {
+    await onProgress({
+      event: 'submit.bitrix.attachments.optimized',
+      message: `${optimizedFiles.length} Datei(en) fuer Bitrix komprimiert: ${optimizedFiles.map(f => `${f.filename} (${f.originalSizeKB} KB -> ${f.optimizedSizeKB} KB)`).join(', ')}`,
+      context: { optimizedFiles },
+    });
+  }
+
   await onProgress({
     event: 'submit.bitrix.attachments.built',
-    message: `${attachments.length} Bitrix-PDF-Anhaenge vorbereitet (${formatDuration(Date.now() - stepStartedAt)}).`,
+    message: `${attachments.length} Anhaenge vorbereitet (${formatDuration(Date.now() - stepStartedAt)}, gesamt ~${totalPayloadKB} KB base64)${skippedFiles.length > 0 ? `, ${skippedFiles.length} uebersprungen` : ''}${optimizedFiles.length > 0 ? `, ${optimizedFiles.length} komprimiert` : ''}.`,
     context: {
       durationMs: Date.now() - stepStartedAt,
       attachmentCount: attachments.length,
+      totalPayloadKB,
+      skippedCount: skippedFiles.length,
+      optimizedCount: optimizedFiles.length,
       attachmentSummary: buildAttachmentSummary(attachments),
     },
   });
 
   const requests = [];
-  const timelineEntry = buildTimelineRequestEntry({ entityId, comment, attachments });
+  const singleTimelineEntry = {
+    ...buildTimelineRequestEntry({ entityId, comment, attachments }),
+    label: 'Timeline-Kommentar mit Anhaengen',
+    mode: 'single',
+    attachmentCount: attachments.length,
+    payloadKB: totalPayloadKB,
+  };
+
+  function buildFallbackTimelineEntries(fallbackComment, fallbackAttachments) {
+    const timelineBatches = createTimelineAttachmentBatches(fallbackAttachments);
+    const timelineBatchCount = timelineBatches.length;
+    const entries = timelineBatches.map((batchAttachments, batchIndex) => {
+      const batchComment = buildTimelineBatchComment({
+        baseComment: fallbackComment,
+        batchIndex,
+        batchCount: timelineBatchCount,
+      });
+      return {
+        ...buildTimelineRequestEntry({ entityId, comment: batchComment, attachments: batchAttachments }),
+        label: buildTimelineBatchLabel(batchIndex, timelineBatchCount),
+        mode: 'fallback_batch',
+        batchIndex,
+        batchCount: timelineBatchCount,
+        attachmentCount: batchAttachments.length,
+        payloadKB: Math.round(batchAttachments.reduce((sum, att) => sum + getAttachmentBase64Length(att), 0) / 1024),
+      };
+    });
+    return { timelineBatches, timelineBatchCount, entries };
+  }
 
   const dealFieldsFull = {};
   for (const [prefix, fieldName] of Object.entries(DEAL_FIELD_DOC_MAP)) {
@@ -525,34 +639,143 @@ async function syncDocumentToBitrix(data = {}, options = {}) {
     const timelineStartedAt = Date.now();
     await onProgress({
       event: 'submit.bitrix.timeline.started',
-      message: `Bitrix-Timeline-Upload gestartet (${attachments.length} Anhaenge).`,
-      context: { attachmentCount: attachments.length },
+      message: `Bitrix-Timeline-Upload als ein Kommentar gestartet (${attachments.length} Anhaenge, ~${totalPayloadKB} KB).`,
+      context: {
+        attachmentCount: attachments.length,
+        totalPayloadKB,
+        mode: 'single',
+      },
     });
+
     try {
-      timelineEntry.response = await postTimelineComment({
+      singleTimelineEntry.response = await postTimelineComment({
         entityType: 'deal',
         entityId,
         comment,
         attachments,
       });
-      timelineEntry.ok = true;
+      singleTimelineEntry.ok = true;
     } catch (err) {
-      timelineEntry.ok = false;
-      timelineEntry.error = err.message;
+      singleTimelineEntry.ok = false;
+      singleTimelineEntry.error = err.message;
     }
+
+    if (singleTimelineEntry.ok) {
+      await onProgress({
+        event: 'submit.bitrix.timeline.succeeded',
+        message: `Bitrix-Timeline-Upload als ein Kommentar abgeschlossen (${formatDuration(Date.now() - timelineStartedAt)}).`,
+        context: {
+          durationMs: Date.now() - timelineStartedAt,
+          attachmentCount: attachments.length,
+          totalPayloadKB,
+          mode: 'single',
+        },
+      });
+      return [singleTimelineEntry];
+    }
+
     await onProgress({
-      level: timelineEntry.ok ? 'info' : 'error',
-      event: timelineEntry.ok ? 'submit.bitrix.timeline.succeeded' : 'submit.bitrix.timeline.failed',
-      message: timelineEntry.ok
-        ? `Bitrix-Timeline-Upload abgeschlossen (${formatDuration(Date.now() - timelineStartedAt)}).`
-        : `Bitrix-Timeline-Upload fehlgeschlagen (${formatDuration(Date.now() - timelineStartedAt)}): ${timelineEntry.error}`,
+      level: 'warn',
+      event: 'submit.bitrix.timeline.single.failed_retry_batches',
+      message: `Bitrix-Timeline-Upload als ein Kommentar fehlgeschlagen (${formatDuration(Date.now() - timelineStartedAt)}): ${singleTimelineEntry.error}. Fallback mit mehreren Kommentaren startet.`,
       context: {
         durationMs: Date.now() - timelineStartedAt,
         attachmentCount: attachments.length,
-        error: timelineEntry.error,
+        totalPayloadKB,
+        error: singleTimelineEntry.error,
+        mode: 'single',
       },
     });
-    return timelineEntry;
+
+    let fallbackComment = comment;
+    const {
+      sendableAttachments: fallbackAttachments,
+      oversizedAttachments: oversizedTimelineAttachments,
+    } = splitTimelineAttachmentsBySize(attachments);
+
+    if (oversizedTimelineAttachments.length > 0) {
+      fallbackComment += '\n\nHinweis — folgende Dateien waren fuer den Fallback-Timeline-Upload zu gross:\n'
+        + oversizedTimelineAttachments.map(f => `- ${f.filename}: ${f.reason}`).join('\n');
+      await onProgress({
+        level: 'warn',
+        event: 'submit.bitrix.attachments.timeline_oversized',
+        message: `${oversizedTimelineAttachments.length} Timeline-Anhang/Anhaenge im Fallback uebersprungen (Einzeldatei zu gross): ${oversizedTimelineAttachments.map(f => f.filename).join(', ')}`,
+        context: { oversizedTimelineAttachments },
+      });
+    }
+
+    const { timelineBatches, timelineBatchCount, entries: fallbackEntries } = buildFallbackTimelineEntries(fallbackComment, fallbackAttachments);
+
+    for (const timelineEntry of fallbackEntries) {
+      const batchStartedAt = Date.now();
+      const batchAttachments = timelineBatches[timelineEntry.batchIndex];
+      const batchComment = buildTimelineBatchComment({
+        baseComment: fallbackComment,
+        batchIndex: timelineEntry.batchIndex,
+        batchCount: timelineBatchCount,
+      });
+
+      await onProgress({
+        event: 'submit.bitrix.timeline.batch.started',
+        message: `Bitrix-Timeline-Kommentar ${timelineEntry.batchIndex + 1}/${timelineBatchCount} gestartet (${timelineEntry.attachmentCount} Anhaenge, ~${timelineEntry.payloadKB} KB).`,
+        context: {
+          batchIndex: timelineEntry.batchIndex,
+          batchCount: timelineBatchCount,
+          attachmentCount: timelineEntry.attachmentCount,
+          payloadKB: timelineEntry.payloadKB,
+        },
+      });
+
+      try {
+        timelineEntry.response = await postTimelineComment({
+          entityType: 'deal',
+          entityId,
+          comment: batchComment,
+          attachments: batchAttachments,
+        });
+        timelineEntry.ok = true;
+      } catch (err) {
+        timelineEntry.ok = false;
+        timelineEntry.error = err.message;
+      }
+
+      await onProgress({
+        level: timelineEntry.ok ? 'info' : 'error',
+        event: timelineEntry.ok ? 'submit.bitrix.timeline.batch.succeeded' : 'submit.bitrix.timeline.batch.failed',
+        message: timelineEntry.ok
+          ? `Bitrix-Timeline-Kommentar ${timelineEntry.batchIndex + 1}/${timelineBatchCount} abgeschlossen (${formatDuration(Date.now() - batchStartedAt)}).`
+          : `Bitrix-Timeline-Kommentar ${timelineEntry.batchIndex + 1}/${timelineBatchCount} fehlgeschlagen (${formatDuration(Date.now() - batchStartedAt)}): ${timelineEntry.error}`,
+        context: {
+          durationMs: Date.now() - batchStartedAt,
+          batchIndex: timelineEntry.batchIndex,
+          batchCount: timelineBatchCount,
+          attachmentCount: timelineEntry.attachmentCount,
+          payloadKB: timelineEntry.payloadKB,
+          error: timelineEntry.error,
+        },
+      });
+
+      if (!timelineEntry.ok) break;
+    }
+
+    const failedTimelineEntry = fallbackEntries.find(entry => !entry.ok);
+    const timelineSucceeded = !failedTimelineEntry;
+    await onProgress({
+      level: timelineSucceeded ? 'info' : 'error',
+      event: timelineSucceeded ? 'submit.bitrix.timeline.succeeded' : 'submit.bitrix.timeline.failed',
+      message: timelineSucceeded
+        ? `Bitrix-Timeline-Upload im Fallback abgeschlossen (${formatDuration(Date.now() - timelineStartedAt)}).`
+        : `Bitrix-Timeline-Upload fehlgeschlagen (${formatDuration(Date.now() - timelineStartedAt)}): ${failedTimelineEntry.error}`,
+      context: {
+        durationMs: Date.now() - timelineStartedAt,
+        attachmentCount: fallbackAttachments.length,
+        totalAttachmentCount: attachments.length,
+        batchCount: timelineBatchCount,
+        fallbackFromSingle: true,
+        error: failedTimelineEntry?.error,
+      },
+    });
+    return [singleTimelineEntry, ...fallbackEntries];
   })();
 
   let dealPromise = Promise.resolve(null);
@@ -588,12 +811,14 @@ async function syncDocumentToBitrix(data = {}, options = {}) {
     })();
   }
 
-  const [finishedTimelineEntry, finishedDealEntry] = await Promise.all([timelinePromise, dealPromise]);
-  requests.push(finishedTimelineEntry);
+  const [finishedTimelineEntries, finishedDealEntry] = await Promise.all([timelinePromise, dealPromise]);
+  requests.push(...finishedTimelineEntries);
   if (finishedDealEntry) requests.push(finishedDealEntry);
 
-  const sent = Boolean(timelineEntry.ok);
-  const failed = requests.find(entry => !entry.ok);
+  const timelineSent = finishedTimelineEntries.some(entry => entry.mode === 'single' && entry.ok)
+    || finishedTimelineEntries.filter(entry => entry.mode === 'fallback_batch').every(entry => entry.ok);
+  const sent = timelineSent;
+  const failed = requests.find(entry => !entry.ok && !(entry.mode === 'single' && timelineSent));
 
   return {
     attempted: true,
@@ -1103,7 +1328,7 @@ router.post('/document/bitrix', async (req, res) => {
 
     const document = buildDocumentPackage(parsed);
     const comment = [document.title, '', document.text].join('\n');
-    const attachments = await buildStepDocumentAttachments(parsed, {
+    const { attachments } = await buildStepDocumentAttachments(parsed, {
       includeDebug: String(parsed.debugMode || '').toLowerCase() === 'true',
     });
 
@@ -1138,7 +1363,7 @@ router.post('/document/step-pdf', async (req, res) => {
     if (!prefix) {
       return res.status(400).json({ success: false, error: 'filenamePrefix fehlt' });
     }
-    const attachments = await buildStepDocumentAttachments(parsed, { includeDebug: true, forceAll: true });
+    const { attachments } = await buildStepDocumentAttachments(parsed, { includeDebug: true, forceAll: true });
     const match = attachments.find(a => a.filename && a.filename.startsWith(prefix));
     if (!match || !match.base64) {
       return res.status(404).json({ success: false, error: `Kein PDF mit Prefix "${prefix}" gefunden` });

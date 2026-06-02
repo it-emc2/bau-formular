@@ -18,6 +18,7 @@ jest.mock('nodemailer', () => ({
 
 jest.mock('../services/bitrix', () => ({
   postTimelineComment: jest.fn(),
+  updateDealFields: jest.fn(),
 }));
 
 jest.mock('../services/orphanUploads', () => ({
@@ -37,7 +38,7 @@ const Abnahme = require('../models/Abnahme');
 const Entwurf = require('../models/Entwurf');
 const nodemailer = require('nodemailer');
 const mongoose = require('mongoose');
-const { postTimelineComment } = require('../services/bitrix');
+const { postTimelineComment, updateDealFields } = require('../services/bitrix');
 const { cleanupOrphanUploads } = require('../services/orphanUploads');
 const { addOperationLog, listOperationLogs } = require('../services/operationLogs');
 const router = require('../routes/form');
@@ -118,6 +119,7 @@ describe('form routes', () => {
     delete process.env.SMTP_USER;
     delete process.env.SMTP_PASS;
     delete process.env.ARBEITSBERICHT_PDF_URL;
+    updateDealFields.mockResolvedValue({ result: { item: {} } });
     sessionMocks = [];
     mongoose.startSession.mockImplementation(async () => {
       const session = createSessionMock();
@@ -703,6 +705,48 @@ describe('form routes', () => {
           entityId: 55,
         }),
       })
+    );
+  });
+
+  it('tries one Bitrix timeline comment first and falls back to batches if it fails', async () => {
+    const handlers = findRouteHandlers('/submit', 'post');
+
+    postTimelineComment
+      .mockRejectedValueOnce(new Error('Bitrix POST Timeout nach 60s'))
+      .mockResolvedValue({ result: 999 });
+    Entwurf.create.mockImplementation(async payload => createDraftMock({
+      _id: 'draft-before-submit',
+      ...firstCreatePayload(payload),
+    }));
+    Abnahme.create.mockImplementation(async payload => ({
+      _id: 'submitted-22',
+      ...firstCreatePayload(payload),
+      toObject: () => ({ _id: 'submitted-22', ...firstCreatePayload(payload) }),
+    }));
+
+    const req = {
+      body: {
+        formData: JSON.stringify({
+          terminId: 'UT-1000',
+          vorname: 'Cornelia',
+          nachname: 'Müller',
+          auftragsNummer: 'A-AN-1000',
+          bitrixAuftragId: '55',
+        }),
+      },
+    };
+
+    const res = await runHandlers(handlers, req);
+
+    expect(res.statusCode).toBe(201);
+    expect(postTimelineComment).toHaveBeenCalledTimes(2);
+    expect(postTimelineComment.mock.calls[0][0].comment).toContain('Bestaetigung erfolgreicher Umbau');
+    expect(postTimelineComment.mock.calls[1][0].comment).toContain('Bestaetigung erfolgreicher Umbau');
+    expect(res.body.bitrixSync.requests).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ mode: 'single', ok: false }),
+        expect.objectContaining({ mode: 'fallback_batch', ok: true }),
+      ])
     );
   });
 

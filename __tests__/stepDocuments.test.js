@@ -1,4 +1,8 @@
 const { buildStepDocumentAttachments, getChecklistVariant } = require('../services/stepDocuments');
+const fs = require('fs');
+const path = require('path');
+const sharp = require('sharp');
+const { getUploadsDir } = require('../services/uploadsPath');
 
 describe('stepDocuments', () => {
   it('defaults to the badumbau checklist when no execution activities are present', () => {
@@ -30,7 +34,7 @@ describe('stepDocuments', () => {
   });
 
   it('uses the selected checklist variant for the generated checklist attachment filename', async () => {
-    const attachments = await buildStepDocumentAttachments({
+    const { attachments } = await buildStepDocumentAttachments({
       vorname: 'Max',
       nachname: 'Muster',
       bitrixExecutionActivities: '[HD] Handläufe',
@@ -52,7 +56,7 @@ describe('stepDocuments', () => {
   });
 
   it('includes the 08-einwilligung-zur-abrechnung PDF when the customer has signed it', async () => {
-    const attachments = await buildStepDocumentAttachments({
+    const { attachments } = await buildStepDocumentAttachments({
       vorname: 'Max',
       nachname: 'Muster',
       einwilligungGeburtsdatum: '1955-04-12',
@@ -66,11 +70,52 @@ describe('stepDocuments', () => {
   });
 
   it('omits the 08-einwilligung-zur-abrechnung PDF when the customer has not signed', async () => {
-    const attachments = await buildStepDocumentAttachments({
+    const { attachments } = await buildStepDocumentAttachments({
       vorname: 'Max',
       nachname: 'Muster',
     });
 
     expect(attachments.some(a => a.filename.startsWith('08-einwilligung-zur-abrechnung'))).toBe(false);
+  });
+
+  it('compresses uploaded images before adding them as Bitrix attachments', async () => {
+    const uploadsDir = getUploadsDir();
+    const filename = 'large-test-photo.jpg';
+    const fullPath = path.join(uploadsDir, filename);
+    fs.mkdirSync(uploadsDir, { recursive: true });
+
+    const original = await sharp({
+      create: {
+        width: 2600,
+        height: 1800,
+        channels: 3,
+        background: { r: 120, g: 80, b: 40 },
+      },
+    })
+      .jpeg({ quality: 100 })
+      .toBuffer();
+
+    fs.writeFileSync(fullPath, original);
+
+    try {
+      const { attachments, optimizedFiles } = await buildStepDocumentAttachments({
+        vorname: 'Max',
+        nachname: 'Muster',
+        bilderFertigerUmbau: `/uploads/${filename}`,
+      });
+
+      const uploadedImage = attachments.find(att => att.filename === '01-bilderFertigerUmbau.jpg');
+      expect(uploadedImage).toBeDefined();
+      expect(Buffer.from(uploadedImage.base64, 'base64').length).toBeLessThan(original.length);
+      expect(optimizedFiles).toEqual([
+        expect.objectContaining({
+          filename,
+          outputFilename: '01-bilderFertigerUmbau.jpg',
+          kind: 'image',
+        }),
+      ]);
+    } finally {
+      fs.rmSync(fullPath, { force: true });
+    }
   });
 });

@@ -1,5 +1,8 @@
 const BITRIX_WEBHOOK_BASE = () => process.env.BITRIX_WEBHOOK_BASE || '';
 
+const BITRIX_GET_TIMEOUT_MS = 30_000;
+const BITRIX_POST_TIMEOUT_MS = 60_000;
+
 function buildQS(paramsObj) {
   const sp = new URLSearchParams();
 
@@ -28,10 +31,28 @@ async function bxGet(method, paramsObj = {}) {
 
   const qs = buildQS(paramsObj);
   const url = `${webhookBase}/${method}.json${qs ? `?${qs}` : ''}`;
-  const response = await fetch(url, { method: 'GET' });
-  const data = await response.json().catch(() => null);
 
-  if (!data) throw new Error('Invalid JSON response from Bitrix');
+  let response;
+  try {
+    response = await fetch(url, {
+      method: 'GET',
+      signal: AbortSignal.timeout(BITRIX_GET_TIMEOUT_MS),
+    });
+  } catch (err) {
+    if (err.name === 'TimeoutError' || err.name === 'AbortError') {
+      throw new Error(`Bitrix GET Timeout nach ${BITRIX_GET_TIMEOUT_MS / 1000}s (${method})`);
+    }
+    throw new Error(`Bitrix GET Netzwerkfehler (${method}): ${err.message}`);
+  }
+
+  if (response.ok === false) {
+    const errData = await response.json().catch(() => null);
+    const errMsg = errData?.error_description || errData?.error || `HTTP ${response.status}`;
+    throw new Error(`Bitrix GET fehlgeschlagen (${method}, HTTP ${response.status}): ${errMsg}`);
+  }
+
+  const data = await response.json().catch(() => null);
+  if (!data) throw new Error(`Ungueltige JSON-Antwort von Bitrix (${method})`);
   if (data.error) throw new Error(data.error_description || data.error);
 
   return data;
@@ -44,14 +65,32 @@ async function bxPost(method, body = {}) {
   }
 
   const url = `${webhookBase}/${method}.json`;
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const data = await response.json().catch(() => null);
+  const bodyJson = JSON.stringify(body);
+  const bodySizeKB = Math.round(bodyJson.length / 1024);
 
-  if (!data) throw new Error('Invalid JSON response from Bitrix');
+  let response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: bodyJson,
+      signal: AbortSignal.timeout(BITRIX_POST_TIMEOUT_MS),
+    });
+  } catch (err) {
+    if (err.name === 'TimeoutError' || err.name === 'AbortError') {
+      throw new Error(`Bitrix POST Timeout nach ${BITRIX_POST_TIMEOUT_MS / 1000}s (${method}, Body ${bodySizeKB} KB)`);
+    }
+    throw new Error(`Bitrix POST Netzwerkfehler (${method}, Body ${bodySizeKB} KB): ${err.message}`);
+  }
+
+  if (response.ok === false) {
+    const errData = await response.json().catch(() => null);
+    const errMsg = errData?.error_description || errData?.error || `HTTP ${response.status}`;
+    throw new Error(`Bitrix POST fehlgeschlagen (${method}, HTTP ${response.status}, Body ${bodySizeKB} KB): ${errMsg}`);
+  }
+
+  const data = await response.json().catch(() => null);
+  if (!data) throw new Error(`Ungueltige JSON-Antwort von Bitrix (${method}, HTTP ${response.status})`);
   if (data.error) throw new Error(data.error_description || data.error);
 
   return data;
