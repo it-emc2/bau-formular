@@ -278,6 +278,19 @@
                 <pre class="admin-log-output hidden" id="adminLogOutput"></pre>
               </div>
 
+              <div class="admin-push-panel hidden" id="adminPushPanel">
+                <div class="admin-push-load-row">
+                  <input type="text" class="bitrix-search" id="adminPushFormId" placeholder="Abnahme- oder Entwurf-ID" />
+                  <input type="text" class="bitrix-search" id="adminPushEntityId" placeholder="Bitrix-Auftrag-ID" />
+                  <button type="button" class="btn btn-bitrix ghost" id="btnAdminPushLoad">Laden</button>
+                </div>
+                <div class="admin-push-categories hidden" id="adminPushCategories"></div>
+                <div class="admin-push-actions hidden" id="adminPushActions">
+                  <button type="button" class="btn btn-bitrix" id="btnAdminPushSend">Zu Bitrix senden</button>
+                </div>
+                <pre class="admin-push-output hidden" id="adminPushOutput"></pre>
+              </div>
+
               <div class="bitrix-deal-list" id="bitrixDealList">
                 <p class="bitrix-empty">Bitrix-Aufträge werden geladen.</p>
               </div>

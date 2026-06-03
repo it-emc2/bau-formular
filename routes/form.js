@@ -12,7 +12,7 @@ const Abnahme = require('../models/Abnahme');
 const Entwurf = require('../models/Entwurf');
 const { buildDocumentPackage } = require('../services/documentLetter');
 const { postTimelineComment, updateDealFields } = require('../services/bitrix');
-const { buildStepDocumentAttachments } = require('../services/stepDocuments');
+const { buildStepDocumentAttachments, buildBitrixUploadAttachment, buildSelectedPdfAttachments, buildCustomerName, ADMIN_PDF_SPECS } = require('../services/stepDocuments');
 const { getUploadsDir } = require('../services/uploadsPath');
 const { cleanupOrphanUploads } = require('../services/orphanUploads');
 const { addOperationLog, listOperationLogs } = require('../services/operationLogs');
@@ -1227,6 +1227,310 @@ router.post('/admin/logs', async (req, res) => {
     });
   } catch (error) {
     return res.status(400).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/admin/submitted/:id/bitrix/video', async (req, res) => {
+  try {
+    const password = req.body?.password || req.get?.('x-admin-password');
+    if (!isDevModePasswordValid(password)) {
+      return res.status(403).json({ success: false, error: 'Passwort ungueltig' });
+    }
+
+    const form = await Abnahme.findById(req.params.id).lean();
+    if (!form) {
+      return res.status(404).json({ success: false, error: 'Abnahme nicht gefunden' });
+    }
+
+    const entityId = Number(req.body?.entityId || form.bitrixAuftragId || 0);
+    if (!Number.isFinite(entityId) || entityId <= 0) {
+      return res.status(400).json({ success: false, error: 'Keine gueltige Bitrix-Auftrag-ID' });
+    }
+
+    if (!form.videoDesAblaufs) {
+      return res.status(404).json({ success: false, error: 'Kein Video des Ablaufs in der Abnahme gespeichert' });
+    }
+
+    const context = buildRequestLogContext(form, [], {
+      submittedId: form._id,
+      bitrixAuftragId: entityId,
+    });
+
+    await addOperationLog({
+      event: 'admin.bitrix.video.started',
+      message: 'Separater Bitrix-Upload fuer Video des Ablaufs gestartet.',
+      context,
+    });
+
+    const media = await buildBitrixUploadAttachment(form.videoDesAblaufs, 'videoDesAblaufs', 1, { uploadsDir });
+    if (media.skippedFile || !media.attachment) {
+      const reason = media.skippedFile?.reason || 'Video konnte nicht vorbereitet werden';
+      await addOperationLog({
+        level: 'error',
+        event: 'admin.bitrix.video.failed',
+        message: `Video konnte nicht fuer Bitrix vorbereitet werden: ${reason}`,
+        context: {
+          ...context,
+          skippedFile: media.skippedFile,
+        },
+      });
+      return res.status(400).json({ success: false, error: reason, skippedFile: media.skippedFile });
+    }
+
+    const customer = buildCustomerName(form) || form.name || 'Kunde';
+    const comment = String(req.body?.comment || [
+      'Video des Ablaufs',
+      '',
+      `Kunde: ${customer}`,
+      form.auftragsNummer ? `Auftrag: ${form.auftragsNummer}` : '',
+      form.terminId ? `Termin-ID: ${form.terminId}` : '',
+    ].filter(Boolean).join('\n'));
+
+    const response = await postTimelineComment({
+      entityType: 'deal',
+      entityId,
+      comment,
+      attachments: [media.attachment],
+    });
+
+    await addOperationLog({
+      event: 'admin.bitrix.video.succeeded',
+      message: `Video des Ablaufs separat zu Bitrix hochgeladen (${media.attachment.filename}, ~${Math.round((media.attachment.base64?.length || 0) / 1024)} KB base64).`,
+      context: {
+        ...context,
+        attachment: {
+          filename: media.attachment.filename,
+          base64Length: media.attachment.base64?.length || 0,
+        },
+        optimizedFile: media.optimizedFile,
+      },
+    });
+
+    return res.json({
+      success: true,
+      entityId,
+      attachment: {
+        filename: media.attachment.filename,
+        base64Length: media.attachment.base64?.length || 0,
+      },
+      optimizedFile: media.optimizedFile,
+      response,
+    });
+  } catch (error) {
+    await addOperationLog({
+      level: 'error',
+      event: 'admin.bitrix.video.failed',
+      message: error?.message || 'Video konnte nicht zu Bitrix hochgeladen werden.',
+      context: {
+        submittedId: req.params.id,
+        bitrixAuftragId: req.body?.entityId,
+      },
+    });
+    return res.status(400).json({ success: false, error: error.message });
+  }
+});
+
+const ADMIN_FILE_FIELD_LABELS = {
+  bilderFertigerUmbau: 'Bilder fertiger Umbau',
+  fotosAbdichtung: 'Fotos Abdichtung',
+  bilderBehobeneMaengel: 'Bilder behobene Mängel',
+  weitereBilder: 'Weitere Bilder',
+  weitereBilder2: 'Weitere Bilder 2',
+  weitereBilder3: 'Weitere Bilder 3',
+};
+const ADMIN_IMAGE_FIELDS = Object.keys(ADMIN_FILE_FIELD_LABELS);
+const ADMIN_VIDEO_FIELDS = ['videoDesAblaufs'];
+
+async function findAdminForm(id) {
+  let form = null;
+  let source = null;
+  try {
+    form = await Abnahme.findById(id).lean();
+    if (form) source = 'abnahme';
+  } catch (_) {}
+  if (!form) {
+    try {
+      form = await Entwurf.findById(id).lean();
+      if (form) source = 'entwurf';
+    } catch (_) {}
+  }
+  return { form, source };
+}
+
+router.post('/admin/inspect', async (req, res) => {
+  try {
+    const password = req.body?.password;
+    if (!isDevModePasswordValid(password)) {
+      return res.status(403).json({ success: false, error: 'Passwort ungueltig' });
+    }
+
+    const id = String(req.body?.id || '').trim();
+    if (!id) return res.status(400).json({ success: false, error: 'ID fehlt' });
+
+    const rawEntityId = req.body?.entityId;
+    const entityId = Number(rawEntityId);
+    if (!Number.isFinite(entityId) || entityId <= 0) {
+      return res.status(400).json({ success: false, error: 'Bitrix-Auftrag-ID fehlt oder ungültig' });
+    }
+
+    const { form, source } = await findAdminForm(id);
+    if (!form) return res.status(404).json({ success: false, error: 'Formular nicht gefunden' });
+
+    const storedEntityId = Number(form.bitrixAuftragId || 0);
+    if (storedEntityId !== entityId) {
+      return res.status(400).json({
+        success: false,
+        error: `Bitrix-Auftrag-ID stimmt nicht überein (gespeichert: ${storedEntityId || '—'}, eingegeben: ${entityId})`,
+      });
+    }
+
+    const bilder = [];
+    for (const field of ADMIN_IMAGE_FIELDS) {
+      const raw = form[field];
+      const paths = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+      for (const p of paths) {
+        const filename = path.basename(String(p || '').trim());
+        if (!filename) continue;
+        const exists = fs.existsSync(path.join(uploadsDir, filename));
+        bilder.push({ field, filename, label: ADMIN_FILE_FIELD_LABELS[field], exists });
+      }
+    }
+
+    const video = [];
+    for (const field of ADMIN_VIDEO_FIELDS) {
+      const raw = form[field];
+      const paths = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+      for (const p of paths) {
+        const filename = path.basename(String(p || '').trim());
+        if (!filename) continue;
+        const exists = fs.existsSync(path.join(uploadsDir, filename));
+        video.push({ field, filename, exists });
+      }
+    }
+
+    return res.json({
+      success: true,
+      source,
+      form: {
+        _id: String(form._id),
+        customerName: buildCustomerName(form) || form.name || '—',
+        bitrixAuftragId: storedEntityId,
+        auftragsNummer: form.auftragsNummer || '',
+        terminId: form.terminId || '',
+      },
+      categories: { bilder, video, pdfs: ADMIN_PDF_SPECS },
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/admin/push', async (req, res) => {
+  try {
+    const password = req.body?.password;
+    if (!isDevModePasswordValid(password)) {
+      return res.status(403).json({ success: false, error: 'Passwort ungueltig' });
+    }
+
+    const id = String(req.body?.id || '').trim();
+    if (!id) return res.status(400).json({ success: false, error: 'ID fehlt' });
+
+    const entityId = Number(req.body?.entityId);
+    if (!Number.isFinite(entityId) || entityId <= 0) {
+      return res.status(400).json({ success: false, error: 'Bitrix-Auftrag-ID fehlt oder ungültig' });
+    }
+
+    const selectedFiles = Array.isArray(req.body?.files) ? req.body.files : [];
+    const selectedPdfKeys = Array.isArray(req.body?.pdfKeys) ? req.body.pdfKeys : [];
+
+    if (!selectedFiles.length && !selectedPdfKeys.length) {
+      return res.status(400).json({ success: false, error: 'Keine Dateien oder PDFs ausgewählt' });
+    }
+
+    const { form, source } = await findAdminForm(id);
+    if (!form) return res.status(404).json({ success: false, error: 'Formular nicht gefunden' });
+
+    const storedEntityId = Number(form.bitrixAuftragId || 0);
+    if (storedEntityId !== entityId) {
+      return res.status(400).json({
+        success: false,
+        error: `Bitrix-Auftrag-ID stimmt nicht überein (gespeichert: ${storedEntityId || '—'})`,
+      });
+    }
+
+    const context = { id, source, entityId };
+    await addOperationLog({ event: 'admin.bitrix.push.started', message: `Admin-Push gestartet (${selectedFiles.length} Dateien, ${selectedPdfKeys.length} PDFs).`, context });
+
+    const attachments = [];
+    const skippedFiles = [];
+    const optimizedFiles = [];
+
+    // Build file attachments
+    for (const { field, filename } of selectedFiles) {
+      if (!filename) continue;
+      try {
+        const result = await buildBitrixUploadAttachment(filename, field, attachments.length + 1, { uploadsDir });
+        if (result.skippedFile) { skippedFiles.push(result.skippedFile); continue; }
+        attachments.push(result.attachment);
+        if (result.optimizedFile) optimizedFiles.push(result.optimizedFile);
+      } catch (err) {
+        skippedFiles.push({ filename, fieldName: field, reason: err.message });
+      }
+    }
+
+    // Build PDF attachments
+    if (selectedPdfKeys.length) {
+      try {
+        const pdfAttachments = await buildSelectedPdfAttachments(form, selectedPdfKeys);
+        attachments.push(...pdfAttachments);
+      } catch (err) {
+        await addOperationLog({ level: 'warn', event: 'admin.bitrix.push.pdf_error', message: `PDF-Generierung teilweise fehlgeschlagen: ${err.message}`, context });
+      }
+    }
+
+    if (!attachments.length) {
+      return res.status(400).json({ success: false, error: 'Keine Anhänge konnten vorbereitet werden', skippedFiles });
+    }
+
+    const customer = buildCustomerName(form) || form.name || 'Kunde';
+    const comment = [
+      'Admin-Push: Ausgewählte Dateien',
+      '',
+      `Kunde: ${customer}`,
+      form.auftragsNummer ? `Auftrag: ${form.auftragsNummer}` : '',
+      form.terminId ? `Termin-ID: ${form.terminId}` : '',
+      skippedFiles.length ? `\nHinweis — ${skippedFiles.length} Datei(en) übersprungen:\n${skippedFiles.map(f => `- ${f.filename}: ${f.reason}`).join('\n')}` : '',
+    ].filter(Boolean).join('\n');
+
+    // Try single comment first, then batch fallback
+    let timelineResults = [];
+    try {
+      const response = await postTimelineComment({ entityType: 'deal', entityId, comment, attachments });
+      timelineResults = [{ ok: true, mode: 'single', attachmentCount: attachments.length, response }];
+    } catch (singleErr) {
+      const batches = createTimelineAttachmentBatches(attachments);
+      for (let i = 0; i < batches.length; i++) {
+        const batchComment = buildTimelineBatchComment({ baseComment: comment, batchIndex: i, batchCount: batches.length });
+        try {
+          const response = await postTimelineComment({ entityType: 'deal', entityId, comment: batchComment, attachments: batches[i] });
+          timelineResults.push({ ok: true, mode: 'batch', batchIndex: i, batchCount: batches.length, attachmentCount: batches[i].length, response });
+        } catch (batchErr) {
+          timelineResults.push({ ok: false, mode: 'batch', batchIndex: i, batchCount: batches.length, error: batchErr.message });
+        }
+      }
+    }
+
+    const allOk = timelineResults.length > 0 && timelineResults.every(r => r.ok);
+    await addOperationLog({
+      event: allOk ? 'admin.bitrix.push.succeeded' : 'admin.bitrix.push.partial',
+      message: `Admin-Push ${allOk ? 'erfolgreich' : 'teilweise fehlgeschlagen'} (${attachments.length} Anhänge, ${timelineResults.length} Kommentar(e)).`,
+      context: { ...context, attachmentCount: attachments.length, skippedCount: skippedFiles.length, optimizedCount: optimizedFiles.length, timelineResults },
+    });
+
+    return res.json({ success: allOk, entityId, attachmentCount: attachments.length, skippedFiles, optimizedFiles, timelineResults });
+  } catch (error) {
+    await addOperationLog({ level: 'error', event: 'admin.bitrix.push.failed', message: error.message, context: { id: req.body?.id, entityId: req.body?.entityId } });
+    return res.status(500).json({ success: false, error: error.message });
   }
 });
 

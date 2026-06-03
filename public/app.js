@@ -36,6 +36,14 @@
   const adminLogPanel = $('#adminLogPanel');
   const btnAdminLogsRefresh = $('#btnAdminLogsRefresh');
   const adminLogOutput = $('#adminLogOutput');
+  const adminPushPanel = $('#adminPushPanel');
+  const adminPushFormId = $('#adminPushFormId');
+  const adminPushEntityId = $('#adminPushEntityId');
+  const btnAdminPushLoad = $('#btnAdminPushLoad');
+  const adminPushCategories = $('#adminPushCategories');
+  const adminPushActions = $('#adminPushActions');
+  const btnAdminPushSend = $('#btnAdminPushSend');
+  const adminPushOutput = $('#adminPushOutput');
   const bitrixSearch  = $('#bitrixSearch');
   const bitrixDealList = $('#bitrixDealList');
   const draftSearch = $('#draftSearch');
@@ -397,6 +405,7 @@
     bindChecklistRules();
     bindAdminCleanup();
     bindAdminLogs();
+    bindAdminPush();
     initClientErrorLogging();
     initSignaturePads();
     initWarenpruefungDatum();
@@ -887,6 +896,7 @@
     if (debugDocumentPanel) debugDocumentPanel.classList.toggle('hidden', !devMode);
     if (adminCleanupPanel) adminCleanupPanel.classList.toggle('hidden', !devMode);
     if (adminLogPanel) adminLogPanel.classList.toggle('hidden', !devMode);
+    if (adminPushPanel) adminPushPanel.classList.toggle('hidden', !devMode);
     if (!devMode && adminCleanupOutput) {
       adminCleanupOutput.classList.add('hidden');
       adminCleanupOutput.textContent = '';
@@ -895,6 +905,15 @@
       adminLogOutput.classList.add('hidden');
       adminLogOutput.textContent = '';
     }
+    if (!devMode && adminPushOutput) {
+      adminPushOutput.classList.add('hidden');
+      adminPushOutput.textContent = '';
+    }
+    if (!devMode && adminPushCategories) {
+      adminPushCategories.classList.add('hidden');
+      adminPushCategories.innerHTML = '';
+    }
+    if (!devMode && adminPushActions) adminPushActions.classList.add('hidden');
     if (!devMode && btnCleanupDelete) btnCleanupDelete.disabled = true;
     syncDevStepPdfButtons();
 
@@ -1130,6 +1149,187 @@ function syncDevSidebarVisibility() {
         showToast('Logs konnten nicht geladen werden: ' + error.message, 'error');
       } finally {
         btnAdminLogsRefresh.disabled = false;
+      }
+    });
+  }
+
+  function buildAdminPushCategoryHtml(title, items) {
+    if (!items.length) return '';
+    const bodyItems = items.map((item, i) => {
+      const missing = item.exists === false;
+      const label = item.filename || item.title || item.key;
+      const field = item.field ? `<span class="admin-push-file-field">${item.field}</span>` : '';
+      const missingNote = missing ? ' (nicht auf Disk)' : '';
+      return `<label class="admin-push-file-item${missing ? ' missing' : ''}">
+        <input type="checkbox" data-push-item="${i}" ${missing ? '' : 'checked'} ${missing ? 'disabled' : ''} />
+        <span class="admin-push-file-label">${label}${missingNote}</span>${field}
+      </label>`;
+    }).join('');
+    return `<div class="admin-push-category">
+      <div class="admin-push-category-head">
+        <span class="admin-push-chevron">▾</span>
+        <strong>${title} (${items.length})</strong>
+        <button type="button" class="admin-push-select-all">Alle</button>
+      </div>
+      <div class="admin-push-category-body">${bodyItems}</div>
+    </div>`;
+  }
+
+  function renderAdminPushCategories(data) {
+    if (!adminPushCategories) return;
+    const { bilder = [], video = [], pdfs = [] } = data.categories || {};
+    let html = '';
+    html += buildAdminPushCategoryHtml('Bilder', bilder);
+    html += buildAdminPushCategoryHtml('Videos', video);
+    html += buildAdminPushCategoryHtml('PDFs', pdfs);
+
+    adminPushCategories.innerHTML = html;
+    adminPushCategories.classList.remove('hidden');
+
+    adminPushCategories.querySelectorAll('.admin-push-category').forEach(cat => {
+      const head = cat.querySelector('.admin-push-category-head');
+      const body = cat.querySelector('.admin-push-category-body');
+      const chevron = cat.querySelector('.admin-push-chevron');
+      const btn = cat.querySelector('.admin-push-select-all');
+      const boxes = Array.from(cat.querySelectorAll('input[type="checkbox"]:not([disabled])'));
+
+      // Collapse/expand on header click
+      head.addEventListener('click', (e) => {
+        if (e.target === btn) return;
+        const collapsed = body.classList.toggle('hidden');
+        chevron.textContent = collapsed ? '▸' : '▾';
+      });
+
+      // "Alle/Keine" toggles all checkboxes in that category
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const allChecked = boxes.every(b => b.checked);
+        boxes.forEach(b => { b.checked = !allChecked; });
+        btn.textContent = allChecked ? 'Alle' : 'Keine';
+      });
+    });
+
+    if (adminPushActions) adminPushActions.classList.remove('hidden');
+  }
+
+  function getAdminPushSelection(inspectResult) {
+    if (!adminPushCategories) return { files: [], pdfKeys: [] };
+    const { bilder = [], video = [], pdfs = [] } = inspectResult.categories || {};
+    const allItems = [bilder, video, pdfs];
+    const allLists = [bilder, video, pdfs];
+    const files = [];
+    const pdfKeys = [];
+
+    const cats = adminPushCategories.querySelectorAll('.admin-push-category');
+    cats.forEach((cat, catIndex) => {
+      const boxes = cat.querySelectorAll('input[type="checkbox"]');
+      boxes.forEach((box, itemIndex) => {
+        if (!box.checked) return;
+        const list = allLists[catIndex];
+        if (!list) return;
+        const item = list[itemIndex];
+        if (!item) return;
+        if (catIndex < 2) {
+          files.push({ field: item.field, filename: item.filename });
+        } else {
+          pdfKeys.push(item.key);
+        }
+      });
+    });
+
+    return { files, pdfKeys };
+  }
+
+  let adminPushInspectResult = null;
+
+  function bindAdminPush() {
+    if (!btnAdminPushLoad || !btnAdminPushSend || !adminPushOutput) return;
+
+    btnAdminPushLoad.addEventListener('click', async () => {
+      const id = adminPushFormId?.value.trim();
+      const entityId = adminPushEntityId?.value.trim();
+
+      if (!id) { showToast('Bitte eine Formular-ID eingeben.', 'error'); return; }
+      if (!entityId) { showToast('Bitte eine Bitrix-Auftrag-ID eingeben.', 'error'); return; }
+
+      if (!devModePassword) {
+        const pw = window.prompt('Passwort fuer Testmodus eingeben:');
+        if (pw === null) return;
+        devModePassword = pw;
+      }
+
+      btnAdminPushLoad.disabled = true;
+      if (adminPushCategories) { adminPushCategories.classList.add('hidden'); adminPushCategories.innerHTML = ''; }
+      if (adminPushActions) adminPushActions.classList.add('hidden');
+      if (adminPushOutput) { adminPushOutput.classList.add('hidden'); adminPushOutput.textContent = ''; }
+      adminPushInspectResult = null;
+
+      try {
+        const response = await fetch('/api/form/admin/inspect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: devModePassword, id, entityId }),
+        });
+        const json = await parseJsonResponse(response);
+        if (!json.success) throw new Error(json.error || 'Laden fehlgeschlagen');
+        adminPushInspectResult = json;
+        renderAdminPushCategories(json);
+        showToast(`${json.form.customerName} geladen (${json.source}).`, 'success');
+      } catch (error) {
+        if (adminPushOutput) {
+          adminPushOutput.classList.remove('hidden');
+          adminPushOutput.textContent = `Fehler: ${error.message}`;
+        }
+        showToast('Laden fehlgeschlagen: ' + error.message, 'error');
+      } finally {
+        btnAdminPushLoad.disabled = false;
+      }
+    });
+
+    btnAdminPushSend.addEventListener('click', async () => {
+      if (!adminPushInspectResult) return;
+      const { files, pdfKeys } = getAdminPushSelection(adminPushInspectResult);
+      if (!files.length && !pdfKeys.length) {
+        showToast('Keine Dateien ausgewählt.', 'error');
+        return;
+      }
+
+      const id = adminPushFormId?.value.trim();
+      const entityId = adminPushEntityId?.value.trim();
+
+      btnAdminPushSend.disabled = true;
+      adminPushOutput.classList.remove('hidden');
+      adminPushOutput.textContent = `Sende ${files.length} Datei(en) + ${pdfKeys.length} PDF(s) zu Bitrix...`;
+
+      try {
+        const response = await fetch('/api/form/admin/push', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: devModePassword, id, entityId, files, pdfKeys }),
+        });
+        const json = await parseJsonResponse(response);
+        if (!json.success) throw new Error(json.error || 'Push fehlgeschlagen');
+
+        const lines = [
+          `Erfolgreich gesendet.`,
+          `Anhänge: ${json.attachmentCount}`,
+          `Bitrix-Kommentar(e): ${json.timelineResults?.length || 1}`,
+        ];
+        if (json.skippedFiles?.length) {
+          lines.push(`\nÜbersprungen (${json.skippedFiles.length}):`);
+          json.skippedFiles.forEach(f => lines.push(`  - ${f.filename}: ${f.reason}`));
+        }
+        if (json.optimizedFiles?.length) {
+          lines.push(`\nKomprimiert (${json.optimizedFiles.length}):`);
+          json.optimizedFiles.forEach(f => lines.push(`  - ${f.filename}: ${f.originalSizeKB} KB → ${f.optimizedSizeKB} KB`));
+        }
+        adminPushOutput.textContent = lines.join('\n');
+        showToast('Push erfolgreich.', 'success');
+      } catch (error) {
+        adminPushOutput.textContent = `Fehler: ${error.message}`;
+        showToast('Push fehlgeschlagen: ' + error.message, 'error');
+      } finally {
+        btnAdminPushSend.disabled = false;
       }
     });
   }

@@ -671,7 +671,7 @@ async function optimizeVideoBuffer(fullPath, basename, fileBuffer, uploadsDir) {
     await runFfmpeg([
       '-y',
       '-i', fullPath,
-      '-vf', `scale='min(1280,iw)':'min(${VIDEO_MAX_HEIGHT},ih)':force_original_aspect_ratio=decrease`,
+      '-vf', `scale='min(1280,iw)':'min(${VIDEO_MAX_HEIGHT},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2`,
       '-c:v', 'libx264',
       '-preset', 'veryfast',
       '-crf', '30',
@@ -690,6 +690,94 @@ async function optimizeVideoBuffer(fullPath, basename, fileBuffer, uploadsDir) {
   } finally {
     fs.rmSync(outputPath, { force: true });
   }
+}
+
+async function buildBitrixUploadAttachment(filePath, fieldName, fileIndex = 1, options = {}) {
+  const uploadsDir = options.uploadsDir || getUploadsDir();
+  const normalized = String(filePath || '').trim();
+  if (!normalized) return { attachment: null, skippedFile: null, optimizedFile: null, base64Size: 0 };
+
+  const basename = path.basename(normalized);
+  const ext = path.extname(basename).toLowerCase() || '.bin';
+  const fullPath = path.join(uploadsDir, basename);
+  const fileBuffer = fs.readFileSync(fullPath);
+  const fileSizeKB = Math.round(fileBuffer.length / 1024);
+
+  let attachmentBuffer = fileBuffer;
+  let attachmentExt = ext;
+  let attachmentFilename = `${String(fileIndex).padStart(2, '0')}-${fieldName}${attachmentExt}`;
+  let optimizedFile = null;
+
+  if (IMAGE_EXTENSIONS.has(ext)) {
+    try {
+      const optimizedImage = await optimizeImageBuffer(fileBuffer);
+      attachmentBuffer = optimizedImage.buffer;
+      if (optimizedImage.extension) attachmentExt = optimizedImage.extension;
+      attachmentFilename = `${String(fileIndex).padStart(2, '0')}-${fieldName}${attachmentExt}`;
+      if (optimizedImage.optimized) {
+        optimizedFile = {
+          filename: basename,
+          outputFilename: attachmentFilename,
+          fieldName,
+          originalSizeKB: fileSizeKB,
+          optimizedSizeKB: Math.round(attachmentBuffer.length / 1024),
+          kind: 'image',
+        };
+      }
+    } catch (err) {
+      return {
+        attachment: null,
+        skippedFile: { filename: basename, fieldName, sizeKB: fileSizeKB, reason: `Bild konnte nicht optimiert werden: ${err.message}` },
+        optimizedFile: null,
+        base64Size: 0,
+      };
+    }
+  } else if (VIDEO_EXTENSIONS.has(ext)) {
+    let optimizedVideo;
+    try {
+      optimizedVideo = await optimizeVideoBuffer(fullPath, basename, fileBuffer, uploadsDir);
+    } catch (err) {
+      return {
+        attachment: null,
+        skippedFile: { filename: basename, fieldName, sizeKB: fileSizeKB, reason: `Video konnte nicht komprimiert werden: ${err.message}` },
+        optimizedFile: null,
+        base64Size: 0,
+      };
+    }
+
+    if (optimizedVideo.unavailable) {
+      return {
+        attachment: null,
+        skippedFile: { filename: basename, fieldName, sizeKB: fileSizeKB, reason: 'Video-Komprimierung nicht verfuegbar (ffmpeg fehlt)' },
+        optimizedFile: null,
+        base64Size: 0,
+      };
+    }
+
+    attachmentBuffer = optimizedVideo.buffer;
+    if (optimizedVideo.extension) attachmentExt = optimizedVideo.extension;
+    attachmentFilename = `${String(fileIndex).padStart(2, '0')}-${fieldName}${attachmentExt}`;
+    optimizedFile = {
+      filename: basename,
+      outputFilename: attachmentFilename,
+      fieldName,
+      originalSizeKB: fileSizeKB,
+      optimizedSizeKB: Math.round(attachmentBuffer.length / 1024),
+      kind: 'video',
+      ...(optimizedVideo.optimized ? {} : { note: 'Originalvideo verwendet, weil die komprimierte Version nicht kleiner war' }),
+    };
+  }
+
+  const base64Size = Math.ceil(attachmentBuffer.length * 4 / 3);
+  return {
+    attachment: {
+      filename: attachmentFilename,
+      base64: attachmentBuffer.toString('base64'),
+    },
+    skippedFile: null,
+    optimizedFile,
+    base64Size,
+  };
 }
 
 async function buildStepDocumentAttachments(data = {}, { includeDebug = false, forceAll = false } = {}) {
@@ -801,87 +889,22 @@ async function buildStepDocumentAttachments(data = {}, { includeDebug = false, f
       const normalized = String(filePath || '').trim();
       if (!normalized) continue;
       const basename = path.basename(normalized);
-      const ext = path.extname(basename).toLowerCase() || '.bin';
-      const fullPath = path.join(uploadsDir, basename);
       try {
-        const fileBuffer = fs.readFileSync(fullPath);
-        const fileSizeKB = Math.round(fileBuffer.length / 1024);
-
-        let attachmentBuffer = fileBuffer;
-        let attachmentExt = ext;
-        let attachmentFilename = `${String(fileIndex + 1).padStart(2, '0')}-${fieldName}${attachmentExt}`;
-
-        if (IMAGE_EXTENSIONS.has(ext)) {
-          try {
-            const optimizedImage = await optimizeImageBuffer(fileBuffer);
-            attachmentBuffer = optimizedImage.buffer;
-            if (optimizedImage.extension) attachmentExt = optimizedImage.extension;
-            attachmentFilename = `${String(fileIndex + 1).padStart(2, '0')}-${fieldName}${attachmentExt}`;
-            if (optimizedImage.optimized) {
-              optimizedFiles.push({
-                filename: basename,
-                outputFilename: attachmentFilename,
-                fieldName,
-                originalSizeKB: fileSizeKB,
-                optimizedSizeKB: Math.round(attachmentBuffer.length / 1024),
-                kind: 'image',
-              });
-            }
-          } catch (err) {
-            skippedFiles.push({ filename: basename, fieldName, sizeKB: fileSizeKB, reason: `Bild konnte nicht optimiert werden: ${err.message}` });
-            continue;
-          }
-        } else if (VIDEO_EXTENSIONS.has(ext)) {
-          let optimizedVideo;
-          try {
-            optimizedVideo = await optimizeVideoBuffer(fullPath, basename, fileBuffer, uploadsDir);
-          } catch (err) {
-            skippedFiles.push({ filename: basename, fieldName, sizeKB: fileSizeKB, reason: `Video konnte nicht komprimiert werden: ${err.message}` });
-            continue;
-          }
-
-          if (optimizedVideo.unavailable) {
-            skippedFiles.push({ filename: basename, fieldName, sizeKB: fileSizeKB, reason: 'Video-Komprimierung nicht verfuegbar (ffmpeg fehlt)' });
-            continue;
-          }
-
-          attachmentBuffer = optimizedVideo.buffer;
-          if (optimizedVideo.extension) attachmentExt = optimizedVideo.extension;
-          attachmentFilename = `${String(fileIndex + 1).padStart(2, '0')}-${fieldName}${attachmentExt}`;
-          if (!optimizedVideo.optimized) {
-            optimizedFiles.push({
-              filename: basename,
-              outputFilename: attachmentFilename,
-              fieldName,
-              originalSizeKB: fileSizeKB,
-              optimizedSizeKB: Math.round(attachmentBuffer.length / 1024),
-              kind: 'video',
-              note: 'Originalvideo verwendet, weil die komprimierte Version nicht kleiner war',
-            });
-          }
-          if (optimizedVideo.optimized) {
-            optimizedFiles.push({
-              filename: basename,
-              outputFilename: attachmentFilename,
-              fieldName,
-              originalSizeKB: fileSizeKB,
-              optimizedSizeKB: Math.round(attachmentBuffer.length / 1024),
-              kind: 'video',
-            });
-          }
+        const uploadAttachment = await buildBitrixUploadAttachment(normalized, fieldName, fileIndex + 1, { uploadsDir });
+        if (uploadAttachment.skippedFile) {
+          skippedFiles.push(uploadAttachment.skippedFile);
+          continue;
         }
 
-        const base64Size = Math.ceil(attachmentBuffer.length * 4 / 3);
+        const base64Size = uploadAttachment.base64Size;
         if (totalUploadBytes + base64Size > MAX_UPLOAD_BYTES) {
-          skippedFiles.push({ filename: basename, fieldName, sizeKB: fileSizeKB, reason: `Gesamtgroesse ueberschritten (Limit ${MAX_UPLOAD_BYTES / 1024 / 1024} MB)` });
+          skippedFiles.push({ filename: basename, fieldName, sizeKB: Math.round((base64Size * 3 / 4) / 1024), reason: `Gesamtgroesse ueberschritten (Limit ${MAX_UPLOAD_BYTES / 1024 / 1024} MB)` });
           continue;
         }
 
         fileIndex++;
-        attachments.push({
-          filename: attachmentFilename,
-          base64: attachmentBuffer.toString('base64'),
-        });
+        attachments.push(uploadAttachment.attachment);
+        if (uploadAttachment.optimizedFile) optimizedFiles.push(uploadAttachment.optimizedFile);
         totalUploadBytes += base64Size;
       } catch (_err) {
         // File not found on disk — skip silently
@@ -917,6 +940,112 @@ async function buildStepDocumentAttachments(data = {}, { includeDebug = false, f
   }
 
   return { attachments, skippedFiles, optimizedFiles };
+}
+
+const ADMIN_PDF_SPECS = [
+  { key: 'step-01', title: '01 Abschluss der Baustelle' },
+  { key: 'step-02', title: '02 Warenprüfung' },
+  { key: 'step-05', title: '05 Abschluss und Unterschrift' },
+  { key: 'step-checklist', title: '06 Checkliste / Duschmontage' },
+  { key: 'step-09', title: '09 Mängelbeseitigung' },
+  { key: 'step-10', title: '10 Nachbesserung' },
+  { key: 'step-07', title: '07 Bestätigung erfolgreicher Umbau' },
+  { key: 'step-08', title: '08 Einwilligung zur Abrechnung' },
+];
+
+async function buildSelectedPdfAttachments(data = {}, pdfKeys = []) {
+  const keySet = new Set(pdfKeys);
+  const customerSlug = sanitizeFilenamePart(buildCustomerName(data), 'kunde');
+  const attachments = [];
+
+  if (keySet.has('step-01')) {
+    attachments.push(await buildStepPdf({
+      title: '01 Abschluss der Baustelle',
+      subtitle: buildCustomerName(data),
+      lines: buildBasicInfoLines(data).length ? buildBasicInfoLines(data) : ['Keine zusätzlichen Angaben.'],
+      signatureDataUrl: undefined,
+      fileName: `01-abschluss-der-baustelle-${customerSlug}.pdf`,
+    }));
+  }
+
+  if (keySet.has('step-02')) {
+    attachments.push(await buildStepPdf({
+      title: '02 Warenprüfung vor Baubeginn',
+      subtitle: buildCustomerName(data),
+      lines: [
+        `Datum: ${formatDate(data.warenpruefungDatum)}`,
+        ...buildInspectionLines(data),
+        normalizeWhitespace(data.warenpruefungKommentar) ? `Kommentar: ${normalizeWhitespace(data.warenpruefungKommentar)}` : '',
+      ].filter(Boolean),
+      signatureDataUrl: data.unterschriftWarenpruefung,
+      fileName: `02-warenpruefung-${customerSlug}.pdf`,
+    }));
+  }
+
+  if (keySet.has('step-05')) {
+    attachments.push(await buildStepPdf({
+      title: '05 Abschluss und Unterschrift',
+      subtitle: buildCustomerName(data),
+      lines: [
+        `Abgeschlossen am: ${formatDate(data.abgeschlossenAm)}`,
+        normalizeWhitespace(data.alleArbeitenErledigt) ? `Alle Arbeiten durchgeführt: ${normalizeWhitespace(data.alleArbeitenErledigt)}` : '',
+        normalizeWhitespace(data.nichtErledigteArbeiten) ? `Nicht durchgeführt: ${normalizeWhitespace(data.nichtErledigteArbeiten)}` : '',
+      ].filter(Boolean),
+      signatureDataUrl: data.unterschriftKunde,
+      fileName: `05-abschluss-und-unterschrift-${customerSlug}.pdf`,
+    }));
+  }
+
+  if (keySet.has('step-checklist')) {
+    const checklistVariant = getChecklistVariant(data);
+    attachments.push(await buildStepPdf({
+      title: checklistVariant.title,
+      subtitle: buildCustomerName(data),
+      lines: [
+        ...buildChecklistLines(data),
+        normalizeWhitespace(data.checklistGratisHaltegriffKommentar) ? `Kommentar Gratisaktion: ${normalizeWhitespace(data.checklistGratisHaltegriffKommentar)}` : '',
+        normalizeWhitespace(data.sonstigeBemerkungenBaustelle) ? `Sonstige Bemerkungen: ${normalizeWhitespace(data.sonstigeBemerkungenBaustelle)}` : '',
+        `Datum: ${formatDate(data.unterschriftMonteurDatum)}`,
+      ].filter(Boolean),
+      signatureDataUrl: data.unterschriftMonteur1 || data.unterschriftMonteur2,
+      fileName: `${checklistVariant.fileNamePrefix}-${customerSlug}.pdf`,
+    }));
+  }
+
+  if (keySet.has('step-09')) {
+    attachments.push(await buildStepPdf({
+      title: '09 Mängelbeseitigung',
+      subtitle: buildCustomerName(data),
+      lines: [`Abgeschlossen am: ${formatDate(data.maengelAbgeschlossenAm)}`].filter(Boolean),
+      signatureDataUrl: data.unterschriftMaengel,
+      fileName: `09-maengelbeseitigung-${customerSlug}.pdf`,
+    }));
+  }
+
+  if (keySet.has('step-10')) {
+    attachments.push(await buildStepPdf({
+      title: '10 Nachbesserung',
+      subtitle: buildCustomerName(data),
+      lines: [
+        `Abgeschlossen am: ${formatDate(data.nachbesserungAbgeschlossenAm)}`,
+        normalizeWhitespace(data.alleArbeitenNB) ? `Alle Arbeiten durchgeführt: ${normalizeWhitespace(data.alleArbeitenNB)}` : '',
+        normalizeWhitespace(data.nichtErledigteArbeitenNB) ? `Nicht durchgeführt: ${normalizeWhitespace(data.nichtErledigteArbeitenNB)}` : '',
+      ].filter(Boolean),
+      signatureDataUrl: data.unterschriftNB,
+      fileName: `10-nachbesserung-${customerSlug}.pdf`,
+    }));
+  }
+
+  if (keySet.has('step-07')) {
+    attachments.push(await buildConfirmationLetterPdf(data));
+  }
+
+  if (keySet.has('step-08')) {
+    try { attachments.push(await buildEinwilligungPdf(data)); } catch (_) {}
+    try { attachments.push(await buildEinwilligungFromTemplate(data)); } catch (_) {}
+  }
+
+  return attachments;
 }
 
 async function buildConfirmationLetterPdf(data = {}) {
@@ -1006,5 +1135,9 @@ async function buildConfirmationLetterPdf(data = {}) {
 
 module.exports = {
   buildStepDocumentAttachments,
+  buildBitrixUploadAttachment,
+  buildSelectedPdfAttachments,
   getChecklistVariant,
+  buildCustomerName,
+  ADMIN_PDF_SPECS,
 };
