@@ -402,6 +402,7 @@
     initClientErrorLogging();
     initSignaturePads();
     initWarenpruefungDatum();
+    restoreDevModeFromSession();
     initDevModeToggle();
     injectDevStepPdfButtons();
     bindDemoPresetSelection();
@@ -710,6 +711,18 @@
     }
   }
 
+  function restoreDevModeFromSession() {
+    const stored = sessionStorage.getItem('devModeSession');
+    if (!stored) return;
+    try {
+      const { password } = JSON.parse(stored);
+      devMode = true;
+      devModePassword = password || '';
+    } catch {
+      sessionStorage.removeItem('devModeSession');
+    }
+  }
+
   function initDevModeToggle() {
     if (!devModeToggle) return;
 
@@ -718,6 +731,7 @@
       if (devMode) {
         devMode = false;
         devModePassword = '';
+        sessionStorage.removeItem('devModeSession');
         updateDevModeToggle();
         showToast('Testmodus deaktiviert: Validierung wieder aktiv.', 'success');
         return;
@@ -738,6 +752,7 @@
 
         devMode = true;
         devModePassword = password;
+        sessionStorage.setItem('devModeSession', JSON.stringify({ password }));
         updateDevModeToggle();
         showToast('Testmodus aktiv: Seitenwechsel ohne Pflichtfelder.', 'success');
       } catch (error) {
