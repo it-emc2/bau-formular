@@ -23,9 +23,7 @@
   const devToolsPanel = $('#devToolsPanel');
   const devModeBadge  = $('#devModeBadge');
   const bitrixTestActions = $('#bitrixTestActions');
-  const btnBitrixAutofill = $('#btnBitrixAutofill');
   const btnFetchBitrixLead = $('#btnFetchBitrixLead');
-  const btnBitrixRefresh = $('#btnBitrixRefresh');
   const btnDemoPrefill = $('#btnDemoPrefill');
   const btnHeaderDemoPrefill = $('#btnHeaderDemoPrefill');
   const demoActivityPresetSelect = $('#demoActivityPreset');
@@ -44,8 +42,6 @@
   const adminPushActions = $('#adminPushActions');
   const btnAdminPushSend = $('#btnAdminPushSend');
   const adminPushOutput = $('#adminPushOutput');
-  const bitrixSearch  = $('#bitrixSearch');
-  const bitrixDealList = $('#bitrixDealList');
   const draftSearch = $('#draftSearch');
   const btnDraftRefresh = $('#btnDraftRefresh');
   const draftList = $('#draftList');
@@ -132,9 +128,6 @@
   let devMode       = false;
   let devModePassword = '';
   let saveInProgress = false;
-  let bitrixDeals   = [];
-  let activeBitrixDealId = null;
-  let bitrixSearchTerm = '';
   let drafts = [];
   let activeDraftId = null;
   let draftSearchTerm = '';
@@ -426,7 +419,6 @@
         showStep(0);
       }
     }
-    fetchBitrixDeals();
     fetchDrafts();
     renderArbeitsberichtResults([], 'Noch keine externen Treffer geladen.');
   }
@@ -922,10 +914,7 @@
       const dealTitle = devToolsPanel.querySelector('.bitrix-panel-title');
       const dealSubtitle = devToolsPanel.querySelector('.bitrix-panel-subtitle');
       if (dealTitle) dealTitle.closest('.dev-tools-head')?.classList.toggle('hidden', !devMode);
-      if (bitrixSearch) bitrixSearch.closest('.bitrix-toolbar')?.classList.toggle('hidden', !devMode);
-      if (bitrixDealList) bitrixDealList.classList.toggle('hidden', !devMode);
       if (draftsPanel) draftsPanel.classList.toggle('hidden', !devMode);
-      if (btnBitrixAutofill) btnBitrixAutofill.classList.toggle('hidden', !devMode);
     syncDevSidebarVisibility();
     }
 
@@ -962,12 +951,6 @@ function syncDevSidebarVisibility() {
   function setSidebarSourcesHidden(hidden) {
     const shouldHide = Boolean(hidden);
 
-    if (bitrixSearch) {
-      const toolbar = bitrixSearch.closest('.bitrix-toolbar');
-      if (toolbar) toolbar.classList.toggle('hidden', shouldHide);
-    }
-
-    if (bitrixDealList) bitrixDealList.classList.toggle('hidden', shouldHide);
     if (draftsPanel) draftsPanel.classList.toggle('hidden', shouldHide);
 
     const emptyStateId = 'demoSidebarState';
@@ -1335,24 +1318,6 @@ function syncDevSidebarVisibility() {
   }
 
   function bindBitrixAutofill() {
-    if (btnBitrixRefresh) {
-      btnBitrixRefresh.addEventListener('click', fetchBitrixDeals);
-    }
-
-    if (bitrixSearch) {
-      bitrixSearch.addEventListener('input', () => {
-        bitrixSearchTerm = bitrixSearch.value.trim().toLowerCase();
-        renderBitrixDeals(getFilteredBitrixDeals());
-      });
-    }
-
-    if (btnBitrixAutofill) {
-      btnBitrixAutofill.addEventListener('click', async () => {
-        if (!bitrixDeals.length) await fetchBitrixDeals();
-        if (bitrixDeals.length) loadBitrixDeal(bitrixDeals[0]);
-      });
-    }
-
     if (btnFetchBitrixLead) {
       btnFetchBitrixLead.addEventListener('click', fetchBitrixDealById);
     }
@@ -1603,134 +1568,6 @@ function syncDevSidebarVisibility() {
         window.clearTimeout(arbeitsberichtSearchDebounceId);
         searchArbeitsberichtRecords();
       });
-    }
-  }
-
-  async function fetchBitrixDeals() {
-    if (!bitrixDealList) return;
-
-    if (btnBitrixRefresh) btnBitrixRefresh.disabled = true;
-    renderBitrixDeals([], 'Bitrix-Deals werden geladen...');
-
-    try {
-      const itemRes = await fetch(
-        `/api/bitrix/items/by-stage?entityTypeId=${BITRIX_TEST_ENTITY_TYPE_ID}&stageId=${encodeURIComponent(BITRIX_STAGE_ID)}&useOriginalUfNames=N&select=id,title,stageId,contactId,opportunity,assignedById,createdTime,begindate,closeDate,UF_CRM_1725521281342,ufCrm_1725521281342,UF_CRM_1776156870205,ufCrm_1776156870205`
-      );
-      const itemJson = await itemRes.json();
-      const items = itemJson?.result?.items || itemJson?.result || [];
-
-      if (!items.length) {
-        bitrixDeals = [];
-        renderBitrixDeals([], 'Keine Bitrix-Deals in diesem Status gefunden.');
-        return;
-      }
-
-      bitrixDeals = await enrichBitrixDeals(items);
-      renderBitrixDeals(getFilteredBitrixDeals());
-      showToast('Bitrix-Deals geladen.', 'success');
-    } catch (error) {
-      bitrixDeals = [];
-      renderBitrixDeals([], 'Fehler beim Laden der Bitrix-Deals.');
-      showToast('Fehler beim Laden der Bitrix-Deals: ' + error.message, 'error');
-    } finally {
-      if (btnBitrixRefresh) btnBitrixRefresh.disabled = false;
-    }
-  }
-
-  function renderBitrixDeals(deals, emptyMessage = 'Noch keine Bitrix-Deals geladen.') {
-    if (!bitrixDealList) return;
-
-    if (!deals.length) {
-      bitrixDealList.innerHTML = `<p class="bitrix-empty">${emptyMessage}</p>`;
-      return;
-    }
-
-    bitrixDealList.innerHTML = '';
-
-    deals.forEach(deal => {
-      const card = document.createElement('article');
-      card.className = 'bitrix-deal-card';
-      if (String(deal.id) === String(activeBitrixDealId)) card.classList.add('active');
-
-      const dateLabel = deal.createdTime || deal.begindate || deal.closeDate || '';
-      const amountLabel = deal.opportunity ? `${deal.opportunity} EUR` : null;
-      const contactLine = buildBitrixContactLine(deal);
-      const displayTitle = buildBitrixDisplayTitle(deal);
-      const offerType = buildBitrixOfferType(deal);
-
-      card.innerHTML = `
-        <div class="bitrix-deal-top">
-          <div>
-            <div class="bitrix-deal-title">${escapeHtml(displayTitle)}</div>
-            ${offerType ? `<div class="bitrix-deal-offer">${escapeHtml(offerType)}</div>` : ''}
-            <div class="bitrix-deal-sub">ID ${escapeHtml(String(deal.id))}</div>
-            ${contactLine ? `<div class="bitrix-deal-contact">${escapeHtml(contactLine)}</div>` : ''}
-          </div>
-          <div class="bitrix-deal-meta">
-            <span class="bitrix-chip">${escapeHtml(deal.stageId || BITRIX_STAGE_ID)}</span>
-            ${amountLabel ? `<span class="bitrix-chip">${escapeHtml(amountLabel)}</span>` : ''}
-            ${dateLabel ? `<span class="bitrix-chip">${escapeHtml(formatShortDate(dateLabel))}</span>` : ''}
-          </div>
-        </div>
-        <button type="button" class="bitrix-deal-action">In Formular laden</button>
-      `;
-
-      $('.bitrix-deal-action', card).addEventListener('click', () => loadBitrixDeal(deal));
-      bitrixDealList.appendChild(card);
-    });
-  }
-
-  function getFilteredBitrixDeals() {
-    if (!bitrixSearchTerm) return bitrixDeals;
-
-    return bitrixDeals.filter(deal => {
-      const haystack = [
-        deal.id,
-        deal.title,
-        deal.stageId,
-        deal.contactId,
-        deal._contact?.NAME,
-        deal._contact?.LAST_NAME,
-        buildBitrixOfferType(deal),
-      ]
-        .map(value => String(value || '').toLowerCase())
-        .join(' ');
-
-      return haystack.includes(bitrixSearchTerm);
-    });
-  }
-
-  async function loadBitrixDeal(item) {
-    activeBitrixDealId = item.id;
-    renderBitrixDeals(bitrixDeals);
-
-    try {
-      let hydratedItem = item;
-      try {
-        const detailRes = await fetch(`/api/bitrix/items/${encodeURIComponent(item.id)}`);
-        const detailJson = await detailRes.json();
-        hydratedItem = detailJson?.result || detailJson || item;
-      } catch (_error) {
-        hydratedItem = item;
-      }
-
-      applyBitrixItemToForm(hydratedItem);
-      setSidebarSourcesHidden(false);
-
-      const contactId = hydratedItem.contactId || item.contactId;
-      if (contactId) {
-        const contact = hydratedItem._contact || item._contact || await fetchBitrixContact(contactId);
-        if (contact) {
-          applyBitrixContactToForm(contact);
-        } else {
-          showToast('Deal geladen, aber kein Kontakt gefunden.', 'error');
-          return;
-        }
-      }
-
-      showToast('Bitrix-Deal in Auftrag geladen.', 'success');
-    } catch (error) {
-      showToast('Fehler beim Laden des Deals: ' + error.message, 'error');
     }
   }
 
@@ -2389,19 +2226,6 @@ function syncDevSidebarVisibility() {
       return { street: match[1].trim(), plz: match[2], city: match[3].trim() };
     }
     return { street: value, plz: '', city: '' };
-  }
-
-  async function enrichBitrixDeals(items) {
-    return Promise.all(items.map(async item => {
-      if (!item.contactId) return item;
-
-      try {
-        const contact = await fetchBitrixContact(item.contactId);
-        return { ...item, _contact: contact || null };
-      } catch (_error) {
-        return { ...item, _contact: null };
-      }
-    }));
   }
 
   async function fetchBitrixDealById() {
