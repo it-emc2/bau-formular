@@ -251,6 +251,12 @@
               </div>
 
               <div class="admin-cleanup-panel hidden" id="adminCleanupPanel">
+                <div class="dev-tools-head admin-cleanup-head">
+                  <div>
+                    <h3 class="bitrix-panel-title">Orphan Uploads</h3>
+                    <p class="bitrix-panel-subtitle">Verwaiste Dateien suchen und löschen.</p>
+                  </div>
+                </div>
                 <div class="admin-cleanup-actions">
                   <button type="button" class="btn btn-bitrix ghost" id="btnCleanupPreview">
                     Orphan Uploads prüfen
@@ -263,15 +269,30 @@
               </div>
 
               <div class="admin-log-panel hidden" id="adminLogPanel">
+                <div class="dev-tools-head admin-log-head">
+                  <div>
+                    <h3 class="bitrix-panel-title">Logs</h3>
+                    <p class="bitrix-panel-subtitle">Operationen protokollieren und verwalten.</p>
+                  </div>
+                </div>
                 <div class="admin-log-actions">
                   <button type="button" class="btn btn-bitrix ghost" id="btnAdminLogsRefresh">
                     Logs aktualisieren
+                  </button>
+                  <button type="button" class="btn btn-bitrix danger" id="btnAdminLogsClear">
+                    Logs löschen
                   </button>
                 </div>
                 <pre class="admin-log-output hidden" id="adminLogOutput"></pre>
               </div>
 
               <div class="admin-push-panel hidden" id="adminPushPanel">
+                <div class="dev-tools-head admin-push-head">
+                  <div>
+                    <h3 class="bitrix-panel-title">Bitrix Neu-Push</h3>
+                    <p class="bitrix-panel-subtitle">Medien zu einem bestehenden Bitrix-Deal übertragen.</p>
+                  </div>
+                </div>
                 <div class="admin-push-load-row">
                   <input type="text" class="bitrix-search" id="adminPushFormId" placeholder="Abnahme- oder Entwurf-ID" />
                   <input type="text" class="bitrix-search" id="adminPushEntityId" placeholder="Bitrix-Auftrag-ID" />

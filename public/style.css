@@ -359,6 +359,16 @@ small { color: var(--clr-gray); font-size: .8rem; }
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(117,193,159,.15);
+}
+
+.admin-cleanup-panel .dev-tools-head,
+.admin-log-panel .dev-tools-head,
+.admin-push-panel .dev-tools-head {
+  margin-bottom: 14px;
+  padding-bottom: 14px;
 }
 
 .dev-tools-badge {
@@ -456,9 +466,18 @@ small { color: var(--clr-gray); font-size: .8rem; }
 .admin-cleanup-panel,
 .admin-log-panel,
 .admin-push-panel {
-  margin-top: 12px;
+  margin-top: 20px;
+  padding: 16px;
+  padding-top: 12px;
   display: grid;
   gap: 10px;
+  border: 1px solid rgba(117,193,159,.2);
+  border-radius: 12px;
+  background: rgba(117,193,159,.03);
+}
+
+.admin-cleanup-panel:first-of-type {
+  margin-top: 0;
 }
 
 .admin-cleanup-actions,
@@ -661,13 +680,18 @@ small { color: var(--clr-gray); font-size: .8rem; }
 }
 
 .drafts-panel {
-  margin-top: 18px;
-  padding-top: 18px;
-  border-top: 1px solid rgba(117,193,159,.12);
+  margin-top: 24px;
+  padding: 16px;
+  padding-top: 12px;
+  border: 1px solid rgba(117,193,159,.2);
+  border-radius: 12px;
+  background: rgba(117,193,159,.03);
 }
 
 .drafts-head {
-  margin-bottom: 2px;
+  margin-bottom: 4px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(117,193,159,.15);
 }
 
 .draft-list {

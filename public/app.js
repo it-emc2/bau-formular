@@ -33,6 +33,7 @@
   const adminCleanupOutput = $('#adminCleanupOutput');
   const adminLogPanel = $('#adminLogPanel');
   const btnAdminLogsRefresh = $('#btnAdminLogsRefresh');
+  const btnAdminLogsClear = $('#btnAdminLogsClear');
   const adminLogOutput = $('#adminLogOutput');
   const adminPushPanel = $('#adminPushPanel');
   const adminPushFormId = $('#adminPushFormId');
@@ -1149,6 +1150,35 @@ function syncDevSidebarVisibility() {
         btnAdminLogsRefresh.disabled = false;
       }
     });
+
+    if (btnAdminLogsClear) {
+      btnAdminLogsClear.addEventListener('click', async () => {
+        const confirmed = window.confirm('Alle Logs wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.');
+        if (!confirmed) return;
+
+        btnAdminLogsClear.disabled = true;
+        adminLogOutput.classList.remove('hidden');
+        adminLogOutput.textContent = 'Logs werden gelöscht...';
+
+        try {
+          const res = await fetch('/api/form/admin/logs/clear', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ password: devModePassword }),
+          });
+
+          const json = await parseJsonResponse(res);
+          const deleted = json?.deletedCount || 0;
+          adminLogOutput.textContent = `${deleted} Log-Einträge wurden gelöscht.`;
+          showToast(`${deleted} Log-Einträge gelöscht.`, 'success');
+        } catch (error) {
+          adminLogOutput.textContent = `Fehler beim Löschen: ${error.message}`;
+          showToast('Logs konnten nicht gelöscht werden: ' + error.message, 'error');
+        } finally {
+          btnAdminLogsClear.disabled = false;
+        }
+      });
+    }
   }
 
   function buildAdminPushCategoryHtml(title, items) {

@@ -10,6 +10,7 @@ const mongoose = require('mongoose');
 
 const Abnahme = require('../models/Abnahme');
 const Entwurf = require('../models/Entwurf');
+const OperationLog = require('../models/OperationLog');
 const { buildDocumentPackage } = require('../services/documentLetter');
 const { postTimelineComment, updateDealFields } = require('../services/bitrix');
 const { buildStepDocumentAttachments, buildBitrixUploadAttachment, buildSelectedPdfAttachments, buildCustomerName, ADMIN_PDF_SPECS } = require('../services/stepDocuments');
@@ -1224,6 +1225,24 @@ router.post('/admin/logs', async (req, res) => {
     return res.json({
       success: true,
       logs: await listOperationLogs({ limit: req.body?.limit || 100 }),
+    });
+  } catch (error) {
+    return res.status(400).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/admin/logs/clear', async (req, res) => {
+  try {
+    const password = req.body?.password || req.get?.('x-admin-password');
+    if (!isDevModePasswordValid(password)) {
+      return res.status(403).json({ success: false, error: 'Passwort ungueltig' });
+    }
+
+    const result = await OperationLog.deleteMany({});
+
+    return res.json({
+      success: true,
+      deletedCount: result.deletedCount || 0,
     });
   } catch (error) {
     return res.status(400).json({ success: false, error: error.message });
