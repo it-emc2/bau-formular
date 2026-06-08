@@ -711,7 +711,7 @@ async function buildBitrixUploadAttachment(filePath, fieldName, fileIndex = 1, o
 
   if (IMAGE_EXTENSIONS.has(ext)) {
     if (uploadTimeCompressed.has(basename)) {
-      optimizedFile = { filename: basename, outputFilename: attachmentFilename, fieldName, originalSizeKB: fileSizeKB, optimizedSizeKB: fileSizeKB, kind: 'image' };
+      // already compressed at upload time, nothing to do
     } else {
       try {
         const optimizedImage = await optimizeImageBuffer(fileBuffer);
