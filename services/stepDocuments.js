@@ -605,9 +605,10 @@ const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.avi', '.webm', '.mkv', '.wmv
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif', '.tif', '.tiff']);
 const MAX_UPLOAD_BYTES = 40 * 1024 * 1024; // 40 MB base64 total across all uploaded media files
 const IMAGE_MAX_DIMENSION = 1600;
-const IMAGE_JPEG_QUALITY = 76;
+const IMAGE_JPEG_QUALITY = 68;
 const VIDEO_MAX_HEIGHT = 720;
 let ffmpegAvailable = null;
+const uploadTimeCompressed = new Set();
 
 function isFfmpegAvailable() {
   if (ffmpegAvailable !== null) return ffmpegAvailable;
@@ -673,7 +674,7 @@ async function optimizeVideoBuffer(fullPath, basename, fileBuffer, uploadsDir) {
       '-i', fullPath,
       '-vf', `scale='min(1280,iw)':'min(${VIDEO_MAX_HEIGHT},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2`,
       '-c:v', 'libx264',
-      '-preset', 'veryfast',
+      '-preset', 'fast',
       '-crf', '30',
       '-c:a', 'aac',
       '-b:a', '96k',
@@ -709,28 +710,32 @@ async function buildBitrixUploadAttachment(filePath, fieldName, fileIndex = 1, o
   let optimizedFile = null;
 
   if (IMAGE_EXTENSIONS.has(ext)) {
-    try {
-      const optimizedImage = await optimizeImageBuffer(fileBuffer);
-      attachmentBuffer = optimizedImage.buffer;
-      if (optimizedImage.extension) attachmentExt = optimizedImage.extension;
-      attachmentFilename = `${String(fileIndex).padStart(2, '0')}-${fieldName}${attachmentExt}`;
-      if (optimizedImage.optimized) {
-        optimizedFile = {
-          filename: basename,
-          outputFilename: attachmentFilename,
-          fieldName,
-          originalSizeKB: fileSizeKB,
-          optimizedSizeKB: Math.round(attachmentBuffer.length / 1024),
-          kind: 'image',
+    if (uploadTimeCompressed.has(basename)) {
+      optimizedFile = { filename: basename, outputFilename: attachmentFilename, fieldName, originalSizeKB: fileSizeKB, optimizedSizeKB: fileSizeKB, kind: 'image' };
+    } else {
+      try {
+        const optimizedImage = await optimizeImageBuffer(fileBuffer);
+        attachmentBuffer = optimizedImage.buffer;
+        if (optimizedImage.extension) attachmentExt = optimizedImage.extension;
+        attachmentFilename = `${String(fileIndex).padStart(2, '0')}-${fieldName}${attachmentExt}`;
+        if (optimizedImage.optimized) {
+          optimizedFile = {
+            filename: basename,
+            outputFilename: attachmentFilename,
+            fieldName,
+            originalSizeKB: fileSizeKB,
+            optimizedSizeKB: Math.round(attachmentBuffer.length / 1024),
+            kind: 'image',
+          };
+        }
+      } catch (err) {
+        return {
+          attachment: null,
+          skippedFile: { filename: basename, fieldName, sizeKB: fileSizeKB, reason: `Bild konnte nicht optimiert werden: ${err.message}` },
+          optimizedFile: null,
+          base64Size: 0,
         };
       }
-    } catch (err) {
-      return {
-        attachment: null,
-        skippedFile: { filename: basename, fieldName, sizeKB: fileSizeKB, reason: `Bild konnte nicht optimiert werden: ${err.message}` },
-        optimizedFile: null,
-        base64Size: 0,
-      };
     }
   } else if (VIDEO_EXTENSIONS.has(ext)) {
     let optimizedVideo;
@@ -1133,6 +1138,52 @@ async function buildConfirmationLetterPdf(data = {}) {
   };
 }
 
+async function compressUploadedFile(file, uploadsDir) {
+  const ext = path.extname(file.filename).toLowerCase();
+  if (!IMAGE_EXTENSIONS.has(ext)) return null;
+
+  const fullPath = path.join(uploadsDir, file.filename);
+  const originalSizeKB = Math.round((file.size || 0) / 1024);
+
+  let fileBuffer;
+  try { fileBuffer = fs.readFileSync(fullPath); } catch { return null; }
+
+  let result;
+  try { result = await optimizeImageBuffer(fileBuffer); } catch { return null; }
+
+  if (!result.optimized) return null;
+
+  const newBasename = file.filename.replace(/\.[^.]+$/, '.jpg');
+  const newFullPath = path.join(uploadsDir, newBasename);
+
+  try {
+    fs.writeFileSync(newFullPath, result.buffer);
+    if (newBasename !== file.filename) {
+      fs.rmSync(fullPath, { force: true });
+      file.filename = newBasename;
+      file.path = newFullPath;
+    }
+    file.size = result.buffer.length;
+  } catch { return null; }
+
+  uploadTimeCompressed.add(file.filename);
+  return {
+    kind: 'image',
+    fieldName: file.fieldname,
+    filename: file.filename,
+    originalSizeKB,
+    compressedSizeKB: Math.round(result.buffer.length / 1024),
+  };
+}
+
+async function compressUploadedFiles(files, uploadsDir) {
+  if (!files || files.length === 0) return [];
+  const results = await Promise.all(
+    files.map(file => compressUploadedFile(file, uploadsDir).catch(() => null))
+  );
+  return results.filter(Boolean);
+}
+
 module.exports = {
   buildStepDocumentAttachments,
   buildBitrixUploadAttachment,
@@ -1140,4 +1191,5 @@ module.exports = {
   getChecklistVariant,
   buildCustomerName,
   ADMIN_PDF_SPECS,
+  compressUploadedFiles,
 };

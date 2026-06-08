@@ -13,7 +13,7 @@ const Entwurf = require('../models/Entwurf');
 const OperationLog = require('../models/OperationLog');
 const { buildDocumentPackage } = require('../services/documentLetter');
 const { postTimelineComment, updateDealFields } = require('../services/bitrix');
-const { buildStepDocumentAttachments, buildBitrixUploadAttachment, buildSelectedPdfAttachments, buildCustomerName, ADMIN_PDF_SPECS } = require('../services/stepDocuments');
+const { buildStepDocumentAttachments, buildBitrixUploadAttachment, buildSelectedPdfAttachments, buildCustomerName, ADMIN_PDF_SPECS, compressUploadedFiles } = require('../services/stepDocuments');
 const { getUploadsDir } = require('../services/uploadsPath');
 const { cleanupOrphanUploads } = require('../services/orphanUploads');
 const { addOperationLog, listOperationLogs } = require('../services/operationLogs');
@@ -45,7 +45,19 @@ function uploadAny(req, res, next) {
   }
 
   upload.any()(req, res, async error => {
-    if (!error) return next();
+    if (!error) {
+      if (req.files && req.files.length > 0) {
+        const compressed = await compressUploadedFiles(req.files, uploadsDir).catch(() => []);
+        if (compressed.length > 0) {
+          addOperationLog({
+            event: 'upload.compressed',
+            message: `${compressed.length} Bild(er) bei Upload komprimiert.`,
+            context: { files: compressed },
+          }).catch(() => {});
+        }
+      }
+      return next();
+    }
 
     const status = error instanceof multer.MulterError ? 400 : 400;
     const message = error.message || 'Upload konnte nicht verarbeitet werden.';
