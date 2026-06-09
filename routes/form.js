@@ -660,17 +660,43 @@ async function syncDocumentToBitrix(data = {}, options = {}) {
       },
     });
 
-    try {
-      singleTimelineEntry.response = await postTimelineComment({
-        entityType: 'deal',
-        entityId,
-        comment,
-        attachments,
-      });
-      singleTimelineEntry.ok = true;
-    } catch (err) {
-      singleTimelineEntry.ok = false;
-      singleTimelineEntry.error = err.message;
+    const MAX_SINGLE_ATTEMPTS = 3;
+    const RETRY_DELAY_MS = 10_000;
+
+    for (let attempt = 1; attempt <= MAX_SINGLE_ATTEMPTS; attempt++) {
+      if (attempt > 1) {
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY_MS));
+        await onProgress({
+          level: 'warn',
+          event: 'submit.bitrix.timeline.single.retrying',
+          message: `Bitrix-Timeline-Upload Versuch ${attempt}/${MAX_SINGLE_ATTEMPTS} gestartet (nach 10s Wartezeit).`,
+          context: { attempt, maxAttempts: MAX_SINGLE_ATTEMPTS, attachmentCount: attachments.length, totalPayloadKB },
+        });
+      }
+
+      try {
+        singleTimelineEntry.response = await postTimelineComment({
+          entityType: 'deal',
+          entityId,
+          comment,
+          attachments,
+        });
+        singleTimelineEntry.ok = true;
+      } catch (err) {
+        singleTimelineEntry.ok = false;
+        singleTimelineEntry.error = err.message;
+      }
+
+      if (singleTimelineEntry.ok) break;
+
+      if (attempt < MAX_SINGLE_ATTEMPTS) {
+        await onProgress({
+          level: 'warn',
+          event: 'submit.bitrix.timeline.single.attempt_failed',
+          message: `Bitrix-Timeline-Upload Versuch ${attempt}/${MAX_SINGLE_ATTEMPTS} fehlgeschlagen (${formatDuration(Date.now() - timelineStartedAt)}): ${singleTimelineEntry.error}. Naechster Versuch in 10s.`,
+          context: { attempt, maxAttempts: MAX_SINGLE_ATTEMPTS, durationMs: Date.now() - timelineStartedAt, error: singleTimelineEntry.error },
+        });
+      }
     }
 
     if (singleTimelineEntry.ok) {
@@ -690,7 +716,7 @@ async function syncDocumentToBitrix(data = {}, options = {}) {
     await onProgress({
       level: 'warn',
       event: 'submit.bitrix.timeline.single.failed_retry_batches',
-      message: `Bitrix-Timeline-Upload als ein Kommentar fehlgeschlagen (${formatDuration(Date.now() - timelineStartedAt)}): ${singleTimelineEntry.error}. Fallback mit mehreren Kommentaren startet.`,
+      message: `Bitrix-Timeline-Upload nach ${MAX_SINGLE_ATTEMPTS} Versuchen fehlgeschlagen (${formatDuration(Date.now() - timelineStartedAt)}): ${singleTimelineEntry.error}. Fallback mit mehreren Kommentaren startet.`,
       context: {
         durationMs: Date.now() - timelineStartedAt,
         attachmentCount: attachments.length,
