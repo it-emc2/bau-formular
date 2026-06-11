@@ -262,6 +262,21 @@ The right sidebar on step 1 contains:
    - Preset type dropdown
    - "Musterdaten einfüllen" button
 
+**Admin panels** (visible only in dev mode, inside the sidebar):
+
+| Panel | ID | Purpose |
+|-------|----|---------|
+| Orphan Uploads | `adminCleanupPanel` | Find/delete upload files with no matching MongoDB document |
+| Logs | `adminLogPanel` | View and clear operation logs |
+| Bitrix Neu-Push | `adminPushPanel` | Re-send selected media/PDFs to a Bitrix deal timeline |
+
+**Bitrix Neu-Push flow:**
+1. Enter **Bitrix-Auftrag-ID** (single input — no MongoDB ID needed)
+2. Click **Laden** → `POST /api/form/admin/inspect` returns file categories with disk-existence flags
+3. Check individual files/PDFs across three collapsible sections (Bilder, Videos, PDFs)
+4. Click **Zu Bitrix senden** → `POST /api/form/admin/push`
+5. Output panel shows attachment count, compressed file sizes, and any skipped files
+
 The sidebar is hidden when dev mode is off (`syncDevSidebarVisibility()`).
 
 ## Modals

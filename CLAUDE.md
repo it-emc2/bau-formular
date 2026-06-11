@@ -78,7 +78,7 @@ All admin UI is hidden behind the dev-mode password toggle (Testmodus). When act
 - `POST /api/form/admin/logs` → renders operation log table (submit events, Bitrix timeline attempts, compression stats)
 
 **3. Bitrix Neu-Push** (`adminPushPanel`)
-- Enter Abnahme- or Entwurf-ID + Bitrix-Auftrag-ID (required; validated against `bitrixAuftragId` stored on the document)
+- Enter **Bitrix-Auftrag-ID only** — the server looks up the matching document automatically (`findAdminFormByBitrixId`): prefers most-recent `Abnahme`, falls back to most-recent `Entwurf`; shows a warning toast if multiple documents share that ID
 - Click **Laden** → `POST /api/form/admin/inspect` → returns three file categories with disk-existence flags
 - Three collapsible sections with checkboxes: **Bilder** (image fields), **Videos** (`videoDesAblaufs`), **PDFs** (8 generated documents)
 - Click **Zu Bitrix senden** → `POST /api/form/admin/push` → compresses selected files, generates selected PDFs, posts to Bitrix using the same single-comment → batch-fallback logic as normal submit
