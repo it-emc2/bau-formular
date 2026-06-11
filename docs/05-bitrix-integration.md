@@ -152,11 +152,11 @@ The admin panel provides a manual re-push tool for cases where the automatic sub
 2. The server runs `findAdminFormByBitrixId()` — queries `Abnahme` first (most recent), then `Entwurf` as fallback
 3. Returns three selectable categories: **Bilder** (images), **Videos**, **PDFs**
 4. Admin selects files and clicks "Zu Bitrix senden"
-5. Server compresses selected media and generates selected PDFs, then posts to the deal timeline using the same single-comment → batch-fallback logic as a normal submit
+5. Server compresses selected media and generates selected PDFs, then posts to the deal timeline using the same single-comment → retry → batch-fallback logic as a normal submit
 
 **File handling during admin push:**
-- **Images**: re-compressed via sharp (1600px, q76 JPEG) before sending. If the result is not smaller than the source, the original is used.
-- **Videos**: always re-encoded via ffmpeg (1280×720, CRF30) from the original file on the volume. The volume file itself is never modified.
+- **Images**: re-compressed via sharp (1600px, q68 JPEG) before sending. If the result is not smaller than the source, the original is used.
+- **Videos**: re-encoded via ffmpeg (1280×720, CRF30, `fast` preset) from the original file on the volume. The volume file itself is never modified.
 - **PDFs**: generated fresh from the form data stored in MongoDB — the volume is not involved.
 
 **Multiple documents warning:** If multiple Abnahmen or Entwürfe share the same Bitrix Auftrag ID, the most recently updated document is used and a warning toast is shown (`multipleCount > 1` in the inspect response).

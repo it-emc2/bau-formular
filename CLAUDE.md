@@ -37,7 +37,7 @@ Tests use Jest (node environment, no supertest). Test files live in `__tests__/`
 - `models/Entwurf.js` — Draft model, reuses the same schema via `createAbnahmeSchema` but writes to a separate `Entwürfe` collection; drafts do not require `terminId`
 - `services/bitrix.js` — Bitrix webhook REST client (all calls use GET, including writes — this is how Bitrix webhooks work). GET timeout 30s, POST timeout 60s (on the HTTP call only — compression happens before the timer starts).
 - `services/documentLetter.js` — HTML/Word document generation from form data
-- `services/stepDocuments.js` — PDF generation using pdf-lib. Exports `buildBitrixUploadAttachment` (compresses images via sharp at 1600px/q76 and video via ffmpeg at 1280×720 CRF30), `buildStepDocumentAttachments`, `buildSelectedPdfAttachments`, `buildCustomerName`, `ADMIN_PDF_SPECS`.
+- `services/stepDocuments.js` — PDF generation using pdf-lib. Exports `buildBitrixUploadAttachment` (compresses images via sharp at 1600px/q68 and video via ffmpeg at 1280×720 CRF30 `fast` preset), `buildStepDocumentAttachments`, `buildSelectedPdfAttachments`, `buildCustomerName`, `ADMIN_PDF_SPECS`, `compressUploadedFiles`. Images are compressed at upload time (in `uploadAny` middleware) and skipped during Bitrix attachment building if already compressed in the current server process (`uploadTimeCompressed` Set). Videos are compressed at Bitrix push time.
 - `services/orphanUploads.js` — finds upload files on disk with no matching Abnahme or Entwurf in MongoDB
 
 **Frontend (vanilla JS SPA in `public/`):**
@@ -85,12 +85,13 @@ All admin UI is hidden behind the dev-mode password toggle (Testmodus). When act
 - `POST /api/form/admin/submitted/:id/bitrix/video` — legacy single-video re-push endpoint (kept for backwards compat)
 
 **Bitrix submit flow (normal + admin push):**
-1. All media compressed first (`sharp` for images, `ffmpeg` for video) — no timeout applies here
+1. All media compressed first (`sharp` for images at upload time; `ffmpeg` for video at push time) — no timeout applies here
 2. Single `postTimelineComment` with all attachments → 60s HTTP timeout
-3. If that fails: split into ≤8 MB base64 batches, each with its own 60s window
-4. Files that individually exceed 8 MB after compression are skipped and noted in the comment text
+3. If that fails: wait 10s, retry up to 2 more times (3 attempts total), each with its own 60s window
+4. If all 3 attempts fail: split into ≤8 MB base64 batches, each with its own 60s window
+5. Files that individually exceed 8 MB after compression are skipped and noted in the comment text
 
-**ffmpeg video compression flags:** `scale` with `force_divisible_by=2` (required — rotation metadata on portrait videos causes odd pixel widths without it), `libx264 veryfast`, `CRF 30`, max 1280×720.
+**ffmpeg video compression flags:** `scale` with `force_divisible_by=2` (required — rotation metadata on portrait videos causes odd pixel widths without it), `libx264 fast`, `CRF 30`, max 1280×720.
 
 ## Deployment
 
@@ -101,7 +102,7 @@ All admin UI is hidden behind the dev-mode password toggle (Testmodus). When act
 
 ## Frontend State
 
-State is managed via module-scope JS variables in `app.js`: `currentStep`, `formId`, `shareToken`, `fileStore`, `signaturePads`, `devMode`, `bitrixDeals`, `drafts`. Testmodus starts off on each page load and requires the server-side password; localStorage persists demo presets.
+State is managed via module-scope JS variables in `app.js`: `currentStep`, `formId`, `shareToken`, `fileStore`, `signaturePads`, `devMode`, `bitrixDeals`, `drafts`. Testmodus requires a server-side password and persists across page navigations via `sessionStorage` (cleared on tab close or explicit "Testmodus: Aus" click). localStorage persists demo presets.
 
 ## Client-Side Routes
 
