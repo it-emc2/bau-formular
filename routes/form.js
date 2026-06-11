@@ -1414,6 +1414,19 @@ async function findAdminForm(id) {
   return { form, source };
 }
 
+async function findAdminFormByBitrixId(entityId) {
+  const idQuery = { bitrixAuftragId: { $in: [entityId, String(entityId)] } };
+  const abnahmen = await Abnahme.find(idQuery).sort({ updatedAt: -1 }).limit(2).lean();
+  if (abnahmen.length > 0) {
+    return { form: abnahmen[0], source: 'abnahme', multipleCount: abnahmen.length };
+  }
+  const entwuerfe = await Entwurf.find(idQuery).sort({ updatedAt: -1 }).limit(2).lean();
+  if (entwuerfe.length > 0) {
+    return { form: entwuerfe[0], source: 'entwurf', multipleCount: entwuerfe.length };
+  }
+  return { form: null, source: null, multipleCount: 0 };
+}
+
 router.post('/admin/inspect', async (req, res) => {
   try {
     const password = req.body?.password;
@@ -1421,25 +1434,16 @@ router.post('/admin/inspect', async (req, res) => {
       return res.status(403).json({ success: false, error: 'Passwort ungueltig' });
     }
 
-    const id = String(req.body?.id || '').trim();
-    if (!id) return res.status(400).json({ success: false, error: 'ID fehlt' });
-
     const rawEntityId = req.body?.entityId;
     const entityId = Number(rawEntityId);
     if (!Number.isFinite(entityId) || entityId <= 0) {
       return res.status(400).json({ success: false, error: 'Bitrix-Auftrag-ID fehlt oder ungültig' });
     }
 
-    const { form, source } = await findAdminForm(id);
-    if (!form) return res.status(404).json({ success: false, error: 'Formular nicht gefunden' });
+    const { form, source, multipleCount } = await findAdminFormByBitrixId(entityId);
+    if (!form) return res.status(404).json({ success: false, error: `Kein Formular mit Bitrix-Auftrag-ID ${entityId} gefunden` });
 
     const storedEntityId = Number(form.bitrixAuftragId || 0);
-    if (storedEntityId !== entityId) {
-      return res.status(400).json({
-        success: false,
-        error: `Bitrix-Auftrag-ID stimmt nicht überein (gespeichert: ${storedEntityId || '—'}, eingegeben: ${entityId})`,
-      });
-    }
 
     const bilder = [];
     for (const field of ADMIN_IMAGE_FIELDS) {
@@ -1468,6 +1472,7 @@ router.post('/admin/inspect', async (req, res) => {
     return res.json({
       success: true,
       source,
+      multipleCount,
       form: {
         _id: String(form._id),
         customerName: buildCustomerName(form) || form.name || '—',
@@ -1489,9 +1494,6 @@ router.post('/admin/push', async (req, res) => {
       return res.status(403).json({ success: false, error: 'Passwort ungueltig' });
     }
 
-    const id = String(req.body?.id || '').trim();
-    if (!id) return res.status(400).json({ success: false, error: 'ID fehlt' });
-
     const entityId = Number(req.body?.entityId);
     if (!Number.isFinite(entityId) || entityId <= 0) {
       return res.status(400).json({ success: false, error: 'Bitrix-Auftrag-ID fehlt oder ungültig' });
@@ -1504,18 +1506,10 @@ router.post('/admin/push', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Keine Dateien oder PDFs ausgewählt' });
     }
 
-    const { form, source } = await findAdminForm(id);
-    if (!form) return res.status(404).json({ success: false, error: 'Formular nicht gefunden' });
+    const { form, source } = await findAdminFormByBitrixId(entityId);
+    if (!form) return res.status(404).json({ success: false, error: `Kein Formular mit Bitrix-Auftrag-ID ${entityId} gefunden` });
 
-    const storedEntityId = Number(form.bitrixAuftragId || 0);
-    if (storedEntityId !== entityId) {
-      return res.status(400).json({
-        success: false,
-        error: `Bitrix-Auftrag-ID stimmt nicht überein (gespeichert: ${storedEntityId || '—'})`,
-      });
-    }
-
-    const context = { id, source, entityId };
+    const context = { source, entityId };
     await addOperationLog({ event: 'admin.bitrix.push.started', message: `Admin-Push gestartet (${selectedFiles.length} Dateien, ${selectedPdfKeys.length} PDFs).`, context });
 
     const attachments = [];
@@ -1586,7 +1580,7 @@ router.post('/admin/push', async (req, res) => {
 
     return res.json({ success: allOk, entityId, attachmentCount: attachments.length, skippedFiles, optimizedFiles, timelineResults });
   } catch (error) {
-    await addOperationLog({ level: 'error', event: 'admin.bitrix.push.failed', message: error.message, context: { id: req.body?.id, entityId: req.body?.entityId } });
+    await addOperationLog({ level: 'error', event: 'admin.bitrix.push.failed', message: error.message, context: { entityId: req.body?.entityId } });
     return res.status(500).json({ success: false, error: error.message });
   }
 });

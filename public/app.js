@@ -36,7 +36,6 @@
   const btnAdminLogsClear = $('#btnAdminLogsClear');
   const adminLogOutput = $('#adminLogOutput');
   const adminPushPanel = $('#adminPushPanel');
-  const adminPushFormId = $('#adminPushFormId');
   const adminPushEntityId = $('#adminPushEntityId');
   const btnAdminPushLoad = $('#btnAdminPushLoad');
   const adminPushCategories = $('#adminPushCategories');
@@ -1274,10 +1273,8 @@ function syncDevSidebarVisibility() {
     if (!btnAdminPushLoad || !btnAdminPushSend || !adminPushOutput) return;
 
     btnAdminPushLoad.addEventListener('click', async () => {
-      const id = adminPushFormId?.value.trim();
       const entityId = adminPushEntityId?.value.trim();
 
-      if (!id) { showToast('Bitte eine Formular-ID eingeben.', 'error'); return; }
       if (!entityId) { showToast('Bitte eine Bitrix-Auftrag-ID eingeben.', 'error'); return; }
 
       if (!devModePassword) {
@@ -1296,13 +1293,14 @@ function syncDevSidebarVisibility() {
         const response = await fetch('/api/form/admin/inspect', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ password: devModePassword, id, entityId }),
+          body: JSON.stringify({ password: devModePassword, entityId }),
         });
         const json = await parseJsonResponse(response);
         if (!json.success) throw new Error(json.error || 'Laden fehlgeschlagen');
         adminPushInspectResult = json;
         renderAdminPushCategories(json);
-        showToast(`${json.form.customerName} geladen (${json.source}).`, 'success');
+        const multipleHint = json.multipleCount > 1 ? ` (${json.multipleCount} Formulare gefunden, neuestes verwendet)` : '';
+        showToast(`${json.form.customerName} geladen (${json.source})${multipleHint}.`, json.multipleCount > 1 ? 'warn' : 'success');
       } catch (error) {
         if (adminPushOutput) {
           adminPushOutput.classList.remove('hidden');
@@ -1322,7 +1320,6 @@ function syncDevSidebarVisibility() {
         return;
       }
 
-      const id = adminPushFormId?.value.trim();
       const entityId = adminPushEntityId?.value.trim();
 
       btnAdminPushSend.disabled = true;
@@ -1333,7 +1330,7 @@ function syncDevSidebarVisibility() {
         const response = await fetch('/api/form/admin/push', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ password: devModePassword, id, entityId, files, pdfKeys }),
+          body: JSON.stringify({ password: devModePassword, entityId, files, pdfKeys }),
         });
         const json = await parseJsonResponse(response);
         if (!json.success) throw new Error(json.error || 'Push fehlgeschlagen');
