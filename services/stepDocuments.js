@@ -935,13 +935,6 @@ async function buildStepDocumentAttachments(data = {}, { includeDebug = false, f
       // Skip if Einwilligung generation fails
     }
 
-    // 08 (template variant): stamp values onto the real Dr. Löffler PDF
-    try {
-      const templatePdf = await buildEinwilligungFromTemplate(data);
-      attachments.push(templatePdf);
-    } catch (_err) {
-      // Skip if template is missing or cannot be loaded
-    }
   }
 
   return { attachments, skippedFiles, optimizedFiles };
@@ -1047,7 +1040,6 @@ async function buildSelectedPdfAttachments(data = {}, pdfKeys = []) {
 
   if (keySet.has('step-08')) {
     try { attachments.push(await buildEinwilligungPdf(data)); } catch (_) {}
-    try { attachments.push(await buildEinwilligungFromTemplate(data)); } catch (_) {}
   }
 
   return attachments;

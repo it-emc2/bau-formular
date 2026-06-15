@@ -8,7 +8,6 @@ MongoDB should store stable R2 object references or public/signed R2 URLs instea
 
 
 chat
-- test the last changements done in chat : "yes do this ...."
 - keep working on "complete video ui for video, moving storage
 
 
