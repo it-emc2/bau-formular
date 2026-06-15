@@ -2491,10 +2491,11 @@ function syncDevSidebarVisibility() {
   function logValidationBlocked({ action, step, issues }) {
     const uniqueIssues = [...new Set(issues)];
     const section = $(`.form-step[data-step="${step}"]`);
+    const issueList = uniqueIssues.map(i => `- ${i}`).join('\n');
     logClientEvent({
       level: 'warn',
       event: 'client.validation.blocked',
-      message: `${action === 'submit' ? 'Absenden' : 'Weiter'} blockiert: ${uniqueIssues.length} Validierungsfehler.`,
+      message: `${action === 'submit' ? 'Absenden' : 'Weiter'} blockiert: ${uniqueIssues.length} Validierungsfehler.\n${issueList}`,
       action,
       step,
       stepTitle: getStepTitle(section),
