@@ -373,6 +373,49 @@ Compress and upload selected files/PDFs to a Bitrix deal timeline.
 
 ---
 
+### POST /api/form/admin/submitted/:id/bitrix/video
+
+Re-push the `videoDesAblaufs` from an already-submitted `Abnahme` to its Bitrix deal timeline as a separate comment. Useful when a video was skipped during the original submission (e.g. ffmpeg was not available at that time).
+
+**URL Parameters:**
+| Parameter | Description |
+|-----------|-------------|
+| `id` | MongoDB `_id` of the `Abnahme` |
+
+**Request Body:**
+```json
+{
+  "password": "...",
+  "entityId": 12345,
+  "comment": "Optional custom comment text"
+}
+```
+
+`entityId` is optional — falls back to `form.bitrixAuftragId` if not provided.
+
+**Behavior:**
+- Compresses the video via ffmpeg before uploading (same parameters as normal submit)
+- Posts a single timeline comment with the compressed video as attachment
+- Logs all stages to the operation log (`admin.bitrix.video.started`, `.succeeded`, `.failed`)
+
+**Response:**
+```json
+{
+  "success": true,
+  "entityId": 12345,
+  "attachment": { "filename": "01-videoDesAblaufs.mp4", "base64Length": 123456 },
+  "optimizedFile": { "filename": "...", "originalSizeKB": 13000, "optimizedSizeKB": 180, "kind": "video" },
+  "response": { /* Bitrix API response */ }
+}
+```
+
+**Errors:**
+- `403` — Invalid password
+- `400` — No valid `entityId`, or video could not be compressed/prepared
+- `404` — Abnahme not found, or no `videoDesAblaufs` stored in that document
+
+---
+
 ### POST /api/form/admin/orphan-uploads
 
 Find (or delete) upload files on disk that have no matching document in MongoDB.

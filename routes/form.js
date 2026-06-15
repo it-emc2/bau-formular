@@ -1387,6 +1387,114 @@ router.post('/admin/submitted/:id/bitrix/video', async (req, res) => {
   }
 });
 
+const STORAGE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+
+function getStorageStats() {
+  let disk = null;
+  try {
+    const vfs = fs.statfsSync(uploadsDir);
+    const total = vfs.blocks * vfs.bsize;
+    const available = vfs.bavail * vfs.bsize;
+    const used = total - available;
+    disk = { total, used, available, usePercent: total > 0 ? Math.round((used / total) * 100) : 0 };
+  } catch (_) {}
+
+  const cutoff = Date.now() - STORAGE_MAX_AGE_MS;
+  let fileCount = 0;
+  let totalBytes = 0;
+  let oldFileCount = 0;
+  let oldFileBytes = 0;
+
+  try {
+    const files = fs.readdirSync(uploadsDir);
+    for (const filename of files) {
+      try {
+        const stat = fs.statSync(path.join(uploadsDir, filename));
+        if (!stat.isFile()) continue;
+        fileCount++;
+        totalBytes += stat.size;
+        if (stat.mtime.getTime() < cutoff) {
+          oldFileCount++;
+          oldFileBytes += stat.size;
+        }
+      } catch (_) {}
+    }
+  } catch (_) {}
+
+  return { disk, uploads: { fileCount, totalBytes, oldFileCount, oldFileBytes } };
+}
+
+router.post('/admin/storage', async (req, res) => {
+  try {
+    const password = req.body?.password || req.get?.('x-admin-password');
+    if (!isDevModePasswordValid(password)) {
+      return res.status(403).json({ success: false, error: 'Passwort ungueltig' });
+    }
+    return res.json({ success: true, ...getStorageStats() });
+  } catch (error) {
+    return res.status(400).json({ success: false, error: error.message });
+  }
+});
+
+router.post('/admin/storage/cleanup', async (req, res) => {
+  try {
+    const password = req.body?.password || req.get?.('x-admin-password');
+    if (!isDevModePasswordValid(password)) {
+      return res.status(403).json({ success: false, error: 'Passwort ungueltig' });
+    }
+
+    const dryRun = req.body?.dryRun !== false;
+    const cutoff = Date.now() - STORAGE_MAX_AGE_MS;
+    const candidates = [];
+
+    try {
+      for (const filename of fs.readdirSync(uploadsDir)) {
+        try {
+          const fullPath = path.join(uploadsDir, filename);
+          const stat = fs.statSync(fullPath);
+          if (stat.isFile() && stat.mtime.getTime() < cutoff) {
+            candidates.push({ filename, fullPath, sizeBytes: stat.size });
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+
+    const candidateBytes = candidates.reduce((sum, f) => sum + f.sizeBytes, 0);
+    let deletedCount = 0;
+    let deletedBytes = 0;
+    const errors = [];
+
+    if (!dryRun) {
+      for (const { filename, fullPath, sizeBytes } of candidates) {
+        try {
+          fs.unlinkSync(fullPath);
+          deletedCount++;
+          deletedBytes += sizeBytes;
+        } catch (err) {
+          errors.push({ filename, error: err.message });
+        }
+      }
+      await addOperationLog({
+        event: 'admin.storage.cleanup',
+        message: `Speicherbereinigung: ${deletedCount} Datei(en) geloescht, ${Math.round(deletedBytes / 1024 / 1024)} MB freigegeben (aelter als 30 Tage).`,
+        context: { deletedCount, deletedBytes, errors },
+      });
+    }
+
+    return res.json({
+      success: true,
+      dryRun,
+      candidateCount: candidates.length,
+      candidateBytes,
+      deletedCount: dryRun ? 0 : deletedCount,
+      deletedBytes: dryRun ? 0 : deletedBytes,
+      errors: dryRun ? [] : errors,
+    });
+  } catch (error) {
+    return res.status(400).json({ success: false, error: error.message });
+  }
+});
+
 const ADMIN_FILE_FIELD_LABELS = {
   bilderFertigerUmbau: 'Bilder fertiger Umbau',
   fotosAbdichtung: 'Fotos Abdichtung',

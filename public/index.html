@@ -250,6 +250,8 @@
                 </button>
               </div>
 
+              <div class="admin-panels-group">
+
               <div class="admin-cleanup-panel hidden" id="adminCleanupPanel">
                 <div class="dev-tools-head admin-cleanup-head">
                   <div>
@@ -286,6 +288,27 @@
                 <pre class="admin-log-output hidden" id="adminLogOutput"></pre>
               </div>
 
+              <div class="admin-storage-panel hidden" id="adminStoragePanel">
+                <div class="dev-tools-head admin-storage-head">
+                  <div>
+                    <h3 class="bitrix-panel-title">Volume-Speicher</h3>
+                    <p class="bitrix-panel-subtitle">Speicherplatz prüfen und alte Mediendateien löschen.</p>
+                  </div>
+                </div>
+                <div class="admin-storage-actions">
+                  <button type="button" class="btn btn-bitrix ghost" id="btnStorageCheck">
+                    Speicher prüfen
+                  </button>
+                  <button type="button" class="btn btn-bitrix ghost" id="btnStoragePreview">
+                    Vorschau (&gt;30 Tage)
+                  </button>
+                  <button type="button" class="btn btn-bitrix danger" id="btnStorageDelete" disabled>
+                    Alte Dateien löschen
+                  </button>
+                </div>
+                <pre class="admin-storage-output hidden" id="adminStorageOutput"></pre>
+              </div>
+
               <div class="admin-push-panel hidden" id="adminPushPanel">
                 <div class="dev-tools-head admin-push-head">
                   <div>
@@ -303,6 +326,8 @@
                 </div>
                 <pre class="admin-push-output hidden" id="adminPushOutput"></pre>
               </div>
+
+              </div><!-- /.admin-panels-group -->
 
               <div class="drafts-panel">
                 <div class="dev-tools-head drafts-head">

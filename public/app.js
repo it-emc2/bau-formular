@@ -35,6 +35,11 @@
   const btnAdminLogsRefresh = $('#btnAdminLogsRefresh');
   const btnAdminLogsClear = $('#btnAdminLogsClear');
   const adminLogOutput = $('#adminLogOutput');
+  const adminStoragePanel = $('#adminStoragePanel');
+  const btnStorageCheck = $('#btnStorageCheck');
+  const btnStoragePreview = $('#btnStoragePreview');
+  const btnStorageDelete = $('#btnStorageDelete');
+  const adminStorageOutput = $('#adminStorageOutput');
   const adminPushPanel = $('#adminPushPanel');
   const adminPushEntityId = $('#adminPushEntityId');
   const btnAdminPushLoad = $('#btnAdminPushLoad');
@@ -398,6 +403,7 @@
     bindChecklistRules();
     bindAdminCleanup();
     bindAdminLogs();
+    bindAdminStorage();
     bindAdminPush();
     initClientErrorLogging();
     initSignaturePads();
@@ -903,6 +909,7 @@
     if (debugDocumentPanel) debugDocumentPanel.classList.toggle('hidden', !devMode);
     if (adminCleanupPanel) adminCleanupPanel.classList.toggle('hidden', !devMode);
     if (adminLogPanel) adminLogPanel.classList.toggle('hidden', !devMode);
+    if (adminStoragePanel) adminStoragePanel.classList.toggle('hidden', !devMode);
     if (adminPushPanel) adminPushPanel.classList.toggle('hidden', !devMode);
     if (!devMode && adminCleanupOutput) {
       adminCleanupOutput.classList.add('hidden');
@@ -911,6 +918,11 @@
     if (!devMode && adminLogOutput) {
       adminLogOutput.classList.add('hidden');
       adminLogOutput.textContent = '';
+    }
+    if (!devMode && adminStorageOutput) {
+      adminStorageOutput.classList.add('hidden');
+      adminStorageOutput.textContent = '';
+      if (btnStorageDelete) btnStorageDelete.disabled = true;
     }
     if (!devMode && adminPushOutput) {
       adminPushOutput.classList.add('hidden');
@@ -1178,6 +1190,108 @@ function syncDevSidebarVisibility() {
         }
       });
     }
+  }
+
+  function formatBytes(bytes) {
+    if (bytes == null) return '–';
+    if (bytes >= 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024 / 1024).toFixed(1)} GB`;
+    if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+    return `${(bytes / 1024).toFixed(0)} KB`;
+  }
+
+  function renderStorageStats(data) {
+    const lines = [];
+    if (data.disk) {
+      const d = data.disk;
+      const bar = '█'.repeat(Math.round(d.usePercent / 5)) + '░'.repeat(20 - Math.round(d.usePercent / 5));
+      lines.push(`Festplatte: ${d.usePercent}% belegt`);
+      lines.push(`[${bar}]`);
+      lines.push(`Gesamt: ${formatBytes(d.total)}  |  Belegt: ${formatBytes(d.used)}  |  Frei: ${formatBytes(d.available)}`);
+    } else {
+      lines.push('Festplatten-Info nicht verfügbar (nur auf Fly.io).');
+    }
+    lines.push('');
+    const u = data.uploads;
+    lines.push(`Uploads-Verzeichnis: ${u.fileCount} Datei(en), ${formatBytes(u.totalBytes)}`);
+    lines.push(`Davon älter als 30 Tage: ${u.oldFileCount} Datei(en), ${formatBytes(u.oldFileBytes)}`);
+    return lines.join('\n');
+  }
+
+  function renderCleanupResult(data) {
+    const lines = [];
+    if (data.dryRun) {
+      lines.push(`Vorschau: ${data.candidateCount} Datei(en) würden gelöscht, ${formatBytes(data.candidateBytes)} freigegeben.`);
+    } else {
+      lines.push(`${data.deletedCount} Datei(en) gelöscht, ${formatBytes(data.deletedBytes)} freigegeben.`);
+      if (data.errors.length > 0) {
+        lines.push(`Fehler (${data.errors.length}):`);
+        data.errors.forEach(e => lines.push(`  - ${e.filename}: ${e.error}`));
+      }
+    }
+    return lines.join('\n');
+  }
+
+  function bindAdminStorage() {
+    if (!btnStorageCheck || !btnStoragePreview || !btnStorageDelete || !adminStorageOutput) return;
+
+    async function callStorage(endpoint, body) {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: devModePassword, ...body }),
+      });
+      const json = await parseJsonResponse(response);
+      if (!json.success) throw new Error(json.error || 'Anfrage fehlgeschlagen');
+      return json;
+    }
+
+    btnStorageCheck.addEventListener('click', async () => {
+      btnStorageCheck.disabled = true;
+      adminStorageOutput.classList.remove('hidden');
+      adminStorageOutput.textContent = 'Speicherplatz wird geprüft…';
+      try {
+        const json = await callStorage('/api/form/admin/storage', {});
+        adminStorageOutput.textContent = renderStorageStats(json);
+      } catch (error) {
+        adminStorageOutput.textContent = `Fehler: ${error.message}`;
+        showToast('Speicher-Info fehlgeschlagen: ' + error.message, 'error');
+      } finally {
+        btnStorageCheck.disabled = false;
+      }
+    });
+
+    btnStoragePreview.addEventListener('click', async () => {
+      btnStoragePreview.disabled = true;
+      adminStorageOutput.classList.remove('hidden');
+      adminStorageOutput.textContent = 'Vorschau wird berechnet…';
+      try {
+        const json = await callStorage('/api/form/admin/storage/cleanup', { dryRun: true });
+        adminStorageOutput.textContent = renderCleanupResult(json);
+        btnStorageDelete.disabled = json.candidateCount === 0;
+      } catch (error) {
+        adminStorageOutput.textContent = `Fehler: ${error.message}`;
+        showToast('Vorschau fehlgeschlagen: ' + error.message, 'error');
+      } finally {
+        btnStoragePreview.disabled = false;
+      }
+    });
+
+    btnStorageDelete.addEventListener('click', async () => {
+      if (!window.confirm('Alle Mediendateien älter als 30 Tage werden unwiderruflich gelöscht. Fortfahren?')) return;
+      btnStorageDelete.disabled = true;
+      btnStoragePreview.disabled = true;
+      adminStorageOutput.textContent = 'Dateien werden gelöscht…';
+      try {
+        const json = await callStorage('/api/form/admin/storage/cleanup', { dryRun: false });
+        adminStorageOutput.textContent = renderCleanupResult(json);
+        showToast(`${json.deletedCount} Datei(en) gelöscht.`, 'success');
+      } catch (error) {
+        adminStorageOutput.textContent = `Fehler: ${error.message}`;
+        showToast('Löschen fehlgeschlagen: ' + error.message, 'error');
+      } finally {
+        btnStoragePreview.disabled = false;
+      }
+    });
   }
 
   function buildAdminPushCategoryHtml(title, items) {

@@ -219,6 +219,13 @@ Updated by `updateConfirmationLetterPreview()`, which reads current form values 
 
 Validation and save/submit failures use a larger multiline toast. Client-side validation lists the missing fields/files/signatures by step. Server errors from `/api/form/save` and `/api/form/submit` include the backend message, and when the API returns `details`, the first entries are appended to the visible message for easier debugging.
 
+Every validation block is also logged server-side as a `client.validation.blocked` operation log entry. The log message includes the step title and the exact field label for each failing field, e.g.:
+```
+Weiter blockiert: 2 Validierungsfehler.
+- Medienupload: Video des Ablaufs fehlt.
+- Abschluss und Unterschrift: Unterschrift des Kunden fehlt.
+```
+
 ## Dev Mode Features
 
 ### Demo Data Prefill

@@ -124,17 +124,19 @@ These activity labels determine the checklist variant (Badumbau, Badewannentür,
 
 On form submission, if `bitrixAuftragId` is set, the system automatically:
 
-1. **Generates confirmation letter** (`buildDocumentPackage()`) — plain text version
-2. **Generates step PDFs** (`buildStepDocumentAttachments()`) — one PDF per inspection step:
+1. **Compresses uploaded media** before sending:
+   - Images: resized to max 1600px, re-encoded as JPEG at quality 76 via sharp. Images already compressed at upload time are skipped.
+   - Videos: re-encoded to max 720p via ffmpeg (libx264, CRF 30, `fast` preset) at push time.
+2. **Generates confirmation letter** (`buildDocumentPackage()`) — plain text version
+3. **Generates step PDFs** (`buildStepDocumentAttachments()`) — one PDF per inspection step:
    - `01-abschluss-der-baustelle-{customer}.pdf` — Basic info summary
    - `02-warenpruefung-{customer}.pdf` — Goods inspection with signature
    - `03-fotos-und-video-{customer}.pdf` — File count summary
    - `04-weitere-bilder-{customer}.pdf` — Additional images count
    - `05-abschluss-und-unterschrift-{customer}.pdf` — Completion with customer signature
    - `06-checkliste-{variant}-{customer}.pdf` — Assembly checklist with technician signature
-   - `07-maengelbeseitigung-{customer}.pdf` — (debug mode only)
-   - `08-nachbesserung-{customer}.pdf` — (debug mode only)
-3. **Posts timeline comment** to the Bitrix deal with the letter text and PDF attachments
+   - `08-einwilligung-zur-abrechnung-{customer}.pdf` — Billing consent with customer signature (only when `unterschriftEinwilligung` is present)
+4. **Posts timeline comment** to the Bitrix deal with the letter text and PDF attachments
 
 The comment format is:
 ```
@@ -142,6 +144,17 @@ Bestaetigung erfolgreicher Umbau
 
 [Full letter text]
 ```
+
+### Timeline Upload Logic
+
+The upload follows a single-comment → retry → batch-fallback strategy:
+
+1. Tries one single timeline comment with **all attachments** (60s HTTP timeout)
+2. If that fails: waits 10s, retries up to **2 more times** (3 attempts total)
+3. If all 3 attempts fail: splits attachments into **≤8 MB base64 batches**, each posted as a separate comment
+4. Files that individually exceed 8 MB after compression are skipped and listed in the comment text
+
+Images are compressed at **upload time** (in the `uploadAny` middleware). Videos are compressed at **Bitrix push time** and require ffmpeg to be installed on the server.
 
 ## Admin Re-Push (Bitrix Neu-Push)
 
@@ -155,7 +168,7 @@ The admin panel provides a manual re-push tool for cases where the automatic sub
 5. Server compresses selected media and generates selected PDFs, then posts to the deal timeline using the same single-comment → retry → batch-fallback logic as a normal submit
 
 **File handling during admin push:**
-- **Images**: re-compressed via sharp (1600px, q68 JPEG) before sending. If the result is not smaller than the source, the original is used.
+- **Images**: re-compressed via sharp (1600px, q76 JPEG) before sending. If the result is not smaller than the source, the original is used.
 - **Videos**: re-encoded via ffmpeg (1280×720, CRF30, `fast` preset) from the original file on the volume. The volume file itself is never modified.
 - **PDFs**: generated fresh from the form data stored in MongoDB — the volume is not involved.
 

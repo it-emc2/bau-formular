@@ -103,10 +103,15 @@ COPY . .
 
 # Production stage
 FROM node:24.11.1-slim
+RUN apt-get update -qq && \
+    apt-get install --no-install-recommends -y ffmpeg && \
+    rm -rf /var/lib/apt/lists/*
 COPY --from=build /app /app
 EXPOSE 3000
 CMD ["npm", "run", "start"]
 ```
+
+`ffmpeg` is installed in the production stage (not the build stage) so it is available at runtime for video compression. Without it, videos are skipped during Bitrix upload and a clear reason is logged.
 
 Multi-stage build:
 1. **Build stage**: Installs native build tools and runs `npm ci` (includes devDependencies for native modules)

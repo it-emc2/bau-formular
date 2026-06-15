@@ -97,18 +97,18 @@ Each step PDF has:
 
 ### Generated Documents
 
-| # | Title | Content | Signature |
-|---|-------|---------|-----------|
-| 01 | Abschluss der Baustelle | Termin-ID, appointment type, status, order number, customer, address | — |
-| 02 | Warenprüfung vor Baubeginn | Inspection date, goods statuses (I.O. / Nicht I.O.), comments | `unterschriftWarenpruefung` |
-| 03 | Fotos und Video | File counts for each upload field | — |
-| 04 | Weitere Bilder | File counts for additional image fields | — |
-| 05 | Abschluss und Unterschrift | Completion date, all-work-done status, incomplete work description | `unterschriftKunde` |
-| 06 | Checkliste {variant} | Completed checklist items, free grab rail comment, additional notes, date | `unterschriftMonteur1` or `unterschriftMonteur2` |
-| 07* | Mängelbeseitigung | Completion date | `unterschriftMaengel` |
-| 08* | Nachbesserung | Completion date, all-work-done NB status, incomplete work NB | `unterschriftNB` |
+| # | Title | Content | Signature | Condition |
+|---|-------|---------|-----------|-----------|
+| 01 | Abschluss der Baustelle | Termin-ID, appointment type, status, order number, customer, address | — | Always |
+| 02 | Warenprüfung vor Baubeginn | Inspection date, goods statuses (I.O. / Nicht I.O.), comments | `unterschriftWarenpruefung` | Always |
+| 03 | Fotos und Video | File counts for each upload field | — | Always |
+| 04 | Weitere Bilder | File counts for additional image fields | — | Always |
+| 05 | Abschluss und Unterschrift | Completion date, all-work-done status, incomplete work description | `unterschriftKunde` | Always |
+| 06 | Checkliste {variant} | Completed checklist items, free grab rail comment, additional notes, date | `unterschriftMonteur1` or `unterschriftMonteur2` | Always |
+| 07* | Mängelbeseitigung | Completion date | `unterschriftMaengel` | Debug mode only |
+| 08 | Einwilligung zur Abrechnung | Customer name, address, date of birth, billing consent signature | `unterschriftEinwilligung` | Only when `unterschriftEinwilligung` is present |
 
-Documents 07 and 08 are only generated when `includeDebug` is true (set when `debugMode` is `"true"` in the form data).
+Document 07 is only generated when `includeDebug` is true (set when `debugMode` is `"true"` in the form data).
 
 ### Checklist Variant Detection
 
