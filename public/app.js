@@ -1221,8 +1221,14 @@ function syncDevSidebarVisibility() {
     const lines = [];
     if (data.dryRun) {
       lines.push(`Vorschau: ${data.candidateCount} Datei(en) würden gelöscht, ${formatBytes(data.candidateBytes)} freigegeben.`);
+      if (data.protectedCount > 0) {
+        lines.push(`Geschützt (aktive Entwürfe): ${data.protectedCount} Datei(en) bleiben erhalten.`);
+      }
     } else {
       lines.push(`${data.deletedCount} Datei(en) gelöscht, ${formatBytes(data.deletedBytes)} freigegeben.`);
+      if (data.protectedCount > 0) {
+        lines.push(`Geschützt (aktive Entwürfe): ${data.protectedCount} Datei(en) wurden nicht angefasst.`);
+      }
       if (data.errors.length > 0) {
         lines.push(`Fehler (${data.errors.length}):`);
         data.errors.forEach(e => lines.push(`  - ${e.filename}: ${e.error}`));

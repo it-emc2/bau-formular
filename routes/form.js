@@ -15,7 +15,7 @@ const { buildDocumentPackage } = require('../services/documentLetter');
 const { postTimelineComment, updateDealFields } = require('../services/bitrix');
 const { buildStepDocumentAttachments, buildBitrixUploadAttachment, buildSelectedPdfAttachments, buildCustomerName, ADMIN_PDF_SPECS, compressUploadedFiles } = require('../services/stepDocuments');
 const { getUploadsDir } = require('../services/uploadsPath');
-const { cleanupOrphanUploads } = require('../services/orphanUploads');
+const { cleanupOrphanUploads, getDraftFileReferences } = require('../services/orphanUploads');
 const { addOperationLog, listOperationLogs } = require('../services/operationLogs');
 
 const router = express.Router();
@@ -1445,14 +1445,22 @@ router.post('/admin/storage/cleanup', async (req, res) => {
 
     const dryRun = req.body?.dryRun !== false;
     const cutoff = Date.now() - STORAGE_MAX_AGE_MS;
+
+    const draftRefs = await getDraftFileReferences();
+
     const candidates = [];
+    const protectedFiles = [];
 
     try {
       for (const filename of fs.readdirSync(uploadsDir)) {
         try {
           const fullPath = path.join(uploadsDir, filename);
           const stat = fs.statSync(fullPath);
-          if (stat.isFile() && stat.mtime.getTime() < cutoff) {
+          if (!stat.isFile() || stat.mtime.getTime() >= cutoff) continue;
+
+          if (draftRefs.has(filename)) {
+            protectedFiles.push({ filename, sizeBytes: stat.size });
+          } else {
             candidates.push({ filename, fullPath, sizeBytes: stat.size });
           }
         } catch (_) {}
@@ -1476,8 +1484,8 @@ router.post('/admin/storage/cleanup', async (req, res) => {
       }
       await addOperationLog({
         event: 'admin.storage.cleanup',
-        message: `Speicherbereinigung: ${deletedCount} Datei(en) geloescht, ${Math.round(deletedBytes / 1024 / 1024)} MB freigegeben (aelter als 30 Tage).`,
-        context: { deletedCount, deletedBytes, errors },
+        message: `Speicherbereinigung: ${deletedCount} Datei(en) geloescht, ${Math.round(deletedBytes / 1024 / 1024)} MB freigegeben (aelter als 30 Tage, ${protectedFiles.length} Entwurf-Dateien geschuetzt).`,
+        context: { deletedCount, deletedBytes, protectedCount: protectedFiles.length, errors },
       });
     }
 
@@ -1486,6 +1494,7 @@ router.post('/admin/storage/cleanup', async (req, res) => {
       dryRun,
       candidateCount: candidates.length,
       candidateBytes,
+      protectedCount: protectedFiles.length,
       deletedCount: dryRun ? 0 : deletedCount,
       deletedBytes: dryRun ? 0 : deletedBytes,
       errors: dryRun ? [] : errors,

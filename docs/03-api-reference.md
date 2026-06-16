@@ -416,6 +416,74 @@ Re-push the `videoDesAblaufs` from an already-submitted `Abnahme` to its Bitrix 
 
 ---
 
+### POST /api/form/admin/storage
+
+Return disk usage stats and a file age breakdown for the uploads directory.
+
+**Request Body:**
+```json
+{ "password": "..." }
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "disk": {
+    "total": 5368709120,
+    "used": 536870912,
+    "available": 4831838208,
+    "usePercent": 10
+  },
+  "uploads": {
+    "fileCount": 245,
+    "totalBytes": 524288000,
+    "oldFileCount": 32,
+    "oldFileBytes": 104857600
+  }
+}
+```
+
+`disk` is `null` on platforms where `fs.statfsSync` is unavailable. `oldFileCount` counts files older than 30 days regardless of draft protection — use `/admin/storage/cleanup` with `dryRun: true` for the accurate deletable count.
+
+---
+
+### POST /api/form/admin/storage/cleanup
+
+Delete upload files older than 30 days that are **not** referenced by any active draft (`Entwurf`).
+
+Draft files are always protected — if a file is older than 30 days but still referenced by an `Entwurf` document, it is skipped and counted in `protectedCount`. Only files from submitted forms (or orphans) are eligible for deletion.
+
+**Request Body:**
+```json
+{ "password": "...", "dryRun": true }
+```
+
+Set `dryRun: false` to perform the actual deletion. Defaults to `true` (safe preview).
+
+**Response:**
+```json
+{
+  "success": true,
+  "dryRun": true,
+  "candidateCount": 28,
+  "candidateBytes": 98566144,
+  "protectedCount": 4,
+  "deletedCount": 0,
+  "deletedBytes": 0,
+  "errors": []
+}
+```
+
+- `candidateCount` — files that would be (or were) deleted
+- `protectedCount` — old files skipped because they are still referenced by a draft
+- `deletedCount` / `deletedBytes` — only non-zero when `dryRun: false`
+- `errors` — files that could not be deleted (permission issues etc.)
+
+The operation is logged to the operation log as `admin.storage.cleanup`.
+
+---
+
 ### POST /api/form/admin/orphan-uploads
 
 Find (or delete) upload files on disk that have no matching document in MongoDB.

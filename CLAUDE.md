@@ -68,7 +68,7 @@ Tests use Jest (node environment, no supertest). Test files live in `__tests__/`
 
 ## Admin / Testmodus
 
-All admin UI is hidden behind the dev-mode password toggle (Testmodus). When active, three extra panels appear in the sidebar:
+All admin UI is hidden behind the dev-mode password toggle (Testmodus). When active, four extra panels appear in the sidebar:
 
 **1. Orphan Uploads prüfen / löschen** (`adminCleanupPanel`)
 - Dry-run and delete buttons → `POST /api/form/admin/orphan-uploads`
@@ -76,13 +76,19 @@ All admin UI is hidden behind the dev-mode password toggle (Testmodus). When act
 
 **2. Logs aktualisieren** (`adminLogPanel`)
 - `POST /api/form/admin/logs` → renders operation log table (submit events, Bitrix timeline attempts, compression stats)
+- Validation errors logged by workers include the exact step name and field label
 
-**3. Bitrix Neu-Push** (`adminPushPanel`)
+**3. Volume-Speicher** (`adminStoragePanel`)
+- "Speicher prüfen" → `POST /api/form/admin/storage` → shows disk usage (total/used/free) and file counts
+- "Vorschau (>30 Tage)" → `POST /api/form/admin/storage/cleanup` with `dryRun: true` → shows how many files would be deleted and how much space freed
+- "Alte Dateien löschen" → same endpoint with `dryRun: false` → deletes files older than 30 days; draft files are always protected (any file still referenced by an Entwurf is skipped)
+
+**4. Bitrix Neu-Push** (`adminPushPanel`)
 - Enter **Bitrix-Auftrag-ID only** — the server looks up the matching document automatically (`findAdminFormByBitrixId`): prefers most-recent `Abnahme`, falls back to most-recent `Entwurf`; shows a warning toast if multiple documents share that ID
 - Click **Laden** → `POST /api/form/admin/inspect` → returns three file categories with disk-existence flags
 - Three collapsible sections with checkboxes: **Bilder** (image fields), **Videos** (`videoDesAblaufs`), **PDFs** (8 generated documents)
 - Click **Zu Bitrix senden** → `POST /api/form/admin/push` → compresses selected files, generates selected PDFs, posts to Bitrix using the same single-comment → batch-fallback logic as normal submit
-- `POST /api/form/admin/submitted/:id/bitrix/video` — legacy single-video re-push endpoint (kept for backwards compat)
+- `POST /api/form/admin/submitted/:id/bitrix/video` — re-push `videoDesAblaufs` from a specific Abnahme (by MongoDB `_id`) to Bitrix as a separate timeline comment; useful when video was skipped during original submit
 
 **Bitrix submit flow (normal + admin push):**
 1. All media compressed first (`sharp` for images at upload time; `ffmpeg` for video at push time) — no timeout applies here

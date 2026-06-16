@@ -157,7 +157,14 @@ async function cleanupOrphanUploads({ deleteFiles = false, uploadsDir = getUploa
   };
 }
 
+async function getDraftFileReferences() {
+  const references = new Set();
+  await collectReferencesFromModel(Entwurf, references);
+  return references;
+}
+
 module.exports = {
   cleanupOrphanUploads,
+  getDraftFileReferences,
   formatBytes,
 };
