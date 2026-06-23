@@ -3212,6 +3212,7 @@ function syncDevSidebarVisibility() {
       return;
     }
 
+    const submitClickedAt = action === 'submit' ? Date.now() : null;
     saveInProgress = true;
     const data = collectFormData();
     const fd   = new FormData();
@@ -3244,6 +3245,14 @@ function syncDevSidebarVisibility() {
         showToast('Entwurf gespeichert.', 'success');
       } else {
         fetchDrafts();
+        const elapsedMs = Date.now() - submitClickedAt;
+        logClientEvent({
+          event: 'client.submit.success',
+          message: `Formular übermittelt in ${(elapsedMs / 1000).toFixed(1)} s (Klick → Benachrichtigung).`,
+          elapsedMs,
+          bitrixSynced: !!(json.bitrixSync?.attempted && json.bitrixSync?.sent),
+          fileSummary: getFileSummary(),
+        });
         if (json.bitrixSync?.attempted && json.bitrixSync?.sent) {
           setDocumentStatus(`Dokumenttext wurde automatisch an Bitrix-Auftrag ${json.bitrixSync.entityId} gesendet.`, 'success');
           console.log('[bitrix-submit] sync result', json.bitrixSync);

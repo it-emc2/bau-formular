@@ -1710,6 +1710,7 @@ router.post('/client-log', async (req, res) => {
       'client.validation.blocked',
       'client.error',
       'client.unhandled_rejection',
+      'client.submit.success',
     ]);
 
     if (!allowedEvents.has(event)) {
@@ -1733,6 +1734,8 @@ router.post('/client-log', async (req, res) => {
         browser: payload.browser,
         path: payload.path,
         fileSummary: payload.fileSummary,
+        elapsedMs: typeof payload.elapsedMs === 'number' ? payload.elapsedMs : undefined,
+        bitrixSynced: typeof payload.bitrixSynced === 'boolean' ? payload.bitrixSynced : undefined,
       },
     });
 
