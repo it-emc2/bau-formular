@@ -1,3 +1,10 @@
+# Git metadata (never needed inside the image, and huge)
+.git
+.gitignore
+
+# Claude Code local config
+.claude
+
 # Logs
 logs
 *.log
