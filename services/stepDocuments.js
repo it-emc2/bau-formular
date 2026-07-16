@@ -351,6 +351,108 @@ async function buildEinwilligungPdf(data = {}) {
   };
 }
 
+const PRODUKTVERKAUF_ITEMS = [
+  { field: 'produktverkaufProdukt1', name: 'Duschhocker mit Soft-Drehsitz und Ablage', preisWert: 89.99, image: 'produkt-1-duschhocker.png' },
+  { field: 'produktverkaufProdukt2', name: 'Duschabzieher Silikon mit Halterung', preisWert: 24.99, image: 'produkt-2-duschabzieher.png', variantField: 'produktverkaufProdukt2Variante' },
+  { field: 'produktverkaufProdukt3', name: 'Haltegriff clivia V2 plus 300mm', preisWert: 79.99, image: 'produkt-3-haltegriff-300.png' },
+  { field: 'produktverkaufProdukt4', name: 'Haltegriff clivia V2 plus 800mm', preisWert: 129.99, image: 'produkt-4-haltegriff-800.png' },
+  { field: 'produktverkaufProdukt5', name: 'Duschablage Duschkorb zum Kleben', preisWert: 39.99, image: 'produkt-5-duschablage.png' },
+];
+
+function formatEuro(value) {
+  return value.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+}
+
+async function buildProduktverkaufPdf(data = {}) {
+  const customerSlug = sanitizeFilenamePart(buildCustomerName(data), 'kunde');
+  const pdfDoc = await PDFDocument.create();
+  const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
+  const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+  const pageWidth = 595.28;
+  const pageHeight = 841.89;
+  const marginX = 55;
+  const contentWidth = pageWidth - (2 * marginX);
+  const page = pdfDoc.addPage([pageWidth, pageHeight]);
+  const text = (s, x, y, { size = 10, f = font, color = rgb(0.1, 0.1, 0.1) } = {}) =>
+    page.drawText(String(s), { x, y, size, font: f, color });
+
+  let y = pageHeight - 50;
+  text('Producktverkauf vor Ort', marginX, y, { size: 16, f: bold });
+  y -= 20;
+  text(buildCustomerName(data), marginX, y, { size: 10, color: rgb(0.3, 0.3, 0.3) });
+  y -= 30;
+
+  const rowHeight = 60;
+  const imageSize = 44;
+
+  for (const item of PRODUKTVERKAUF_ITEMS) {
+    const checked = Boolean(data[item.field]);
+    const rowTop = y;
+
+    text(checked ? '☑' : '☐', marginX, rowTop - 30, { size: 16 });
+
+    try {
+      const imgPath = path.join(__dirname, '..', 'public', 'assets', item.image);
+      const imgBytes = fs.readFileSync(imgPath);
+      const img = await pdfDoc.embedPng(imgBytes);
+      const scale = Math.min(imageSize / img.width, imageSize / img.height, 1);
+      const w = img.width * scale;
+      const h = img.height * scale;
+      page.drawImage(img, { x: marginX + 24, y: rowTop - 10 - h, width: w, height: h });
+    } catch (_err) {
+      // Product image missing on disk — skip, keep text-only row
+    }
+
+    const textX = marginX + 24 + imageSize + 12;
+    text(item.name, textX, rowTop - 18, { size: 10.5, f: bold });
+    text(formatEuro(item.preisWert), textX, rowTop - 32, { size: 9.5, color: rgb(0.3, 0.3, 0.3) });
+
+    const variant = item.variantField ? normalizeWhitespace(data[item.variantField]) : '';
+    if (checked && variant) {
+      text(`Ausführung: ${variant === 'Klebepad' ? 'Mit Klebepad' : 'Mit Haken'}`, textX, rowTop - 46, { size: 9, color: rgb(0.3, 0.3, 0.3) });
+    }
+
+    y -= rowHeight;
+  }
+
+  const summe = PRODUKTVERKAUF_ITEMS
+    .filter(item => data[item.field])
+    .reduce((sum, item) => sum + item.preisWert, 0);
+  text(`Summe ausgewählter Produkte: ${formatEuro(summe)}`, marginX, y, { size: 11, f: bold });
+  y -= 24;
+
+  y -= 10;
+  const signatureAreaHeight = 55;
+  const signatureBase64 = String(data.unterschriftProduktverkauf || '').split(',')[1] || '';
+  if (signatureBase64) {
+    try {
+      const png = await pdfDoc.embedPng(Buffer.from(signatureBase64, 'base64'));
+      const maxW = 220;
+      const maxH = signatureAreaHeight - 4;
+      const scale = Math.min(maxW / png.width, maxH / png.height, 1);
+      const w = png.width * scale;
+      const h = png.height * scale;
+      page.drawImage(png, { x: marginX, y: y - h, width: w, height: h });
+    } catch (_err) { /* skip */ }
+  }
+  y -= signatureAreaHeight;
+
+  page.drawLine({
+    start: { x: marginX, y },
+    end: { x: marginX + contentWidth, y },
+    thickness: 0.8,
+    color: rgb(0.1, 0.1, 0.1),
+  });
+  y -= 14;
+  text('Unterschrift Kunde (Produktverkauf)', marginX, y, { size: 9, color: rgb(0.2, 0.2, 0.2) });
+
+  return {
+    filename: `09-produktverkauf-vor-ort-${customerSlug}.pdf`,
+    base64: Buffer.from(await pdfDoc.save()).toString('base64'),
+  };
+}
+
 function buildInspectionLines(data = {}) {
   const rows = [
     ['Wandverkleidung(en)', data.wareWandverkleidungenStatus],
@@ -846,15 +948,15 @@ async function buildStepDocumentAttachments(data = {}, { includeDebug = false, f
     },
     {
       enabled: forceAll || (includeDebug && (normalizeWhitespace(data.unterschriftMaengel) || normalizeWhitespace(data.maengelAbgeschlossenAm))),
-      title: '09-Maengelbeseitigung',
-      fileName: `09-maengelbeseitigung-${customerSlug}.pdf`,
+      title: '10-Maengelbeseitigung',
+      fileName: `10-maengelbeseitigung-${customerSlug}.pdf`,
       lines: [`Abgeschlossen am: ${formatDate(data.maengelAbgeschlossenAm)}`].filter(Boolean),
       signatureDataUrl: data.unterschriftMaengel,
     },
     {
       enabled: forceAll || (includeDebug && (normalizeWhitespace(data.unterschriftNB) || normalizeWhitespace(data.nachbesserungAbgeschlossenAm))),
-      title: '10-Nachbesserung',
-      fileName: `10-nachbesserung-${customerSlug}.pdf`,
+      title: '11-Nachbesserung',
+      fileName: `11-nachbesserung-${customerSlug}.pdf`,
       lines: [
         `Abgeschlossen am: ${formatDate(data.nachbesserungAbgeschlossenAm)}`,
         normalizeWhitespace(data.alleArbeitenNB)
@@ -937,6 +1039,17 @@ async function buildStepDocumentAttachments(data = {}, { includeDebug = false, f
 
   }
 
+  // 09: Producktverkauf vor Ort (only when the customer bought something on site)
+  const wantsProduktverkauf = forceAll || normalizeWhitespace(data.produktverkaufVorOrt) === 'Ja';
+  if (wantsProduktverkauf) {
+    try {
+      const produktverkaufPdf = await buildProduktverkaufPdf(data);
+      attachments.push(produktverkaufPdf);
+    } catch (_err) {
+      // Skip if Producktverkauf generation fails
+    }
+  }
+
   return { attachments, skippedFiles, optimizedFiles };
 }
 
@@ -945,10 +1058,11 @@ const ADMIN_PDF_SPECS = [
   { key: 'step-02', title: '02 Warenprüfung' },
   { key: 'step-05', title: '05 Abschluss und Unterschrift' },
   { key: 'step-checklist', title: '06 Checkliste / Duschmontage' },
-  { key: 'step-09', title: '09 Mängelbeseitigung' },
-  { key: 'step-10', title: '10 Nachbesserung' },
   { key: 'step-07', title: '07 Bestätigung erfolgreicher Umbau' },
   { key: 'step-08', title: '08 Einwilligung zur Abrechnung' },
+  { key: 'step-09', title: '09 Producktverkauf vor Ort' },
+  { key: 'step-10', title: '10 Mängelbeseitigung' },
+  { key: 'step-11', title: '11 Nachbesserung' },
 ];
 
 async function buildSelectedPdfAttachments(data = {}, pdfKeys = []) {
@@ -1010,19 +1124,31 @@ async function buildSelectedPdfAttachments(data = {}, pdfKeys = []) {
     }));
   }
 
+  if (keySet.has('step-07')) {
+    attachments.push(await buildConfirmationLetterPdf(data));
+  }
+
+  if (keySet.has('step-08')) {
+    try { attachments.push(await buildEinwilligungPdf(data)); } catch (_) {}
+  }
+
   if (keySet.has('step-09')) {
-    attachments.push(await buildStepPdf({
-      title: '09 Mängelbeseitigung',
-      subtitle: buildCustomerName(data),
-      lines: [`Abgeschlossen am: ${formatDate(data.maengelAbgeschlossenAm)}`].filter(Boolean),
-      signatureDataUrl: data.unterschriftMaengel,
-      fileName: `09-maengelbeseitigung-${customerSlug}.pdf`,
-    }));
+    try { attachments.push(await buildProduktverkaufPdf(data)); } catch (_) {}
   }
 
   if (keySet.has('step-10')) {
     attachments.push(await buildStepPdf({
-      title: '10 Nachbesserung',
+      title: '10 Mängelbeseitigung',
+      subtitle: buildCustomerName(data),
+      lines: [`Abgeschlossen am: ${formatDate(data.maengelAbgeschlossenAm)}`].filter(Boolean),
+      signatureDataUrl: data.unterschriftMaengel,
+      fileName: `10-maengelbeseitigung-${customerSlug}.pdf`,
+    }));
+  }
+
+  if (keySet.has('step-11')) {
+    attachments.push(await buildStepPdf({
+      title: '11 Nachbesserung',
       subtitle: buildCustomerName(data),
       lines: [
         `Abgeschlossen am: ${formatDate(data.nachbesserungAbgeschlossenAm)}`,
@@ -1030,16 +1156,8 @@ async function buildSelectedPdfAttachments(data = {}, pdfKeys = []) {
         normalizeWhitespace(data.nichtErledigteArbeitenNB) ? `Nicht durchgeführt: ${normalizeWhitespace(data.nichtErledigteArbeitenNB)}` : '',
       ].filter(Boolean),
       signatureDataUrl: data.unterschriftNB,
-      fileName: `10-nachbesserung-${customerSlug}.pdf`,
+      fileName: `11-nachbesserung-${customerSlug}.pdf`,
     }));
-  }
-
-  if (keySet.has('step-07')) {
-    attachments.push(await buildConfirmationLetterPdf(data));
-  }
-
-  if (keySet.has('step-08')) {
-    try { attachments.push(await buildEinwilligungPdf(data)); } catch (_) {}
   }
 
   return attachments;
