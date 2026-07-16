@@ -98,6 +98,17 @@ const schemaDefinition = {
   unterschriftKunde:     { type: String, default: '' },   // base64 PNG
   unterschriftZeitpunkt: { type: Date },
 
+  /* ── Step 7.5 ─ Producktverkauf vor Ort ─────────── */
+  produktverkaufVorOrt:           { type: String, enum: ['Ja', 'Nein', ''], default: '' },
+  produktverkaufProdukt1:         { type: Boolean, default: false },
+  produktverkaufProdukt2:         { type: Boolean, default: false },
+  produktverkaufProdukt2Variante: { type: String, enum: ['Klebepad', 'Haken', ''], default: '' },
+  produktverkaufProdukt3:         { type: Boolean, default: false },
+  produktverkaufProdukt4:         { type: Boolean, default: false },
+  produktverkaufProdukt5:         { type: Boolean, default: false },
+  unterschriftProduktverkauf:           { type: String, default: '' },
+  unterschriftProduktverkaufZeitpunkt:  { type: Date },
+
   /* ── Step 8 ─ Einwilligung zur Abrechnung ──────── */
   einwilligungGeburtsdatum:           { type: String, default: '' },
   unterschriftEinwilligung:           { type: String, default: '' },

@@ -391,6 +391,7 @@
     bindDirtyTracking();
     bindFileUploads();
     bindConditionalFields();
+    bindProduktverkaufSumme();
     bindAuftragsNrSync();
     bindConfirmationLetterSync();
     bindAdditionalServicesConfirmationSync();
@@ -2674,6 +2675,8 @@ function syncDevSidebarVisibility() {
     // Required signatures
     $$('.signature-wrapper', section).forEach(wrapper => {
       if (wrapper.closest('.hidden')) return;
+      const cond = wrapper.closest('.conditional-field');
+      if (cond && !cond.classList.contains('visible')) return;
       if (!isSignatureRequired(wrapper)) return;
       const name = wrapper.dataset.name;
       const pad  = signaturePads[name];
@@ -2844,6 +2847,7 @@ function syncDevSidebarVisibility() {
           unterschriftEinwilligung: 'unterschriftEinwilligungZeitpunkt',
           unterschriftMaengel: 'unterschriftMaengelZeitpunkt',
           unterschriftNB:     'unterschriftNBZeitpunkt',
+          unterschriftProduktverkauf: 'unterschriftProduktverkaufZeitpunkt',
         };
         if (tsMap[name]) data[tsMap[name]] = new Date().toISOString();
       }
@@ -3891,13 +3895,36 @@ function syncDevSidebarVisibility() {
       // Listen on radios and selects
       $$(`input[name="${watchName}"], select[name="${watchName}"]`, form).forEach(input => {
         input.addEventListener('change', () => {
-          const current = input.type === 'radio'
-            ? ($$(`input[name="${watchName}"]:checked`, form)[0]?.value || '')
-            : input.value;
+          let current;
+          if (input.type === 'radio') {
+            current = $$(`input[name="${watchName}"]:checked`, form)[0]?.value || '';
+          } else if (input.type === 'checkbox') {
+            current = input.checked ? 'checked' : '';
+          } else {
+            current = input.value;
+          }
           el.classList.toggle('visible', current === watchValue);
         });
       });
     });
+  }
+
+  // ── Producktverkauf Summe ──────────────────────────────
+  function bindProduktverkaufSumme() {
+    const liste = $('.produktverkauf-liste');
+    if (!liste) return;
+    const wertEl = $('.produktverkauf-summe-wert');
+    const checkboxes = $$('input[type="checkbox"][data-preis]', liste);
+
+    const updateSumme = () => {
+      const summe = checkboxes
+        .filter(cb => cb.checked)
+        .reduce((sum, cb) => sum + Number(cb.dataset.preis || 0), 0);
+      wertEl.textContent = summe.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
+    };
+
+    checkboxes.forEach(cb => cb.addEventListener('change', updateSumme));
+    updateSumme();
   }
 
   // ── Auftrags-Nr Sync ───────────────────────────────────
