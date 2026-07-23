@@ -343,7 +343,13 @@ async function buildEinwilligungPdf(data = {}) {
     color: rgb(0.1, 0.1, 0.1),
   });
   y -= 14;
-  text('Datum und Unterschrift des Patienten/Leistungsempfängers bzw. dessen Vertreter/in', marginX, y, { size: 9, color: rgb(0.2, 0.2, 0.2) });
+  const einwilligungDatum = formatDate(data.unterschriftEinwilligungZeitpunkt);
+  text(
+    einwilligungDatum
+      ? `Datum: ${einwilligungDatum} — Unterschrift des Patienten/Leistungsempfängers bzw. dessen Vertreter/in`
+      : 'Datum und Unterschrift des Patienten/Leistungsempfängers bzw. dessen Vertreter/in',
+    marginX, y, { size: 9, color: rgb(0.2, 0.2, 0.2) }
+  );
 
   return {
     filename: `08-einwilligung-zur-abrechnung-${customerSlug}.pdf`,
