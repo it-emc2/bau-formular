@@ -99,7 +99,7 @@ const schemaDefinition = {
   unterschriftKunde:     { type: String, default: '' },   // base64 PNG
   unterschriftZeitpunkt: { type: Date },
 
-  /* ── Step 7.5 ─ Producktverkauf vor Ort ─────────── */
+  /* ── Step 7.5 ─ Produktverkauf vor Ort ─────────── */
   produktverkaufVorOrt:           { type: String, enum: ['Ja', 'Nein', ''], default: '' },
   produktverkaufProdukt1:         { type: Boolean, default: false },
   produktverkaufProdukt2:         { type: Boolean, default: false },

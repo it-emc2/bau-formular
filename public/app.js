@@ -3909,7 +3909,7 @@ function syncDevSidebarVisibility() {
     });
   }
 
-  // ── Producktverkauf Summe ──────────────────────────────
+  // ── Produktverkauf Summe ──────────────────────────────
   function bindProduktverkaufSumme() {
     const liste = $('.produktverkauf-liste');
     if (!liste) return;
