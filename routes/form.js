@@ -13,7 +13,7 @@ const Entwurf = require('../models/Entwurf');
 const OperationLog = require('../models/OperationLog');
 const { buildDocumentPackage } = require('../services/documentLetter');
 const { postTimelineComment, updateDealFields } = require('../services/bitrix');
-const { buildStepDocumentAttachments, buildBitrixUploadAttachment, buildSelectedPdfAttachments, buildCustomerName, ADMIN_PDF_SPECS, compressUploadedFiles } = require('../services/stepDocuments');
+const { buildStepDocumentAttachments, buildBitrixUploadAttachment, buildSelectedPdfAttachments, buildProduktverkaufSummaryText, buildCustomerName, ADMIN_PDF_SPECS, compressUploadedFiles } = require('../services/stepDocuments');
 const { getUploadsDir } = require('../services/uploadsPath');
 const { cleanupOrphanUploads, getDraftFileReferences } = require('../services/orphanUploads');
 const { addOperationLog, listOperationLogs } = require('../services/operationLogs');
@@ -546,6 +546,24 @@ function buildDealFieldRequestEntry({ entityId, fields }) {
   };
 }
 
+function buildHinweisComment(data = {}) {
+  const hinweis = String(data.hinweiseBuero || '').trim();
+  const uebermittlungsweg = String(data.checklistFotoUebermittlung || '').trim();
+  const uebermittlungswegGrund = String(data.checklistFotoUebermittlungGrund || '').trim();
+  const sonstigeBemerkungen = String(data.sonstigeBemerkungenBaustelle || '').trim();
+
+  const blocks = [];
+  if (hinweis) blocks.push(hinweis);
+  if (uebermittlungsweg && uebermittlungsweg !== 'Über Link' && uebermittlungswegGrund) {
+    blocks.push(`Übermittlungsweg nicht über Link (${uebermittlungsweg}) — Grund: ${uebermittlungswegGrund}`);
+  }
+  if (sonstigeBemerkungen) blocks.push(`Sonstige Bemerkungen: ${sonstigeBemerkungen}`);
+
+  if (!blocks.length) return '';
+
+  return ['⚠️ Hinweis für das Büro', '', ...blocks].join('\n');
+}
+
 async function syncDocumentToBitrix(data = {}, options = {}) {
   const onProgress = typeof options.onProgress === 'function' ? options.onProgress : async () => {};
   const startedAt = Date.now();
@@ -569,6 +587,10 @@ async function syncDocumentToBitrix(data = {}, options = {}) {
   });
 
   let comment = [document.title, '', document.text].join('\n');
+  const produktverkaufSummary = buildProduktverkaufSummaryText(data);
+  if (produktverkaufSummary) {
+    comment += '\n\n' + produktverkaufSummary;
+  }
   stepStartedAt = Date.now();
   const { attachments, skippedFiles, optimizedFiles = [] } = await buildStepDocumentAttachments(data, {
     includeDebug: String(data.debugMode || '').toLowerCase() === 'true',
@@ -850,9 +872,34 @@ async function syncDocumentToBitrix(data = {}, options = {}) {
     })();
   }
 
-  const [finishedTimelineEntries, finishedDealEntry] = await Promise.all([timelinePromise, dealPromise]);
+  const hinweisComment = buildHinweisComment(data);
+  let hinweisPromise = Promise.resolve(null);
+  if (hinweisComment) {
+    hinweisPromise = (async () => {
+      const hinweisEntry = { label: 'Hinweis-Kommentar', mode: 'hinweis' };
+      try {
+        hinweisEntry.response = await postTimelineComment({ entityType: 'deal', entityId, comment: hinweisComment });
+        hinweisEntry.ok = true;
+      } catch (err) {
+        hinweisEntry.ok = false;
+        hinweisEntry.error = err.message;
+      }
+      await onProgress({
+        level: hinweisEntry.ok ? 'info' : 'error',
+        event: hinweisEntry.ok ? 'submit.bitrix.hinweis.succeeded' : 'submit.bitrix.hinweis.failed',
+        message: hinweisEntry.ok
+          ? 'Bitrix-Hinweis-Kommentar gesendet.'
+          : `Bitrix-Hinweis-Kommentar fehlgeschlagen: ${hinweisEntry.error}`,
+        context: { error: hinweisEntry.error },
+      });
+      return hinweisEntry;
+    })();
+  }
+
+  const [finishedTimelineEntries, finishedDealEntry, finishedHinweisEntry] = await Promise.all([timelinePromise, dealPromise, hinweisPromise]);
   requests.push(...finishedTimelineEntries);
   if (finishedDealEntry) requests.push(finishedDealEntry);
+  if (finishedHinweisEntry) requests.push(finishedHinweisEntry);
 
   const timelineSent = finishedTimelineEntries.some(entry => entry.mode === 'single' && entry.ok)
     || finishedTimelineEntries.filter(entry => entry.mode === 'fallback_batch').every(entry => entry.ok);
