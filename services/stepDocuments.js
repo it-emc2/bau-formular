@@ -380,7 +380,7 @@ function buildProduktverkaufSummaryText(data = {}) {
   });
   const summe = selected.reduce((sum, item) => sum + item.preisWert, 0);
 
-  return ['Producktverkauf vor Ort:', ...lines, `Summe ausgewählter Produkte: ${formatEuro(summe)}`].join('\n');
+  return ['Produktverkauf vor Ort:', ...lines, `Summe ausgewählter Produkte: ${formatEuro(summe)}`].join('\n');
 }
 
 async function buildProduktverkaufPdf(data = {}) {
@@ -396,23 +396,69 @@ async function buildProduktverkaufPdf(data = {}) {
   const page = pdfDoc.addPage([pageWidth, pageHeight]);
   const text = (s, x, y, { size = 10, f = font, color = rgb(0.1, 0.1, 0.1) } = {}) =>
     page.drawText(String(s), { x, y, size, font: f, color });
+  const rightText = (s, xRight, y, { size = 10, f = font, color = rgb(0.1, 0.1, 0.1) } = {}) => {
+    const w = f.widthOfTextAtSize(String(s), size);
+    text(s, xRight - w, y, { size, f, color });
+  };
 
   let y = pageHeight - 50;
-  text('Producktverkauf vor Ort', marginX, y, { size: 16, f: bold });
+
+  // ── Title (bold, underlined) ───────────────────────────────────
+  const titleText = 'Produktverkauf vor Ort';
+  const titleSize = 16;
+  const titleWidth = bold.widthOfTextAtSize(titleText, titleSize);
+  text(titleText, marginX, y, { size: titleSize, f: bold });
+  page.drawLine({
+    start: { x: marginX, y: y - 3 },
+    end: { x: marginX + titleWidth, y: y - 3 },
+    thickness: 0.8,
+    color: rgb(0.1, 0.1, 0.1),
+  });
   y -= 20;
   text(buildCustomerName(data), marginX, y, { size: 10, color: rgb(0.3, 0.3, 0.3) });
-  y -= 30;
+  y -= 26;
 
-  const rowHeight = 60;
-  const imageSize = 44;
+  const bodySize = 9.5;
+  const drawPara = paragraph => {
+    wrapTextByWidth(paragraph, font, bodySize, contentWidth).forEach(line => {
+      text(line, marginX, y, { size: bodySize });
+      y -= 13;
+    });
+  };
+
+  drawPara('Der Kunde hat vor Ort folgende Produkte erworben:');
+  y -= 12;
+
+  // ── Table ───────────────────────────────────────────────────────
+  const colCheckX = marginX;
+  const colCheckWidth = 52;
+  const colProduktX = colCheckX + colCheckWidth;
+  const colPreisRightX = marginX + contentWidth;
+  const headerHeight = 20;
+  const rowHeight = 22;
+
+  const tableTop = y;
+  page.drawRectangle({
+    x: marginX,
+    y: tableTop - headerHeight,
+    width: contentWidth,
+    height: headerHeight,
+    color: rgb(0.92, 0.92, 0.93),
+  });
+  text('Gekauft', colCheckX + 3, tableTop - headerHeight + 6, { size: 8.5, f: bold });
+  text('Produkt', colProduktX + 3, tableTop - headerHeight + 6, { size: 8.5, f: bold });
+  rightText('Preis', colPreisRightX, tableTop - headerHeight + 6, { size: 8.5, f: bold });
+  y = tableTop - headerHeight;
 
   for (const item of PRODUKTVERKAUF_ITEMS) {
     const checked = Boolean(data[item.field]);
-    const rowTop = y;
+    const variant = item.variantField ? normalizeWhitespace(data[item.variantField]) : '';
+    const variantSuffix = checked && variant ? ` (${variant === 'Klebepad' ? 'mit Klebepad' : 'mit Haken'})` : '';
 
-    const boxSize = 12;
-    const boxX = marginX;
-    const boxY = rowTop - 34;
+    const rowTop = y;
+    const boxSize = 11;
+    const boxX = colCheckX + 3;
+    const boxY = rowTop - rowHeight / 2 - boxSize / 2;
     page.drawRectangle({
       x: boxX,
       y: boxY,
@@ -423,41 +469,60 @@ async function buildProduktverkaufPdf(data = {}) {
       color: checked ? rgb(0.1, 0.1, 0.1) : undefined,
     });
     if (checked) {
-      text('X', boxX + 2.5, boxY + 1.5, { size: 10, f: bold, color: rgb(1, 1, 1) });
+      text('X', boxX + 2, boxY + 1.5, { size: 9, f: bold, color: rgb(1, 1, 1) });
     }
 
-    try {
-      const imgPath = path.join(__dirname, '..', 'public', 'assets', item.image);
-      const imgBytes = fs.readFileSync(imgPath);
-      const img = await pdfDoc.embedPng(imgBytes);
-      const scale = Math.min(imageSize / img.width, imageSize / img.height, 1);
-      const w = img.width * scale;
-      const h = img.height * scale;
-      page.drawImage(img, { x: marginX + 24, y: rowTop - 10 - h, width: w, height: h });
-    } catch (_err) {
-      // Product image missing on disk — skip, keep text-only row
-    }
-
-    const textX = marginX + 24 + imageSize + 12;
-    text(item.name, textX, rowTop - 18, { size: 10.5, f: bold });
-    text(formatEuro(item.preisWert), textX, rowTop - 32, { size: 9.5, color: rgb(0.3, 0.3, 0.3) });
-
-    const variant = item.variantField ? normalizeWhitespace(data[item.variantField]) : '';
-    if (checked && variant) {
-      text(`Ausführung: ${variant === 'Klebepad' ? 'Mit Klebepad' : 'Mit Haken'}`, textX, rowTop - 46, { size: 9, color: rgb(0.3, 0.3, 0.3) });
-    }
+    text(`${item.name}${variantSuffix}`, colProduktX + 3, rowTop - rowHeight / 2 - 3, { size: 9.5 });
+    rightText(formatEuro(item.preisWert), colPreisRightX, rowTop - rowHeight / 2 - 3, { size: 9.5 });
 
     y -= rowHeight;
+    page.drawLine({
+      start: { x: marginX, y },
+      end: { x: marginX + contentWidth, y },
+      thickness: 0.5,
+      color: rgb(0.8, 0.8, 0.8),
+    });
   }
+
+  page.drawLine({
+    start: { x: marginX, y: tableTop },
+    end: { x: marginX, y },
+    thickness: 0.8,
+    color: rgb(0.1, 0.1, 0.1),
+  });
+  page.drawLine({
+    start: { x: marginX + contentWidth, y: tableTop },
+    end: { x: marginX + contentWidth, y },
+    thickness: 0.8,
+    color: rgb(0.1, 0.1, 0.1),
+  });
+  page.drawLine({
+    start: { x: marginX, y: tableTop },
+    end: { x: marginX + contentWidth, y: tableTop },
+    thickness: 0.8,
+    color: rgb(0.1, 0.1, 0.1),
+  });
 
   const summe = PRODUKTVERKAUF_ITEMS
     .filter(item => data[item.field])
     .reduce((sum, item) => sum + item.preisWert, 0);
-  text(`Summe ausgewählter Produkte: ${formatEuro(summe)}`, marginX, y, { size: 11, f: bold });
-  y -= 24;
 
+  y -= 16;
+  text('Gesamtsumme', colProduktX + 3, y, { size: 11, f: bold });
+  rightText(formatEuro(summe), colPreisRightX, y, { size: 11, f: bold });
   y -= 10;
-  const signatureAreaHeight = 55;
+  page.drawLine({
+    start: { x: marginX, y },
+    end: { x: marginX + contentWidth, y },
+    thickness: 1,
+    color: rgb(0.1, 0.1, 0.1),
+  });
+  y -= 16;
+
+  drawPara('Der oben genannte Betrag wird gesondert in Rechnung gestellt / vor Ort beglichen.');
+  y -= 8;
+
+  const signatureAreaHeight = 45;
   const signatureBase64 = String(data.unterschriftProduktverkauf || '').split(',')[1] || '';
   if (signatureBase64) {
     try {
@@ -479,7 +544,13 @@ async function buildProduktverkaufPdf(data = {}) {
     color: rgb(0.1, 0.1, 0.1),
   });
   y -= 14;
-  text('Unterschrift Kunde (Produktverkauf)', marginX, y, { size: 9, color: rgb(0.2, 0.2, 0.2) });
+  const produktverkaufDatum = formatDate(data.unterschriftProduktverkaufZeitpunkt);
+  text(
+    produktverkaufDatum
+      ? `Datum: ${produktverkaufDatum} — Unterschrift Kunde (Produktverkauf)`
+      : 'Datum und Unterschrift Kunde (Produktverkauf)',
+    marginX, y, { size: 9, color: rgb(0.2, 0.2, 0.2) }
+  );
 
   return {
     filename: `09-produktverkauf-vor-ort-${customerSlug}.pdf`,
@@ -1073,14 +1144,14 @@ async function buildStepDocumentAttachments(data = {}, { includeDebug = false, f
 
   }
 
-  // 09: Producktverkauf vor Ort (only when the customer bought something on site)
+  // 09: Produktverkauf vor Ort (only when the customer bought something on site)
   const wantsProduktverkauf = forceAll || normalizeWhitespace(data.produktverkaufVorOrt) === 'Ja';
   if (wantsProduktverkauf) {
     try {
       const produktverkaufPdf = await buildProduktverkaufPdf(data);
       attachments.push(produktverkaufPdf);
     } catch (err) {
-      console.error('[stepDocuments] Producktverkauf-PDF konnte nicht erzeugt werden:', err);
+      console.error('[stepDocuments] Produktverkauf-PDF konnte nicht erzeugt werden:', err);
     }
   }
 
@@ -1094,7 +1165,7 @@ const ADMIN_PDF_SPECS = [
   { key: 'step-checklist', title: '06 Checkliste / Duschmontage' },
   { key: 'step-07', title: '07 Bestätigung erfolgreicher Umbau' },
   { key: 'step-08', title: '08 Einwilligung zur Abrechnung' },
-  { key: 'step-09', title: '09 Producktverkauf vor Ort' },
+  { key: 'step-09', title: '09 Produktverkauf vor Ort' },
   { key: 'step-10', title: '10 Mängelbeseitigung' },
   { key: 'step-11', title: '11 Nachbesserung' },
 ];
