@@ -410,7 +410,21 @@ async function buildProduktverkaufPdf(data = {}) {
     const checked = Boolean(data[item.field]);
     const rowTop = y;
 
-    text(checked ? '☑' : '☐', marginX, rowTop - 30, { size: 16 });
+    const boxSize = 12;
+    const boxX = marginX;
+    const boxY = rowTop - 34;
+    page.drawRectangle({
+      x: boxX,
+      y: boxY,
+      width: boxSize,
+      height: boxSize,
+      borderColor: rgb(0.1, 0.1, 0.1),
+      borderWidth: 1,
+      color: checked ? rgb(0.1, 0.1, 0.1) : undefined,
+    });
+    if (checked) {
+      text('X', boxX + 2.5, boxY + 1.5, { size: 10, f: bold, color: rgb(1, 1, 1) });
+    }
 
     try {
       const imgPath = path.join(__dirname, '..', 'public', 'assets', item.image);

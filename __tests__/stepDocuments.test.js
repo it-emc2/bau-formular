@@ -49,6 +49,16 @@ describe('stepDocuments', () => {
     expect(buildProduktverkaufSummaryText({ produktverkaufVorOrt: 'Nein' })).toBe('');
   });
 
+  it('attaches the Produktverkauf PDF to the Bitrix submission when a sale occurred', async () => {
+    const { attachments } = await buildStepDocumentAttachments({
+      vorname: 'Max',
+      nachname: 'Muster',
+      produktverkaufVorOrt: 'Ja',
+      produktverkaufProdukt1: true,
+    });
+    expect(attachments.some(a => a.filename.includes('produktverkauf-vor-ort'))).toBe(true);
+  });
+
   it('uses the selected checklist variant for the generated checklist attachment filename', async () => {
     const { attachments } = await buildStepDocumentAttachments({
       vorname: 'Max',
