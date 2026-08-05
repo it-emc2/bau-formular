@@ -369,6 +369,20 @@ function formatEuro(value) {
   return value.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' €';
 }
 
+function buildProduktverkaufSummaryText(data = {}) {
+  const selected = PRODUKTVERKAUF_ITEMS.filter(item => data[item.field]);
+  if (!selected.length) return '';
+
+  const lines = selected.map(item => {
+    const variant = item.variantField ? normalizeWhitespace(data[item.variantField]) : '';
+    const variantSuffix = variant ? ` (${variant === 'Klebepad' ? 'mit Klebepad' : 'mit Haken'})` : '';
+    return `- ${item.name}${variantSuffix} — ${formatEuro(item.preisWert)}`;
+  });
+  const summe = selected.reduce((sum, item) => sum + item.preisWert, 0);
+
+  return ['Producktverkauf vor Ort:', ...lines, `Summe ausgewählter Produkte: ${formatEuro(summe)}`].join('\n');
+}
+
 async function buildProduktverkaufPdf(data = {}) {
   const customerSlug = sanitizeFilenamePart(buildCustomerName(data), 'kunde');
   const pdfDoc = await PDFDocument.create();
@@ -1051,8 +1065,8 @@ async function buildStepDocumentAttachments(data = {}, { includeDebug = false, f
     try {
       const produktverkaufPdf = await buildProduktverkaufPdf(data);
       attachments.push(produktverkaufPdf);
-    } catch (_err) {
-      // Skip if Producktverkauf generation fails
+    } catch (err) {
+      console.error('[stepDocuments] Producktverkauf-PDF konnte nicht erzeugt werden:', err);
     }
   }
 
@@ -1304,6 +1318,7 @@ module.exports = {
   buildStepDocumentAttachments,
   buildBitrixUploadAttachment,
   buildSelectedPdfAttachments,
+  buildProduktverkaufSummaryText,
   getChecklistVariant,
   buildCustomerName,
   ADMIN_PDF_SPECS,

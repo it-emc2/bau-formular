@@ -1,4 +1,4 @@
-const { buildStepDocumentAttachments, getChecklistVariant } = require('../services/stepDocuments');
+const { buildStepDocumentAttachments, getChecklistVariant, buildProduktverkaufSummaryText } = require('../services/stepDocuments');
 const fs = require('fs');
 const path = require('path');
 const sharp = require('sharp');
@@ -31,6 +31,22 @@ describe('stepDocuments', () => {
       title: '06-Checkliste-Badewannentuer',
       fileNamePrefix: '06-checkliste-badewannentuer',
     });
+  });
+
+  it('builds a Produktverkauf summary with the correct Summe when products are selected', () => {
+    const text = buildProduktverkaufSummaryText({
+      produktverkaufVorOrt: 'Ja',
+      produktverkaufProdukt1: true,
+      produktverkaufProdukt2: true,
+      produktverkaufProdukt2Variante: 'Klebepad',
+    });
+    expect(text).toContain('Duschhocker mit Soft-Drehsitz und Ablage — 89,99 €');
+    expect(text).toContain('Duschabzieher Silikon mit Halterung (mit Klebepad) — 24,99 €');
+    expect(text).toContain('Summe ausgewählter Produkte: 114,98 €');
+  });
+
+  it('returns an empty Produktverkauf summary when no products are selected', () => {
+    expect(buildProduktverkaufSummaryText({ produktverkaufVorOrt: 'Nein' })).toBe('');
   });
 
   it('uses the selected checklist variant for the generated checklist attachment filename', async () => {
