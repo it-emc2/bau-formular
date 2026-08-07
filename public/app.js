@@ -429,6 +429,14 @@
     }
     fetchDrafts();
     renderArbeitsberichtResults([], 'Noch keine externen Treffer geladen.');
+    await autofillFromDealIdParam();
+  }
+
+  async function autofillFromDealIdParam() {
+    const dealId = new URLSearchParams(window.location.search).get('dealId');
+    if (!dealId) return;
+    setFieldValue('terminId', dealId);
+    await fetchBitrixDealById();
   }
 
   // ── Step Indicator Dots ────────────────────────────────
