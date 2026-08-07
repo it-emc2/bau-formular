@@ -901,6 +901,22 @@ small { color: var(--clr-gray); font-size: .8rem; }
   cursor: not-allowed;
 }
 
+.btn-unlock-fields {
+  margin-top: 6px;
+  padding: 4px 10px;
+  background: transparent;
+  color: var(--clr-grey, #999);
+  border: 1px solid var(--clr-grey, #ccc);
+  border-radius: 6px;
+  font-size: .72rem;
+  cursor: pointer;
+  opacity: .55;
+}
+
+.btn-unlock-fields:hover {
+  opacity: 1;
+}
+
 .name-block {
   margin-top: 4px;
 }

@@ -24,6 +24,7 @@
   const devModeBadge  = $('#devModeBadge');
   const bitrixTestActions = $('#bitrixTestActions');
   const btnFetchBitrixLead = $('#btnFetchBitrixLead');
+  const btnUnlockFields = $('#btnUnlockFields');
   const btnDemoPrefill = $('#btnDemoPrefill');
   const btnHeaderDemoPrefill = $('#btnHeaderDemoPrefill');
   const demoActivityPresetSelect = $('#demoActivityPreset');
@@ -406,6 +407,7 @@
     bindAdminLogs();
     bindAdminStorage();
     bindAdminPush();
+    bindUnlockFields();
     initClientErrorLogging();
     initSignaturePads();
     initWarenpruefungDatum();
@@ -437,6 +439,43 @@
     if (!dealId) return;
     setFieldValue('terminId', dealId);
     await fetchBitrixDealById();
+  }
+
+  const FORM_LOCK_EXEMPT_FIELDS = ['terminStatus', 'grundNichtErfolgreich'];
+
+  function setFormLocked(locked) {
+    const step1 = $('.form-step[data-step="1"]', form);
+    $$('input, select, textarea', step1 || form).forEach(el => {
+      if (FORM_LOCK_EXEMPT_FIELDS.includes(el.name)) return;
+      el.disabled = locked;
+    });
+    if (btnUnlockFields) btnUnlockFields.classList.toggle('hidden', !locked);
+  }
+
+  function bindUnlockFields() {
+    if (!btnUnlockFields) return;
+    btnUnlockFields.addEventListener('click', async () => {
+      const password = window.prompt('Passwort zum Entsperren der Felder eingeben:');
+      if (password === null) return;
+
+      btnUnlockFields.disabled = true;
+      try {
+        const res = await fetch('/api/form/dev-mode/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password }),
+        });
+        const json = await parseJsonResponse(res);
+        if (!json.success) throw new Error(json.error || 'Passwort ungueltig');
+
+        setFormLocked(false);
+        showToast('Felder entsperrt.', 'success');
+      } catch (error) {
+        showToast('Entsperren fehlgeschlagen: ' + error.message, 'error');
+      } finally {
+        btnUnlockFields.disabled = false;
+      }
+    });
   }
 
   // ── Step Indicator Dots ────────────────────────────────
@@ -2428,6 +2467,9 @@ function syncDevSidebarVisibility() {
       const deal = json.result;
       applyBitrixDealToForm(deal);
       showToast('Bitrix-Deal erfolgreich geladen.', 'success');
+      if (currentFormularTyp === 'baustellenabnahme') {
+        setFormLocked(true);
+      }
     } catch (error) {
       showToast('Fehler beim Abrufen des Deals: ' + error.message, 'error');
     } finally {
