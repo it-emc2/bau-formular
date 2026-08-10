@@ -1,4 +1,6 @@
 const BITRIX_WEBHOOK_BASE = () => process.env.BITRIX_WEBHOOK_BASE || '';
+const BITRIX_IM_WEBHOOK_BASE = () => process.env.BITRIX_IM_WEBHOOK_BASE || '';
+const BITRIX_CHAT_ID = () => process.env.BITRIX_CHAT_ID || '';
 
 const BITRIX_GET_TIMEOUT_MS = 30_000;
 const BITRIX_POST_TIMEOUT_MS = 60_000;
@@ -58,8 +60,7 @@ async function bxGet(method, paramsObj = {}) {
   return data;
 }
 
-async function bxPost(method, body = {}) {
-  const webhookBase = BITRIX_WEBHOOK_BASE();
+async function bxPost(method, body = {}, webhookBase = BITRIX_WEBHOOK_BASE()) {
   if (!webhookBase) {
     throw new Error('BITRIX_WEBHOOK_BASE is not configured.');
   }
@@ -122,10 +123,20 @@ function updateDealFields({ dealId, fields }) {
   });
 }
 
+function postChatMessage(message, { chatId = BITRIX_CHAT_ID() } = {}) {
+  const imWebhookBase = BITRIX_IM_WEBHOOK_BASE();
+  if (!imWebhookBase || !chatId) {
+    throw new Error('BITRIX_IM_WEBHOOK_BASE oder BITRIX_CHAT_ID ist nicht konfiguriert.');
+  }
+
+  return bxPost('im.message.add', { DIALOG_ID: `chat${chatId}`, MESSAGE: message }, imWebhookBase);
+}
+
 module.exports = {
   buildQS,
   bxGet,
   bxPost,
   postTimelineComment,
   updateDealFields,
+  postChatMessage,
 };

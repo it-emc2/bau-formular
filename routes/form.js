@@ -12,7 +12,7 @@ const Abnahme = require('../models/Abnahme');
 const Entwurf = require('../models/Entwurf');
 const OperationLog = require('../models/OperationLog');
 const { buildDocumentPackage } = require('../services/documentLetter');
-const { postTimelineComment, updateDealFields } = require('../services/bitrix');
+const { postTimelineComment, updateDealFields, postChatMessage } = require('../services/bitrix');
 const { buildStepDocumentAttachments, buildBitrixUploadAttachment, buildSelectedPdfAttachments, buildProduktverkaufSummaryText, buildCustomerName, ADMIN_PDF_SPECS, compressUploadedFiles } = require('../services/stepDocuments');
 const { getUploadsDir } = require('../services/uploadsPath');
 const { cleanupOrphanUploads, getDraftFileReferences } = require('../services/orphanUploads');
@@ -360,6 +360,51 @@ function buildSuccessResponse(form) {
     shareLink: `/form/${form.shareToken}`,
     data: form,
   };
+}
+
+function buildDealLink(bitrixAuftragId) {
+  if (!bitrixAuftragId) return null;
+  try {
+    return `${new URL(process.env.BITRIX_WEBHOOK_BASE).origin}/crm/deal/details/${bitrixAuftragId}/`;
+  } catch {
+    return null;
+  }
+}
+
+const BAUSTELLENABNAHME_CHAT_STATUS = {
+  draft: { emoji: '🟡', label: 'Entwurf gespeichert' },
+  submitted: { emoji: '🟢', label: 'Abnahme abgeschlossen' },
+  failed: { emoji: '🔴', label: 'Fehler beim Absenden' },
+};
+
+async function notifyBaustellenabnahmeChat(kind, doc = {}) {
+  if (doc.formularTyp !== 'baustellenabnahme') return;
+
+  const { emoji, label } = BAUSTELLENABNAHME_CHAT_STATUS[kind];
+  const dealId = doc.bitrixAuftragId;
+  const customer = buildCustomerName(doc) || doc.name || 'Kunde';
+  const dealLink = buildDealLink(dealId);
+  const sep = '━'.repeat(45);
+
+  const lines = [
+    '📋 BAUSTELLENABNAHME',
+    sep,
+    `☐ ${emoji} ${dealId ? `[${dealId}] ` : ''}${customer} — ${label}`,
+  ];
+  if (dealLink) lines.push(`     🔗 ${dealLink}`);
+  if (kind === 'failed' && doc.errorMessage) lines.push(`     Fehler: ${doc.errorMessage}`);
+  lines.push(sep, '🤖 Automatisch generiert | Quelle: bau-formular');
+
+  try {
+    await postChatMessage(lines.join('\n'));
+  } catch (error) {
+    await addOperationLog({
+      level: 'error',
+      event: 'chat.notify.failed',
+      message: error.message,
+      context: { kind },
+    });
+  }
 }
 
 function formatErrorDetails(error) {
@@ -1195,6 +1240,7 @@ router.post('/save', uploadAny, async (req, res) => {
             shareToken: existing.shareToken,
           }),
         });
+        await notifyBaustellenabnahmeChat('draft', existing);
         return res.json(buildSuccessResponse(existing));
       }
 
@@ -1228,6 +1274,7 @@ router.post('/save', uploadAny, async (req, res) => {
           shareToken: draft.shareToken,
         }),
       });
+      await notifyBaustellenabnahmeChat('draft', draft);
       return res.status(201).json(buildSuccessResponse(draft));
     }
 
@@ -1247,6 +1294,7 @@ router.post('/save', uploadAny, async (req, res) => {
         shareToken: form.shareToken,
       }),
     });
+    await notifyBaustellenabnahmeChat('draft', form);
     return res.status(201).json(buildSuccessResponse(form));
   } catch (error) {
     await deleteUploadedRequestFiles(req.files);
@@ -2090,6 +2138,7 @@ router.post('/submit', uploadAny, async (req, res) => {
         submittedId: submitResult.submittedId,
       },
     });
+    await notifyBaustellenabnahmeChat('submitted', bitrixPayload);
     return res.status(submitResult.statusCode).json(submitResult.response);
   } catch (error) {
     if (!uploadedFilesProtectedByDraft) {
@@ -2128,6 +2177,9 @@ router.post('/submit', uploadAny, async (req, res) => {
         bitrixSync: error?.bitrixSync,
       },
     });
+    if (recoveryDraft) {
+      await notifyBaustellenabnahmeChat('failed', { ...toPlainDocument(recoveryDraft), errorMessage: response.error });
+    }
     return res.status(error?.status || error?.statusCode || 400).json(response);
   }
 });
