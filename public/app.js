@@ -447,6 +447,15 @@
     const step1 = $('.form-step[data-step="1"]', form);
     $$('input, select, textarea', step1 || form).forEach(el => {
       if (FORM_LOCK_EXEMPT_FIELDS.includes(el.name)) return;
+      if (locked) {
+        // Nur Felder sperren, die bereits einen Wert aus Bitrix haben.
+        // Leere Pflichtfelder (z.B. fehlende Anrede) bleiben editierbar,
+        // damit der Nutzer sie ohne Testmodus nachtragen kann.
+        const hasValue = (el.type === 'radio' || el.type === 'checkbox')
+          ? $$(`input[name="${el.name}"]`, step1 || form).some(r => r.checked)
+          : !!el.value.trim();
+        if (!hasValue) return;
+      }
       el.disabled = locked;
     });
     if (btnUnlockFields) btnUnlockFields.classList.toggle('hidden', !locked);
