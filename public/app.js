@@ -3900,8 +3900,28 @@ function syncDevSidebarVisibility() {
     const w = pad.canvas.width / ratio;
     const h = pad.canvas.height / ratio;
     if (w <= 0 || h <= 0) return; // canvas not sized yet; will be applied on resize
-    try { pad.fromDataURL(dataUrl, { width: w, height: h }); }
-    catch (_err) { /* ignore invalid data URL */ }
+    drawSignatureFitted(pad, dataUrl, w, h);
+  }
+
+  // Draw a data URL into the pad preserving its aspect ratio (fit + center),
+  // instead of stretching it to fill the canvas. Fixes distorted uploads.
+  function drawSignatureFitted(pad, dataUrl, boxW, boxH) {
+    const img = new Image();
+    img.onload = () => {
+      const iw = img.naturalWidth || boxW;
+      const ih = img.naturalHeight || boxH;
+      const scale = Math.min(boxW / iw, boxH / ih);
+      const w = iw * scale;
+      const h = ih * scale;
+      try {
+        pad.fromDataURL(dataUrl, {
+          width: w, height: h,
+          xOffset: (boxW - w) / 2, yOffset: (boxH - h) / 2,
+        });
+      } catch (_err) { /* ignore invalid data URL */ }
+    };
+    img.onerror = () => { /* ignore */ };
+    img.src = dataUrl;
   }
 
   function resizeAllSignatureCanvases() {
@@ -3937,10 +3957,7 @@ function syncDevSidebarVisibility() {
         // priorDataUrl when the cache has been cleared (user cleared or
         // redrew — see clear button + beginStroke below).
         const urlToApply = cachedUrl || priorDataUrl;
-        if (urlToApply) {
-          try { pad.fromDataURL(urlToApply, { width: w, height: 200 }); }
-          catch (_err) { /* skip */ }
-        }
+        if (urlToApply) drawSignatureFitted(pad, urlToApply, w, 200);
       }
     }
   }

@@ -772,9 +772,9 @@ async function embedSignatureIfPresent(pdfDoc, ctxOrPage, signatureDataUrl, mayb
 
     let y = maybeY;
     const page = ctxOrPage;
-    page.drawText('Unterschrift:', { x: 50, y, size: 11, color: rgb(0.2, 0.2, 0.2) });
+    page.drawText('Unterschrift:', { x: 70, y, size: 11, color: rgb(0.2, 0.2, 0.2) });
     y -= 14;
-    page.drawImage(pngImage, { x: 50, y: y - height, width, height });
+    page.drawImage(pngImage, { x: 70, y: y - height, width, height });
     return y - height - 16;
   } catch (_error) {
     return isCtx ? ctxOrPage.y : maybeY;
