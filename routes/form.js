@@ -1806,6 +1806,7 @@ router.post('/client-log', async (req, res) => {
       'client.error',
       'client.unhandled_rejection',
       'client.submit.success',
+      'client.save.adopt_skipped',
     ]);
 
     if (!allowedEvents.has(event)) {
@@ -1831,6 +1832,9 @@ router.post('/client-log', async (req, res) => {
         fileSummary: payload.fileSummary,
         elapsedMs: typeof payload.elapsedMs === 'number' ? payload.elapsedMs : undefined,
         bitrixSynced: typeof payload.bitrixSynced === 'boolean' ? payload.bitrixSynced : undefined,
+        fileField: payload.fileField,
+        expectedCount: typeof payload.expectedCount === 'number' ? payload.expectedCount : undefined,
+        receivedCount: typeof payload.receivedCount === 'number' ? payload.receivedCount : undefined,
       },
     });
 

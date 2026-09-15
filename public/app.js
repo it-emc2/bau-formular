@@ -127,6 +127,9 @@
   let shareToken    = null;
   let fileStore     = {};       // { fieldName: File[] }
   let existingFileStore = {};    // { fieldName: "/uploads/..."[] }
+  // Thumbnails of not-yet-saved files. Each ref keeps its File until a save
+  // returns the persisted URL; the remove button follows the ref either way.
+  let pendingFileRefs = {};     // { fieldName: { file, url }[] }
   let signaturePads = {};       // { fieldName: SignaturePad }
   let signaturePadDataUrls = {}; // cached data URLs for pads whose canvas may have been 0-sized when loaded
   let copiedSignatureDataUrl = null;
@@ -3260,6 +3263,48 @@ function syncDevSidebarVisibility() {
   }
 
   // ── Save / Submit ──────────────────────────────────────
+  // After a successful save the server has the files on disk and the document
+  // references them. Adopt those URLs so the next save/submit uploads only what
+  // is new instead of re-sending everything (which also orphaned the old copies).
+  // The count guard is deliberate: if the response does not match what we sent,
+  // we keep the files in fileStore and fall back to the old re-upload behaviour
+  // rather than dropping the only remaining copy of a camera-captured photo.
+  function adoptSavedFiles(saved) {
+    if (!saved || typeof saved !== 'object') return;
+
+    FILE_UPLOAD_FIELDS.forEach(fieldName => {
+      const fresh = fileStore[fieldName] || [];
+      if (!fresh.length) return;
+
+      const raw = saved[fieldName];
+      const urls = (Array.isArray(raw) ? raw : (raw ? [raw] : [])).filter(Boolean);
+      const existing = existingFileStore[fieldName] || [];
+      const single = SINGLE_FILE_UPLOAD_FIELDS.has(fieldName);
+      const expected = single ? 1 : existing.length + fresh.length;
+
+      if (urls.length !== expected) {
+        logClientEvent({
+          level: 'warn',
+          event: 'client.save.adopt_skipped',
+          message: `Upload-Referenzen fuer ${fieldName} passen nicht (erwartet ${expected}, erhalten ${urls.length}). Dateien bleiben lokal und werden erneut hochgeladen.`,
+          fileField: fieldName,
+          expectedCount: expected,
+          receivedCount: urls.length,
+        });
+        return;
+      }
+
+      const newUrls = single ? urls : urls.slice(existing.length);
+      (pendingFileRefs[fieldName] || []).forEach((ref, index) => {
+        if (!ref.url && newUrls[index]) ref.url = newUrls[index];
+      });
+
+      existingFileStore[fieldName] = urls;
+      fileStore[fieldName] = [];
+      pendingFileRefs[fieldName] = [];
+    });
+  }
+
   async function saveForm(action) {
     if (saveInProgress) {
       showToast('Speichern läuft bereits. Bitte kurz warten.', 'error');
@@ -3292,6 +3337,7 @@ function syncDevSidebarVisibility() {
       clearDirtyState();
 
       if (action === 'save') {
+        adoptSavedFiles(json.data);
         // Show draft link modal
         $('#draftLink').value = json.shareLink;
         $('#draftModal').classList.add('open');
@@ -3320,6 +3366,7 @@ function syncDevSidebarVisibility() {
         }
         // Clear file store after successful submit
         fileStore = {};
+        pendingFileRefs = {};
         const stayOnPage = $('#stayOnPage')?.checked;
         if (!stayOnPage) {
           setTimeout(() => {
@@ -3367,6 +3414,7 @@ function syncDevSidebarVisibility() {
     suppressDirtyTracking = true;
     form.reset();
     fileStore = {};
+    pendingFileRefs = {};
     existingFileStore = {};
     signaturePadDataUrls = {};
     currentFormularTyp = FORMULAR_TYPE_DEFAULT;
@@ -3451,6 +3499,7 @@ function syncDevSidebarVisibility() {
     FILE_UPLOAD_FIELDS.forEach(fieldName => {
       const urls = Array.isArray(data[fieldName]) ? data[fieldName] : (data[fieldName] ? [data[fieldName]] : []);
       existingFileStore[fieldName] = urls.filter(Boolean);
+      pendingFileRefs[fieldName] = [];
       if (!existingFileStore[fieldName].length) return;
       const wrapper = $(`.file-upload[data-name="${fieldName}"]`);
       if (!wrapper) return;
@@ -3501,6 +3550,7 @@ function syncDevSidebarVisibility() {
 
       if (!fileStore[fieldName]) fileStore[fieldName] = [];
       if (!existingFileStore[fieldName]) existingFileStore[fieldName] = [];
+      if (!pendingFileRefs[fieldName]) pendingFileRefs[fieldName] = [];
 
       // Click on drop zone or upload button → open file picker
       const openPicker = () => fileInput.click();
@@ -3543,10 +3593,12 @@ function syncDevSidebarVisibility() {
   function addFiles(fieldName, files, previewEl, multi) {
     if (!fileStore[fieldName]) fileStore[fieldName] = [];
     if (!existingFileStore[fieldName]) existingFileStore[fieldName] = [];
+    if (!pendingFileRefs[fieldName]) pendingFileRefs[fieldName] = [];
 
     if (!multi) {
       fileStore[fieldName] = [];
       existingFileStore[fieldName] = [];
+      pendingFileRefs[fieldName] = [];
       previewEl.innerHTML = '';
     }
 
@@ -3556,6 +3608,8 @@ function syncDevSidebarVisibility() {
 
     files.forEach(file => {
       fileStore[fieldName].push(file);
+      const ref = { file, url: null };
+      pendingFileRefs[fieldName].push(ref);
 
       const thumb = document.createElement('div');
       thumb.className = 'file-thumb';
@@ -3578,8 +3632,15 @@ function syncDevSidebarVisibility() {
       removeBtn.className = 'remove-file';
       removeBtn.textContent = '✕';
       removeBtn.addEventListener('click', () => {
-        const idx = fileStore[fieldName].indexOf(file);
-        if (idx > -1) fileStore[fieldName].splice(idx, 1);
+        if (ref.url) {
+          // Already saved: drop the server URL, not the (discarded) File.
+          existingFileStore[fieldName] = (existingFileStore[fieldName] || []).filter(item => item !== ref.url);
+        } else {
+          const idx = fileStore[fieldName].indexOf(file);
+          if (idx > -1) fileStore[fieldName].splice(idx, 1);
+        }
+        const refIdx = (pendingFileRefs[fieldName] || []).indexOf(ref);
+        if (refIdx > -1) pendingFileRefs[fieldName].splice(refIdx, 1);
         thumb.remove();
         markFormDirty();
       });

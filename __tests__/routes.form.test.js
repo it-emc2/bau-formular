@@ -19,6 +19,12 @@ jest.mock('nodemailer', () => ({
 jest.mock('../services/bitrix', () => ({
   postTimelineComment: jest.fn(),
   updateDealFields: jest.fn(),
+  postChatMessage: jest.fn(),
+}));
+
+jest.mock('../models/OperationLog', () => ({
+  create: jest.fn(),
+  find: jest.fn(),
 }));
 
 jest.mock('../services/orphanUploads', () => ({
@@ -300,6 +306,13 @@ describe('form routes', () => {
     ]);
     expect(existing.videoDesAblaufs).toBe('/uploads/new-video.webm');
     expect(save).toHaveBeenCalled();
+    // The client adopts these URLs from the response and then stops re-uploading
+    // the local files, so the saved paths must come back with the save result.
+    expect(res.body.data.bilderFertigerUmbau).toEqual([
+      '/uploads/existing-image.webp',
+      '/uploads/new-image.webp',
+    ]);
+    expect(res.body.data.videoDesAblaufs).toBe('/uploads/new-video.webm');
   });
 
   it('returns 404 when updating a missing draft', async () => {
