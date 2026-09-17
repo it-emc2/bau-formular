@@ -26,6 +26,11 @@ The application uses `dotenv` to load environment variables from a `.env` file i
 | `SMTP_FROM` | _(empty)_ | Sender email address |
 | `ARBEITSBERICHT_PDF_URL` | `https://angebotskonfigurator-emc2-v2.fly.dev/api/arbeitsbericht/pdf` | External PDF generation endpoint |
 | `EXTERNAL_OFFERS_API_BASE_URL` | `https://angebotskonfigurator-emc2-v2.fly.dev` | External offers API base (used for CSP connect-src) |
+| `BITRIX_IM_WEBHOOK_BASE` | _(empty)_ | Bitrix webhook base for chat messages (`im.message.add`). If empty, chat notifications are skipped. |
+| `BITRIX_CHAT_ID` | _(empty)_ | Numeric Bitrix group chat id for Baustellenabnahme notifications (currently `9534` → dialog `chat9534`) |
+| `N8N_ABNAHME_URL` | _(empty)_ | n8n webhook for the Baustellenabnahme check. If empty, the call is skipped. |
+| `N8N_ABNAHME_TOKEN` | _(empty)_ | Shared secret sent as `X-Abnahme-Token`; must match the n8n Header Auth credential |
+| `N8N_ABNAHME_TZ` | `Europe/Berlin` | Time zone used for the `submitted_at` offset |
 | `ALLOWED_ORIGINS` | _(empty)_ | Additional CORS origins, comma-separated |
 | `NODE_ENV` | _(empty)_ | Set to `production` in Docker. Hides error stack traces in responses. |
 
