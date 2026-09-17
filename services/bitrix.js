@@ -123,6 +123,8 @@ function updateDealFields({ dealId, fields }) {
   });
 }
 
+const chatDialogId = () => (BITRIX_CHAT_ID() ? `chat${BITRIX_CHAT_ID()}` : '');
+
 function postChatMessage(message, { chatId = BITRIX_CHAT_ID() } = {}) {
   const imWebhookBase = BITRIX_IM_WEBHOOK_BASE();
   if (!imWebhookBase || !chatId) {
@@ -139,4 +141,5 @@ module.exports = {
   postTimelineComment,
   updateDealFields,
   postChatMessage,
+  chatDialogId,
 };

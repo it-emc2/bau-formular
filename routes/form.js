@@ -12,7 +12,8 @@ const Abnahme = require('../models/Abnahme');
 const Entwurf = require('../models/Entwurf');
 const OperationLog = require('../models/OperationLog');
 const { buildDocumentPackage } = require('../services/documentLetter');
-const { postTimelineComment, updateDealFields, postChatMessage } = require('../services/bitrix');
+const { postTimelineComment, updateDealFields, postChatMessage, chatDialogId } = require('../services/bitrix');
+const { buildAbnahmeCheckPayload, postAbnahmeCheck } = require('../services/n8nAbnahmeCheck');
 const { buildStepDocumentAttachments, buildBitrixUploadAttachment, buildSelectedPdfAttachments, buildProduktverkaufSummaryText, buildCustomerName, ADMIN_PDF_SPECS, compressUploadedFiles } = require('../services/stepDocuments');
 const { getUploadsDir } = require('../services/uploadsPath');
 const { cleanupOrphanUploads, getDraftFileReferences } = require('../services/orphanUploads');
@@ -378,7 +379,7 @@ const BAUSTELLENABNAHME_CHAT_STATUS = {
 };
 
 async function notifyBaustellenabnahmeChat(kind, doc = {}) {
-  if (doc.formularTyp !== 'baustellenabnahme') return;
+  if (doc.formularTyp !== 'baustellenabnahme') return null;
 
   const { emoji, label } = BAUSTELLENABNAHME_CHAT_STATUS[kind];
   const dealId = doc.bitrixAuftragId;
@@ -397,6 +398,7 @@ async function notifyBaustellenabnahmeChat(kind, doc = {}) {
 
   try {
     await postChatMessage(lines.join('\n'));
+    return chatDialogId();
   } catch (error) {
     await addOperationLog({
       level: 'error',
@@ -404,6 +406,7 @@ async function notifyBaustellenabnahmeChat(kind, doc = {}) {
       message: error.message,
       context: { kind },
     });
+    return null;
   }
 }
 
@@ -2138,7 +2141,17 @@ router.post('/submit', uploadAny, async (req, res) => {
         submittedId: submitResult.submittedId,
       },
     });
-    await notifyBaustellenabnahmeChat('submitted', bitrixPayload);
+    const chatId = await notifyBaustellenabnahmeChat('submitted', bitrixPayload);
+    if (chatId) {
+      const checkPayload = buildAbnahmeCheckPayload(bitrixPayload, {
+        chatId,
+        customerName: buildCustomerName(bitrixPayload) || bitrixPayload.name,
+        documents: bitrixSync.attachmentSummary || [],
+      });
+      // fire-and-forget: ein Fehler hier darf die Abnahme nie zuruecknehmen
+      postAbnahmeCheck(checkPayload, { log: entry => addOperationLog({ ...entry, context: { ...logContext, ...(entry.context || {}) } }) })
+        .catch(() => {});
+    }
     return res.status(submitResult.statusCode).json(submitResult.response);
   } catch (error) {
     if (!uploadedFilesProtectedByDraft) {
