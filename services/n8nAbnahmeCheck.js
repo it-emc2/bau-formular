@@ -46,7 +46,7 @@ async function postAbnahmeCheck(payload, { log = async () => {} } = {}) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Abnahme-Token': token },
         body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(30_000),
+        signal: AbortSignal.timeout(10_000),
       });
       const body = await response.text();
 

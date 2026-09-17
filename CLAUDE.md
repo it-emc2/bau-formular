@@ -64,7 +64,7 @@ Tests use Jest (node environment, no supertest). Test files live in `__tests__/`
 - **SMTP Email** — Nodemailer with `SMTP_HOST/PORT/USER/PASS/FROM` env vars, falls back to mailto: links
 - **Arbeitsbericht PDF** — Proxied from external service (`ARBEITSBERICHT_PDF_URL`)
 - **External Offers App** — `EXTERNAL_OFFERS_API_BASE_URL` (default: angebotskonfigurator-emc2-v2.fly.dev), also used in CSP connect-src
-- **n8n Abnahme-Check** — nach erfolgreicher Baustellenabnahme-Submission + 🟢 Chat-Nachricht: `POST $N8N_ABNAHME_URL` mit Header `X-Abnahme-Token: $N8N_ABNAHME_TOKEN` (`services/n8nAbnahmeCheck.js`). Fire-and-forget, 3 Retries (2s/10s/60s) nur bei 5xx/Netzwerkfehler, 30s Timeout.
+- **n8n Abnahme-Check** — nach erfolgreicher Baustellenabnahme-Submission + 🟢 Chat-Nachricht: `POST $N8N_ABNAHME_URL` mit Header `X-Abnahme-Token: $N8N_ABNAHME_TOKEN` (`services/n8nAbnahmeCheck.js`). Fire-and-forget, 3 Retries (2s/10s/60s) nur bei 5xx/Netzwerkfehler, 10s Timeout.
 - **CORS** — `ALLOWED_ORIGINS` env var (comma-separated) merged with hardcoded defaults
 
 ## Admin / Testmodus

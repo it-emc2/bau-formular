@@ -30,3 +30,8 @@ test('baut das n8n-Payload aus einer Abnahme', () => {
 test('leere Uploads bleiben ein leeres Array', () => {
   expect(buildAbnahmeCheckPayload(doc, { chatId: 'chat42' }).documents).toEqual([]);
 });
+
+test('submitted_at traegt den echten Offset des Datums (Winterzeit)', () => {
+  const winter = buildAbnahmeCheckPayload(doc, { chatId: 'chat42', submittedAt: new Date('2026-01-15T09:20:00Z') });
+  expect(winter.submitted_at).toBe('2026-01-15T10:20:00+01:00');
+});
