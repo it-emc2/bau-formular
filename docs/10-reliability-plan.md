@@ -17,11 +17,11 @@ A professional web app for **non-technical workers on iPhones**:
 |---|---|---|---|
 | — | Step 1: upload each file once per draft | ✅ done, **live via manual `fly deploy`**, **not on main** | `form-submit-upload-once-v2` (`19d35cb`) |
 | — | Fix 2 timing-out Bitrix retry tests | ✅ done | same branch (`4a2c30f`) |
-| A1 | Auto-save on the phone (IndexedDB) | 🟡 built, verified locally (reload restores text, photos, signature); not deployed | `feat/a1-b2-autosave-status` |
-| B2 | Permanent status line | 🟡 built with A1 | `feat/a1-b2-autosave-status` |
-| — | No 🟡 chat message on draft save (only 🟢 submit / 🔴 failure) | 🟡 built | `feat/a1-b2-autosave-status` |
-| B1 | Fast green: Bitrix push in background | ⬜ | |
-| C2 | Real errors + failed pushes → Bitrix chat | ⬜ (with B1) | |
+| A1 | Auto-save on the phone (IndexedDB) | ✅ done, verified locally (Chromium); **iPhone test open**; not deployed | `plan/reliability-roadmap` (`b6306dd`) |
+| B2 | Permanent status line | ✅ done (with A1); not deployed | same (`b6306dd`) |
+| — | No 🟡 chat message on draft save (only 🟢 submit / 🔴 failure remain) | ✅ done; not deployed | same (`b6306dd`) |
+| B1 | Fast green: Bitrix push in background | ⬜ **next** | |
+| C2 | Real errors + failed pushes → Bitrix chat | ⬜ **next** (with B1) | |
 | A2 | Background sync to server after each step/photo | ⬜ | |
 | A3 | Outbox: submit queued while offline | ⬜ | |
 | A4 | `storage.persist()` + Home Screen install (manifest) | ⬜ | |
@@ -37,7 +37,9 @@ A professional web app for **non-technical workers on iPhones**:
 | C6 | Run tests in CI before deploy | ⬜ | |
 | C7 | Keep compressed video, automatic orphan cleanup | ⬜ | |
 
-Recommended order: **A1+B2 → B1+C2 → A2+A3 → the rest** (small items, any order).
+Recommended order: ~~A1+B2~~ → **B1+C2** → A2+A3 → the rest (small items, any order).
+
+Branches: `plan/reliability-roadmap` (local, **not pushed**) = `form-submit-upload-once-v2` + this plan + A1/B2 (`b6306dd`). Nothing of A1/B2 is live yet.
 
 ### ⚠️ Open deployment issue — read first
 
@@ -99,7 +101,7 @@ Verified end-to-end on production (2026-10-02, deal 65278): saves uploaded 3 →
 
 ## Phase A — Nothing gets lost
 
-### A1 · Auto-save on the phone *(next)*
+### A1 · Auto-save on the phone *(done — see "As built" below)*
 - Persist form state locally on every change: field values, signatures (data URLs), `existingFileStore`, and **fresh `File` blobs** from `fileStore` (IndexedDB stores Blobs; `localStorage` cannot).
 - Key the local record by deal/`terminId` + form type, plus `formId`/`shareToken` once known.
 - On load: if a local record exists that is newer than the server draft, offer to restore it: *"Ihr Stand von 10:42 wurde wiederhergestellt."* Never silently overwrite a server draft.
@@ -108,6 +110,17 @@ Verified end-to-end on production (2026-10-02, deal 65278): saves uploaded 3 →
 - Restoring must re-create thumbnails through the same code paths as today (`addFiles` for fresh files, the `loadFormData` loop for saved URLs) so `pendingFileRefs` stays consistent.
 - Watch out: signature pads are re-applied after canvases are sized (`signaturePadDataUrls` cache, `drawSignatureFitted`) — restore must use that path, not draw directly.
 - Acceptance: fill steps 1–3 with photos and a signature, reload the tab (or kill Safari), reopen → everything is back, with no network involved.
+
+**As built (`b6306dd`, `public/app.js` section "Local auto-save (IndexedDB)"):**
+- DB `bauFormular` v1, stores `forms` (key = `location.pathname + location.search`, i.e. per `?dealId`; workers normally open the form from the Bitrix link with `dealId`) and `files` (key = `<formKey>|<id>`, each picked `File` written **once**, tracked via a `WeakMap`; blobs of removed/adopted thumbnails are pruned on each snapshot).
+- Record: `{ data: collectFormData(), files: {field: [fileId]}, step, formId, shareToken, dirty, serverSavedAt, savedAt }`.
+- `scheduleLocalSave()` (500 ms debounce) runs from `markFormDirty`, `showStep`, pad `endStroke`, after a successful `/save`; flushed on `visibilitychange → hidden`. Skipped on step 0 and for untouched forms (`!hasUnsavedChanges && !formId`).
+- `restoreLocalSnapshot(serverData)` in `init` after `loadDraftIfNeeded` (which now returns the draft data or `null`): server draft with `updatedAt >= savedAt` wins and the local record is deleted; otherwise `resetFormState` → `populateForm` → `addFiles(..., multi=true)` → `showStep(record.step)` + toast *"Ihr Stand von HH:MM wurde wiederhergestellt."*. The `?dealId` Bitrix autofill is skipped when restored.
+- `deleteLocalSnapshot()` after successful submit and on *Zurück zum Hauptmenü*.
+- `collectFormData` now prefers `signaturePadDataUrls[name]` over the canvas (fixes lost signatures on hidden/still-painting pads).
+- Client log events `client.local.restored` / `client.local.failed` (added to the `/client-log` allowlist).
+- B2: `#saveStatus` (sticky, under the step indicator), `renderSaveStatus()`; texts: ⏳ Wird gespeichert / gesendet · ⚠ Sicherung auf dem Handy nicht möglich · ⚠ Kein Netz · ✓ Alles gespeichert · 💾 Auf dem Handy gesichert.
+- **Open:** test on a real iPhone (camera → tab reload, Safari killed); not tested with `/save` + `/submit` end-to-end yet. Known limit: pages without `?dealId` share one record per form type (rare). No "Verwerfen" button; *Zurück zum Hauptmenü* discards.
 
 ### A2 · Background sync to the server
 - After each step change and after each photo/video is added, run a silent `/save` (no modal) when online. Reuses the step 1 adoption, so each file goes up once.
@@ -185,7 +198,8 @@ Native app (Home Screen PWA is enough) · Tigris/R2 object storage (`docs/TODO.m
 - Local uploads go to `./uploads` in the worktree (production uses `/data/uploads` on the Fly volume).
 
 ### Testing
-- `npm test` — 74 tests, all green on `form-submit-upload-once-v2` after merging `main`.
+- `npm test` — 74 tests, all green (as of `b6306dd`). If old worktrees exist under `.claude/worktrees/`, plain `npm test` also picks up their copies and shows ~35 unrelated failures; run `npx jest --runInBand --watchman=false --testPathIgnorePatterns /.claude/`.
+- Local server for the in-app browser: `.claude/launch.json` (untracked) starts `PORT=3007 ALLOWED_ORIGINS=http://localhost:3007 node server.js`. Local client logs go to the **production** OperationLogs.
 - `public/app.js` is a single IIFE with no exports; client logic can't be unit-tested directly. Verify client changes in a real browser.
 - **Test deal: `65278` — Stefan Wolfrum** (`/AbschlussderBaustelle?dealId=65278` pre-fills step 1). Use it for any end-to-end submit. Put a "TESTLAUF – bitte ignorieren" note in *Hinweise für das Büro*.
 - In the browser, test media can be generated on a `<canvas>` (photos via `toBlob`, video via `MediaRecorder` on `canvas.captureStream()`) and handed to the file inputs with a `DataTransfer` — the form treats them exactly like gallery picks.
