@@ -16,7 +16,7 @@ const { postTimelineComment, updateDealFields, postChatMessage, chatDialogId } =
 const { buildAbnahmeCheckPayload, postAbnahmeCheck } = require('../services/n8nAbnahmeCheck');
 const { buildStepDocumentAttachments, buildBitrixUploadAttachment, buildSelectedPdfAttachments, buildProduktverkaufSummaryText, buildCustomerName, ADMIN_PDF_SPECS, compressUploadedFiles } = require('../services/stepDocuments');
 const { getUploadsDir } = require('../services/uploadsPath');
-const { cleanupOrphanUploads, getDraftFileReferences, deleteExpiredDrafts } = require('../services/orphanUploads');
+const { cleanupOrphanUploads, getDraftFileReferences, deleteExpiredDrafts, getVolumeUsage } = require('../services/orphanUploads');
 const { addOperationLog, listOperationLogs } = require('../services/operationLogs');
 
 const router = express.Router();
@@ -52,7 +52,7 @@ function uploadAny(req, res, next) {
         if (compressed.length > 0) {
           addOperationLog({
             event: 'upload.compressed',
-            message: `${compressed.length} Bild(er) bei Upload komprimiert.`,
+            message: `${compressed.length} Datei(en) bei Upload komprimiert (${compressed.map(c => `${c.kind} ${c.originalSizeKB} KB -> ${c.compressedSizeKB} KB`).join(', ')}).`,
             context: { files: compressed },
           }).catch(() => {});
         }
@@ -1159,11 +1159,58 @@ async function cleanupExpiredDrafts() {
   }
 }
 
+const ORPHAN_MIN_AGE_MS = 24 * 60 * 60 * 1000;
+const VOLUME_ALARM_PERCENT = 80;
+
+// Files nothing references any more. The minimum age protects uploads whose
+// draft is still being saved (multer writes the file before the draft exists).
+async function cleanupOrphanFiles() {
+  try {
+    const result = await cleanupOrphanUploads({ deleteFiles: true, uploadsDir, minAgeMs: ORPHAN_MIN_AGE_MS });
+    if (!result.deletedCount) return;
+    await addOperationLog({
+      event: 'storage.orphans.deleted',
+      message: `${result.deletedCount} verwaiste Datei(en) geloescht (${result.deletedBytesLabel}).`,
+      context: { files: result.orphanFiles.map(file => file.relativePath) },
+    });
+  } catch (error) {
+    await addOperationLog({ level: 'error', event: 'storage.orphans.failed', message: error.message }).catch(() => {});
+  }
+}
+
+async function checkVolumeUsage({ statfs } = {}) {
+  try {
+    const usage = await getVolumeUsage({ uploadsDir, ...(statfs ? { statfs } : {}) });
+    if (usage.usedPercent < VOLUME_ALARM_PERCENT) return usage;
+    const message = `Volume ${usage.usedPercent} % voll (${usage.usedLabel} von ${usage.totalLabel}).`;
+    await addOperationLog({ level: 'error', event: 'storage.volume.alarm', message, context: usage });
+    const sep = '━'.repeat(45);
+    await postChatMessage([
+      '💾 SPEICHER BAU-FORMULAR',
+      sep,
+      `☐ 🔴 ${message}`,
+      '     👉 Testmodus → Volume-Speicher prüfen; ggf. „Alte Dateien löschen“ oder Volume vergrößern.',
+      sep,
+      '🤖 Automatisch generiert | Quelle: bau-formular',
+    ].join('\n')).catch(error => addOperationLog({ level: 'error', event: 'chat.notify.failed', message: error.message, context: { kind: 'volume_alarm' } }));
+    return usage;
+  } catch (error) {
+    await addOperationLog({ level: 'error', event: 'storage.volume.check_failed', message: error.message }).catch(() => {});
+    return null;
+  }
+}
+
+async function runDailyMaintenance() {
+  await cleanupExpiredDrafts();
+  await cleanupOrphanFiles();
+  await checkVolumeUsage();
+}
+
 function startBackgroundJobs() {
   setTimeout(retryPendingBitrixPushes, 30 * 1000).unref();
   setInterval(retryPendingBitrixPushes, BITRIX_RETRY_AFTER_MS).unref();
-  setTimeout(cleanupExpiredDrafts, 60 * 1000).unref();
-  setInterval(cleanupExpiredDrafts, 24 * 60 * 60 * 1000).unref();
+  setTimeout(runDailyMaintenance, 60 * 1000).unref();
+  setInterval(runDailyMaintenance, 24 * 60 * 60 * 1000).unref();
 }
 
 function buildDraftSearchQuery(search = '') {
@@ -2424,3 +2471,5 @@ module.exports.pushAbnahmeToBitrix = pushAbnahmeToBitrix;
 module.exports.retryPendingBitrixPushes = retryPendingBitrixPushes;
 module.exports.startBackgroundJobs = startBackgroundJobs;
 module.exports.cleanupExpiredDrafts = cleanupExpiredDrafts;
+module.exports.cleanupOrphanFiles = cleanupOrphanFiles;
+module.exports.checkVolumeUsage = checkVolumeUsage;

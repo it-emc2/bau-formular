@@ -43,7 +43,7 @@ Tests use Jest (node environment, no supertest). Test files live in `__tests__/`
 - `models/Entwurf.js` — Draft model, reuses the same schema via `createAbnahmeSchema` but writes to a separate `Entwürfe` collection; drafts do not require `terminId`
 - `services/bitrix.js` — Bitrix webhook REST client (all calls use GET, including writes — this is how Bitrix webhooks work). GET timeout 30s, POST timeout 60s (on the HTTP call only — compression happens before the timer starts).
 - `services/documentLetter.js` — HTML/Word document generation from form data
-- `services/stepDocuments.js` — PDF generation using pdf-lib. Exports `buildBitrixUploadAttachment` (compresses images via sharp at 1600px/q68 and video via ffmpeg at 1280×720 CRF30 `fast` preset), `buildStepDocumentAttachments`, `buildSelectedPdfAttachments`, `buildCustomerName`, `ADMIN_PDF_SPECS`, `compressUploadedFiles`. Images are compressed at upload time (in `uploadAny` middleware) and skipped during Bitrix attachment building if already compressed in the current server process (`uploadTimeCompressed` Set). Videos are compressed at Bitrix push time.
+- `services/stepDocuments.js` — PDF generation using pdf-lib. Exports `buildBitrixUploadAttachment` (compresses images via sharp at 1600px/q68 and video via ffmpeg at 1280×720 CRF30 `fast` preset), `buildStepDocumentAttachments`, `buildSelectedPdfAttachments`, `buildCustomerName`, `ADMIN_PDF_SPECS`, `compressUploadedFiles`. Images **and videos** are compressed at upload time (in `uploadAny` middleware; the compressed file replaces the original, videos become `<name>.mp4`) and skipped during Bitrix attachment building if already compressed in the current server process (`uploadTimeCompressed` Set). Videos uploaded before C7 (or after a restart) are still compressed at Bitrix push time.
 - `services/orphanUploads.js` — finds upload files on disk with no matching Abnahme or Entwurf in MongoDB
 
 **Frontend (vanilla JS SPA in `public/`):**
@@ -59,7 +59,7 @@ Tests use Jest (node environment, no supertest). Test files live in `__tests__/`
 
 - **Save (draft):** Form data → `POST /api/form/save` (multipart via multer) → `Entwurf` collection (status: `draft`). The client also saves silently (`saveForm('autosave')`) on step change, 3 s after a photo/video, when back online and when the tab is hidden; `adoptSavedFiles(saved, sent)` adopts only the files that request sent.
 - **Draft by deal:** `GET /api/form/drafts/by-deal/:dealId` → newest Baustellenabnahme draft; the `?dealId=` link continues it when the phone has no newer local copy.
-- **Draft cleanup:** drafts created since 2026-10-02 and untouched for 30 days are deleted daily with their files (`deleteExpiredDrafts`, `startBackgroundJobs`).
+- **Daily maintenance** (`runDailyMaintenance`, started by `startBackgroundJobs`): drafts created since 2026-10-02 and untouched for 30 days are deleted with their files; orphan files older than 24 h are deleted; volume ≥ 80 % → 🔴 chat alarm.
 - **Outbox:** a submit that fails on the network is kept in IndexedDB (`outboxQueuedAt`, `submitId`) and resent by `flushOutbox` from any page. `submitId` is unique on `Abnahme`; a repeat returns the existing Abnahme (`duplicate: true`).
 - **Submit:** Form data → `POST /api/form/submit` → creates `Abnahme` document (status: `submitted`), deletes the `Entwurf` if one existed, then sends to Bitrix timeline
 - **Share token:** Both drafts and submitted forms get a unique `shareToken` (32-char hex). `GET /api/form/token/:token` checks `Entwurf` first, then `Abnahme`
@@ -106,7 +106,7 @@ All admin UI is hidden behind the dev-mode password toggle (Testmodus). When act
 **Background push (B1):** `/submit` saves the Abnahme with `bitrixStatus: 'pending'` and answers immediately; `pushAbnahmeToBitrix` then runs the flow below, sets `sent`/`failed`/`skipped`, and sends the 🟢 chat + n8n check. `retryPendingBitrixPushes` (every 10 min + 30 s after start) retries `failed` and stuck `pending` Abnahmen up to 4 attempts in total, then posts a 🔴 chat alert with deal + form links. Details: `docs/10-reliability-plan.md` (B1).
 
 **Bitrix submit flow (normal + admin push):**
-1. All media compressed first (`sharp` for images at upload time; `ffmpeg` for video at push time) — no timeout applies here
+1. All media compressed first (`sharp` / `ffmpeg` at upload time; older videos at push time) — no timeout applies here
 2. Single `postTimelineComment` with all attachments → 60s HTTP timeout
 3. If that fails: wait 10s, retry up to 2 more times (3 attempts total), each with its own 60s window
 4. If all 3 attempts fail: split into ≤8 MB base64 batches, each with its own 60s window

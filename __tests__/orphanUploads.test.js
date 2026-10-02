@@ -7,7 +7,7 @@ jest.mock('../models/Entwurf', () => ({ find: jest.fn(), deleteMany: jest.fn() }
 
 const Abnahme = require('../models/Abnahme');
 const Entwurf = require('../models/Entwurf');
-const { deleteExpiredDrafts } = require('../services/orphanUploads');
+const { deleteExpiredDrafts, cleanupOrphanUploads, getVolumeUsage } = require('../services/orphanUploads');
 
 function cursorOf(docs) {
   return { lean: () => ({ cursor: () => docs[Symbol.iterator]() }) };
@@ -47,5 +47,39 @@ describe('deleteExpiredDrafts', () => {
 
     expect(result).toEqual({ deletedDrafts: [], deletedFiles: [] });
     expect(Entwurf.deleteMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('cleanupOrphanUploads minimum age', () => {
+  let dir;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'uploads-'));
+    ['young.jpg', 'old.jpg', 'used.jpg'].forEach(name => fs.writeFileSync(path.join(dir, name), 'x'));
+    const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+    fs.utimesSync(path.join(dir, 'old.jpg'), twoDaysAgo, twoDaysAgo);
+    fs.utimesSync(path.join(dir, 'used.jpg'), twoDaysAgo, twoDaysAgo);
+    Abnahme.find.mockReturnValue(cursorOf([{ _id: 'a1', bilder: ['/uploads/used.jpg'] }]));
+    Entwurf.find.mockReturnValue(cursorOf([]));
+  });
+
+  afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  it('deletes only unreferenced files older than the minimum age', async () => {
+    const result = await cleanupOrphanUploads({ deleteFiles: true, uploadsDir: dir, minAgeMs: 24 * 60 * 60 * 1000 });
+
+    expect(result.orphanFiles.map(file => file.relativePath)).toEqual(['old.jpg']);
+    expect(fs.existsSync(path.join(dir, 'old.jpg'))).toBe(false);
+    expect(fs.existsSync(path.join(dir, 'young.jpg'))).toBe(true);
+    expect(fs.existsSync(path.join(dir, 'used.jpg'))).toBe(true);
+  });
+});
+
+describe('getVolumeUsage', () => {
+  it('computes used percent from statfs', async () => {
+    const statfs = async () => ({ blocks: 1000, bfree: 150, bsize: 4096 });
+    const usage = await getVolumeUsage({ uploadsDir: '/x', statfs });
+    expect(usage.usedPercent).toBe(85);
+    expect(usage.usedBytes).toBe(850 * 4096);
   });
 });

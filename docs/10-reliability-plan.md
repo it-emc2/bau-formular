@@ -35,9 +35,9 @@ A professional web app for **non-technical workers on iPhones**:
 | C4 | Longer retention for submit/Bitrix logs, protect "Logs löschen" | ⬜ | |
 | C5 | Graceful shutdown on deploy | ⬜ | |
 | C6 | Run tests in CI before deploy | ⬜ | |
-| C7 | Compress video on upload, daily orphan cleanup, 80 % volume alarm | 📝 planned (decisions below), not started | |
+| C7 | Compress video on upload, daily orphan cleanup, 80 % volume alarm | ✅ done, 90/90 tests; local e2e: 17.6 MB `.mov` → 186 KB `.mp4` in 1.6 s, original + temp removed; not deployed | `plan/reliability-roadmap` |
 
-Recommended order: ~~A1+B2~~ → ~~B1+C2~~ → ~~A2+A3~~ → ~~A4~~ → **C7** → C6 → C1+C2 rest → B4 → the rest (small items, any order).
+Recommended order: ~~A1+B2~~ → ~~B1+C2~~ → ~~A2+A3~~ → ~~A4~~ → ~~C7~~ → **C6** → C1+C2 rest → B4 → the rest (small items, any order).
 
 Branches: `plan/reliability-roadmap` (local, **not pushed**) = `form-submit-upload-once-v2` + this plan + A1/B2 (`b6306dd`). Nothing of A1/B2 is live yet.
 
@@ -225,6 +225,7 @@ Read `UPLOAD_MAX_MB` (currently unused) into multer `limits`, expose the limit t
   3. **Volume alarm:** daily `statfs` on the uploads dir; above 80 % → 🔴 Bitrix chat message with usage (C2 style), logged.
   - Not done: the 17 existing videos stay as they are (owner). No automatic age-based deletion; "Alte Dateien löschen" stays a manual button (owner).
   - Forecast after C7: ~5 MB per job, ~100 MB/month at current volume → > 1 year of headroom.
+  - **As built:** `compressUploadedVideo` in `services/stepDocuments.js` (shared `videoFfmpegArgs`; temp file `.upload-*`, renamed to `<name>.mp4`, falls back to the original on any error); `runDailyMaintenance` in `routes/form.js` = `cleanupExpiredDrafts` → `cleanupOrphanFiles` (24 h min age, `storage.orphans.*`) → `checkVolumeUsage` (`storage.volume.alarm` + chat). Runs 60 s after start and every 24 h.
 
 ## Out of scope for now
 Native app (Home Screen PWA is enough) · Tigris/R2 object storage (`docs/TODO.md`; only if the volume still runs short after C7; Tigris free tier is 5 GB, $0.02/GB after, no egress fees) · server-side job queue (only if background pushes actually get lost).

@@ -31,6 +31,7 @@ jest.mock('../models/OperationLog', () => ({
 
 jest.mock('../services/orphanUploads', () => ({
   cleanupOrphanUploads: jest.fn(),
+  getVolumeUsage: jest.requireActual('../services/orphanUploads').getVolumeUsage,
 }));
 
 jest.mock('../services/operationLogs', () => ({
@@ -924,6 +925,18 @@ describe('form routes', () => {
 
     expect((await runHandlers(handlers, { params: { dealId: '1' } })).statusCode).toBe(404);
     expect((await runHandlers(handlers, { params: { dealId: 'abc' } })).statusCode).toBe(400);
+  });
+
+  it('posts a chat alarm only when the volume is at least 80 % full', async () => {
+    const { checkVolumeUsage } = require('../routes/form');
+    postChatMessage.mockResolvedValue({});
+
+    await checkVolumeUsage({ statfs: async () => ({ blocks: 100, bfree: 50, bsize: 1024 }) });
+    expect(postChatMessage).not.toHaveBeenCalled();
+
+    await checkVolumeUsage({ statfs: async () => ({ blocks: 100, bfree: 15, bsize: 1024 }) });
+    expect(postChatMessage).toHaveBeenCalledWith(expect.stringContaining('Volume 85 % voll'));
+    expect(addOperationLog).toHaveBeenCalledWith(expect.objectContaining({ event: 'storage.volume.alarm' }));
   });
 
   describe('POST /admin/resend-full', () => {

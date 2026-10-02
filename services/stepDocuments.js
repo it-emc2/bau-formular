@@ -862,6 +862,21 @@ async function optimizeImageBuffer(fileBuffer) {
   return { buffer: output, extension: '.jpg', optimized: true };
 }
 
+function videoFfmpegArgs(inputPath, outputPath) {
+  return [
+    '-y',
+    '-i', inputPath,
+    '-vf', `scale='min(1280,iw)':'min(${VIDEO_MAX_HEIGHT},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2`,
+    '-c:v', 'libx264',
+    '-preset', 'fast',
+    '-crf', '30',
+    '-c:a', 'aac',
+    '-b:a', '96k',
+    '-movflags', '+faststart',
+    outputPath,
+  ];
+}
+
 async function optimizeVideoBuffer(fullPath, basename, fileBuffer, uploadsDir) {
   if (!isFfmpegAvailable()) {
     return {
@@ -876,18 +891,7 @@ async function optimizeVideoBuffer(fullPath, basename, fileBuffer, uploadsDir) {
   const outputPath = path.join(uploadsDir, outputName);
 
   try {
-    await runFfmpeg([
-      '-y',
-      '-i', fullPath,
-      '-vf', `scale='min(1280,iw)':'min(${VIDEO_MAX_HEIGHT},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2`,
-      '-c:v', 'libx264',
-      '-preset', 'fast',
-      '-crf', '30',
-      '-c:a', 'aac',
-      '-b:a', '96k',
-      '-movflags', '+faststart',
-      outputPath,
-    ]);
+    await runFfmpeg(videoFfmpegArgs(fullPath, outputPath));
 
     const output = fs.readFileSync(outputPath);
     if (output.length >= fileBuffer.length) {
@@ -944,6 +948,8 @@ async function buildBitrixUploadAttachment(filePath, fieldName, fileIndex = 1, o
         };
       }
     }
+  } else if (VIDEO_EXTENSIONS.has(ext) && uploadTimeCompressed.has(basename)) {
+    // already compressed at upload time, nothing to do
   } else if (VIDEO_EXTENSIONS.has(ext)) {
     let optimizedVideo;
     try {
@@ -1353,8 +1359,46 @@ async function buildConfirmationLetterPdf(data = {}) {
   };
 }
 
+// Videos are kept only in the compressed form Bitrix gets (<= 1280x720, CRF 30);
+// the phone original is replaced. Falls back to the original on any ffmpeg error.
+async function compressUploadedVideo(file, uploadsDir) {
+  if (!isFfmpegAvailable()) return null;
+
+  const fullPath = path.join(uploadsDir, file.filename);
+  const originalSize = file.size || fs.statSync(fullPath).size;
+  const tempPath = path.join(uploadsDir, `.upload-${Date.now()}-${process.pid}-${file.filename}.mp4`);
+  const newBasename = file.filename.replace(/\.[^.]+$/, '.mp4');
+  const newFullPath = path.join(uploadsDir, newBasename);
+
+  try {
+    await runFfmpeg(videoFfmpegArgs(fullPath, tempPath));
+    const compressedSize = fs.statSync(tempPath).size;
+    if (compressedSize >= originalSize) return null;
+
+    fs.renameSync(tempPath, newFullPath);
+    if (newBasename !== file.filename) fs.rmSync(fullPath, { force: true });
+    file.filename = newBasename;
+    file.path = newFullPath;
+    file.size = compressedSize;
+  } catch {
+    return null;
+  } finally {
+    fs.rmSync(tempPath, { force: true });
+  }
+
+  uploadTimeCompressed.add(file.filename);
+  return {
+    kind: 'video',
+    fieldName: file.fieldname,
+    filename: file.filename,
+    originalSizeKB: Math.round(originalSize / 1024),
+    compressedSizeKB: Math.round(file.size / 1024),
+  };
+}
+
 async function compressUploadedFile(file, uploadsDir) {
   const ext = path.extname(file.filename).toLowerCase();
+  if (VIDEO_EXTENSIONS.has(ext)) return compressUploadedVideo(file, uploadsDir);
   if (!IMAGE_EXTENSIONS.has(ext)) return null;
 
   const fullPath = path.join(uploadsDir, file.filename);
