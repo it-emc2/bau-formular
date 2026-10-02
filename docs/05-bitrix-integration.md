@@ -156,6 +156,30 @@ The upload follows a single-comment → retry → batch-fallback strategy:
 
 Images are compressed at **upload time** (in the `uploadAny` middleware). Videos are compressed at **Bitrix push time** and require ffmpeg to be installed on the server.
 
+## Chat Notification and n8n Abnahme-Check
+
+For `formularTyp: 'baustellenabnahme'` only, the app posts a status message into a Bitrix group chat via `im.message.add` (`BITRIX_IM_WEBHOOK_BASE`, `BITRIX_CHAT_ID` — currently `9534`, dialog id `chat9534`):
+
+- 🟡 draft saved, 🟢 handover completed, 🔴 submit failed
+
+After the 🟢 message succeeded, `services/n8nAbnahmeCheck.js` posts the submission to the n8n `Baustellenabnahme-Check` workflow, which cross-checks it against FortyTools scheduling data and replies into the same chat:
+
+```
+POST $N8N_ABNAHME_URL
+X-Abnahme-Token: $N8N_ABNAHME_TOKEN
+
+{ "deal_id": 65046, "customer_name": "Frau Veronika Schiller",
+  "address": "Musterweg 5, 90402 Nürnberg",
+  "submitted_at": "2026-09-11T10:20:00+02:00", "chat_id": "chat9534",
+  "documents": ["05-abschluss-und-unterschrift-schiller.pdf", "..."],
+  "source": "bau-formular" }
+```
+
+- `submitted_at` is the submit time in `Europe/Berlin` (override with `N8N_ABNAHME_TZ`) with the real offset for that date — `+01:00` in winter.
+- `documents` are the actual filenames sent to Bitrix (`bitrixSync.attachmentSummary`), PDFs included.
+- Fire-and-forget: the call runs after the response is built. 3 retries (2s/10s/60s) on network errors and 5xx, no retry on 4xx, 10s timeout. Every outcome lands in the operation log (`n8n.abnahme_check.*`); a failure never rolls back the submission.
+- Without `N8N_ABNAHME_URL` / `N8N_ABNAHME_TOKEN` the call is skipped and logged.
+
 ## Admin Re-Push (Bitrix Neu-Push)
 
 The admin panel provides a manual re-push tool for cases where the automatic submission sync failed or needs to be repeated.
