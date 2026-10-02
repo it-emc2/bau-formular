@@ -3552,6 +3552,92 @@ function syncDevSidebarVisibility() {
     }
   }
 
+  // ── Receipt after submit (B5) ──────────────────────────
+  const FORMULAR_TYPE_TITLES = {
+    baustellenabnahme: 'Abschluss der Baustelle',
+    zusaetzliche_leistungen: 'Zusätzliche Leistungen',
+    nachbesserung: 'Nachbesserung',
+    schadensmeldung: 'Schadensmeldung',
+  };
+  const RECEIPT_POLL_MS = 5000;
+  const RECEIPT_POLL_MAX_MS = 120000;
+  let receiptPollTimer = null;
+
+  function countLabel(n, singular, plural) {
+    return `${n} ${n === 1 ? singular : plural}`;
+  }
+
+  function showReceipt(data = {}, { goHomeOnDone = true } = {}) {
+    const name = buildFullName(data) || data.name || '';
+    const address = [data.adresse?.strasse, [data.adresse?.plz, data.adresse?.stadt].filter(Boolean).join(' ')]
+      .filter(Boolean).join(', ');
+    const photos = FILE_UPLOAD_FIELDS
+      .filter(field => !SINGLE_FILE_UPLOAD_FIELDS.has(field))
+      .reduce((n, field) => n + (Array.isArray(data[field]) ? data[field].filter(Boolean).length : 0), 0);
+    const videos = data.videoDesAblaufs ? 1 : 0;
+    const signatures = Object.keys(data)
+      .filter(key => /^unterschrift/.test(key) && typeof data[key] === 'string' && data[key].startsWith('data:image')).length;
+    const submittedAt = Date.parse(data.updatedAt || data.createdAt) || Date.now();
+
+    const rows = [
+      ['Kunde', [name, address].filter(Boolean).join(', ') || '–'],
+      ['Auftrag', [data.bitrixAuftragId, data.auftragsNummer].filter(Boolean).join(' · ') || '–'],
+      ['Formular', FORMULAR_TYPE_TITLES[data.formularTyp] || 'Formular'],
+      ['Übermittelt', new Date(submittedAt).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' })],
+      ['Umfang', [countLabel(photos, 'Foto', 'Fotos'), countLabel(videos, 'Video', 'Videos'), countLabel(signatures, 'Unterschrift', 'Unterschriften')].join(' · ')],
+    ];
+    const list = $('#receiptList');
+    list.innerHTML = '';
+    rows.forEach(([label, value]) => {
+      const dt = document.createElement('dt');
+      dt.textContent = label;
+      const dd = document.createElement('dd');
+      dd.textContent = value;
+      list.append(dt, dd);
+    });
+
+    const status = data.bitrixStatus || 'pending';
+    renderReceiptBitrix(status, data.bitrixSentAt);
+    clearTimeout(receiptPollTimer);
+    if (status === 'pending' && data.shareToken) pollReceiptBitrix(data.shareToken, Date.now());
+
+    $('#btnReceiptDone').onclick = () => {
+      clearTimeout(receiptPollTimer);
+      $('#receiptModal').classList.remove('open');
+      if (goHomeOnDone && !$('#stayOnPage')?.checked) window.location.href = '/';
+    };
+    hideToast();
+    $('#receiptModal').classList.add('open');
+  }
+
+  // Calm by design: a failed push is retried by the server (B1) and the office is
+  // alerted (C2), so the worker never gets a red error here.
+  function renderReceiptBitrix(status, sentAt, expired = false) {
+    const el = $('#receiptBitrix');
+    let text = '⏳ Wird an Bitrix übertragen …';
+    if (status === 'sent') text = `✓ In Bitrix angekommen (${formatClock(Date.parse(sentAt) || Date.now())})`;
+    else if (status === 'skipped') text = 'Ohne Bitrix-Auftrag gespeichert.';
+    else if (status === 'failed' || expired) text = 'Übertragung läuft im Hintergrund weiter – bei Problemen wird das Büro automatisch informiert.';
+    el.textContent = text;
+    el.className = ['receipt-bitrix', status === 'sent' ? 'ok' : ''].filter(Boolean).join(' ');
+  }
+
+  function pollReceiptBitrix(token, startedAt) {
+    receiptPollTimer = setTimeout(async () => {
+      let status = 'pending';
+      let sentAt = null;
+      try {
+        const res = await fetch(`/api/form/token/${encodeURIComponent(token)}`);
+        const json = await res.json();
+        status = json.data?.bitrixStatus || 'pending';
+        sentAt = json.data?.bitrixSentAt;
+      } catch (_) { /* no signal: keep waiting */ }
+      const expired = Date.now() - startedAt >= RECEIPT_POLL_MAX_MS;
+      renderReceiptBitrix(status, sentAt, expired);
+      if (status === 'pending' && !expired) pollReceiptBitrix(token, startedAt);
+    }, RECEIPT_POLL_MS);
+  }
+
   async function handleSubmitSuccess(json, elapsedMs) {
     formSubmitted = true;
     submitId = null;
@@ -3566,18 +3652,13 @@ function syncDevSidebarVisibility() {
     });
     // Bitrix laeuft jetzt im Hintergrund auf dem Server (B1); das Ergebnis kennt der Client nicht.
     setDocumentStatus('Formular gespeichert. Die Übertragung an Bitrix läuft im Hintergrund.', 'success');
-    showToast('Formular übermittelt ✓\nSie können das Handy jetzt weglegen.', 'success', 'big');
     // Clear file store after successful submit
     fileStore = {};
     pendingFileRefs = {};
     await deleteLocalSnapshot();
     renderSaveStatus();
-    const stayOnPage = $('#stayOnPage')?.checked;
-    if (!stayOnPage) {
-      setTimeout(() => {
-        window.location.href = '/';
-      }, 2000);
-    }
+    // The receipt stays until "Fertig" (B5); no automatic jump to the home page.
+    showReceipt(json.data || {});
   }
 
   // ── Outbox for submit (A3) ─────────────────────────────
@@ -3701,7 +3782,7 @@ function syncDevSidebarVisibility() {
       await handleSubmitSuccess(json, Date.now() - record.outboxQueuedAt);
     } else {
       await deleteLocalSnapshot(key);
-      showToast('Ein wartendes Formular wurde übermittelt ✓', 'success', 'big');
+      showReceipt(json.data || {}, { goHomeOnDone: false });
     }
     return 'sent';
   }

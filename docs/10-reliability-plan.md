@@ -28,7 +28,7 @@ A professional web app for **non-technical workers on iPhones**:
 | A4 | `storage.persist()` + log (Home Screen install dropped) | ✅ done, verified locally (log arrives); not deployed | `plan/reliability-roadmap` |
 | B3 | Upload progress | ⬜ | |
 | B4 | Plain-German, persistent error messages | ✅ done, 98/98 tests; local browser check: no connection / HTTP 502 / camera blocked show the plain texts, error stays after 4.5 s, tap closes, real click on *Erneut versuchen* retries, raw text in `client.action.failed`. **Live** (owner deploy): new texts, Sie-intro, sticky message with *Erneut versuchen* and the log entry confirmed | `plan/reliability-roadmap` |
-| B5 | Receipt screen after submit | 📝 planned (below) | |
+| B5 | Receipt screen after submit | ✅ done, 102/102 tests; local e2e on deal 65278: receipt with customer, deal, type, time, counts; Bitrix line ⏳ → *✓ In Bitrix angekommen (16:11)* (push 13.6 s); stays until *Fertig*, then home. Calm text after 2 min / on `failed` not exercised; not deployed | `plan/reliability-roadmap` |
 | B6 | Request timeouts + automatic retry | ⬜ | |
 | B7 | File size check at pick time | ⬜ | |
 | C1 | Filter client-log noise | ✅ done, 95/95 tests; local check: extension errors dropped in the browser, `Script error.` dropped by the server. **Live** (owner deploy): new client code served; `Script error.` and `__firefox__` → `ignored: true` | `plan/reliability-roadmap` |
@@ -38,7 +38,7 @@ A professional web app for **non-technical workers on iPhones**:
 | C6 | Tests block a broken `fly deploy` (Docker build) + GitHub workflow tests-only | ✅ done; verified with `fly deploy --build-only`: passes (89 + 1 skipped), and a deliberately broken test aborts the build | `plan/reliability-roadmap` |
 | C7 | Compress video on upload, daily orphan cleanup, 80 % volume alarm | ✅ done, 90/90 tests; local e2e: 17.6 MB `.mov` → 186 KB `.mp4` in 1.6 s, original + temp removed. **Live** (owner deploy 2026-10-02 12:11): same test via `/debug-bitrix-payload` → 180 KB `.mp4` on the volume, no `.mov`/temp left; volume 28 %. The test file `1790943930554-c14ac81c-IMG_TEST.mp4` is an orphan on purpose: the daily cleanup should delete it after 24 h (`storage.orphans.deleted`) | `plan/reliability-roadmap` |
 
-Recommended order: ~~A1+B2~~ → ~~B1+C2~~ → ~~A2+A3~~ → ~~A4~~ → ~~C7~~ → ~~C6~~ → ~~C1+C2~~ → ~~C7b~~ → ~~B4~~ → ~~C4~~ → the rest (small items, any order).
+Recommended order: ~~A1+B2~~ → ~~B1+C2~~ → ~~A2+A3~~ → ~~A4~~ → ~~C7~~ → ~~C6~~ → ~~C1+C2~~ → ~~C7b~~ → ~~B4~~ → ~~C4~~ → ~~B5~~ → the rest (small items, any order).
 
 Branches: `plan/reliability-roadmap` (local, **not pushed**) = `form-submit-upload-once-v2` + everything in this plan. **Production runs this branch** (owner's manual `fly deploy`s on 2026-10-02).
 
@@ -290,7 +290,7 @@ Native app (Home Screen PWA is enough) · Tigris/R2 object storage (`docs/TODO.m
 - `npm test` — 74 tests, all green (as of `b6306dd`). If old worktrees exist under `.claude/worktrees/`, plain `npm test` also picks up their copies and shows ~35 unrelated failures; run `npx jest --runInBand --watchman=false --testPathIgnorePatterns /.claude/`.
 - Local server for the in-app browser: `.claude/launch.json` (untracked) starts `PORT=3007 ALLOWED_ORIGINS=http://localhost:3007 node server.js`. Local client logs go to the **production** OperationLogs.
 - `public/app.js` is a single IIFE with no exports; client logic can't be unit-tested directly. Verify client changes in a real browser.
-- **Test deal: `65278` — Stefan Wolfrum** (`/AbschlussderBaustelle?dealId=65278` pre-fills step 1). Use it for any end-to-end submit. Put a "TESTLAUF – bitte ignorieren" note in *Hinweise für das Büro*. Kept on purpose: test Abnahmen `6abf7207d8e9ae2c375c6b8a` (B1), `6abf8217d36c55305dcefa56` (A3 local) `6abf8f4282c15f31f67a064a` (A3 live) and `6abf9a8a48193d3ffd89683c` (iPhone Brave test), all 2026-10-02, on this deal; plus `6abf997248193d3ffd89680a` (iPhone Safari test with demo data, no deal, Bitrix `skipped`).
+- **Test deal: `65278` — Stefan Wolfrum** (`/AbschlussderBaustelle?dealId=65278` pre-fills step 1). Use it for any end-to-end submit. Put a "TESTLAUF – bitte ignorieren" note in *Hinweise für das Büro*. Kept on purpose: test Abnahmen `6abf7207d8e9ae2c375c6b8a` (B1), `6abf8217d36c55305dcefa56` (A3 local) `6abf8f4282c15f31f67a064a` (A3 live) and `6abf9a8a48193d3ffd89683c` (iPhone Brave test), `6abfbb97d1a69aef6dc6c01d` (B5 test), all 2026-10-02, on this deal; plus `6abf997248193d3ffd89680a` (iPhone Safari test with demo data, no deal, Bitrix `skipped`).
 - In the browser, test media can be generated on a `<canvas>` (photos via `toBlob`, video via `MediaRecorder` on `canvas.captureStream()`) and handed to the file inputs with a `DataTransfer` — the form treats them exactly like gallery picks.
 - The Claude Code integrated browser blocks `window.prompt`, so Testmodus cannot be switched on there. Use Claude in Chrome, and let the owner enter the Testmodus password in that tab (it lives in `sessionStorage`, per tab). Never type the password yourself on production.
 - Bitrix timeline can be read (read-only) with the app's own `BITRIX_WEBHOOK_BASE` from `.env`: `crm.timeline.comment.list` filtered by `ENTITY_ID`/`ENTITY_TYPE=deal`, then `crm.timeline.comment.get` for `FILES`.

@@ -1555,6 +1555,23 @@ input[type="radio"], input[type="checkbox"] {
   overflow: auto;
 }
 .modal-sm { max-width: 480px; }
+
+/* Receipt after submit (B5) */
+.receipt { text-align: center; }
+.receipt-check {
+  width: 56px; height: 56px; margin: 0 auto 10px;
+  border-radius: 50%; background: var(--clr-green); color: #fff;
+  font-size: 2rem; line-height: 56px; font-weight: 700;
+}
+.receipt-lead { margin-bottom: 16px; font-weight: 600; }
+.receipt-list {
+  display: grid; grid-template-columns: auto 1fr; gap: 6px 14px;
+  text-align: left; margin: 0 0 14px; font-size: .95rem;
+}
+.receipt-list dt { color: #666; }
+.receipt-list dd { margin: 0; overflow-wrap: anywhere; }
+.receipt-bitrix { padding: 10px 12px; border-radius: 8px; background: #f3f4f6; font-size: .95rem; text-align: left; }
+.receipt-bitrix.ok { background: #e8f5e9; color: #1b5e20; }
 .modal-content h3 { margin-bottom: 12px; }
 .modal-content video {
   width: 100%;
