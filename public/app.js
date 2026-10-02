@@ -3760,6 +3760,8 @@ function syncDevSidebarVisibility() {
     });
   }
 
+  const LOCAL_DB_OPEN_TIMEOUT_MS = 3000;
+
   function openLocalDb() {
     if (!localDbPromise) {
       const req = indexedDB.open('bauFormular', 1);
@@ -3767,7 +3769,12 @@ function syncDevSidebarVisibility() {
         req.result.createObjectStore('forms');
         req.result.createObjectStore('files');
       };
-      localDbPromise = idbRequest(req);
+      // open() can stay pending forever (another tab blocks it, WebKit glitches).
+      // Never let that block loading the form: give up after 3 s, run without local backup.
+      localDbPromise = Promise.race([
+        idbRequest(req),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('IndexedDB open timeout')), LOCAL_DB_OPEN_TIMEOUT_MS)),
+      ]);
       localDbPromise.catch(() => { localDbPromise = null; });
     }
     return localDbPromise;
