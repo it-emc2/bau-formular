@@ -1269,7 +1269,7 @@ function syncDevSidebarVisibility() {
     if (btnAdminLogsClear) {
       btnAdminLogsClear.addEventListener('click', async () => {
         // A typed word, not a yes/no click: the logs are the audit trail.
-        const confirmWord = window.prompt('Alle Logs werden endgültig gelöscht.\nZum Bestätigen LÖSCHEN eingeben:');
+        const confirmWord = window.prompt('Alltags-Logs (Speichern, Uploads, Hinweise) werden endgültig gelöscht.\nAudit-Einträge (Absenden, Bitrix, Admin) bleiben 2 Jahre erhalten.\nZum Bestätigen LÖSCHEN eingeben:');
         if (confirmWord === null) return;
         if (confirmWord.trim() !== 'LÖSCHEN') {
           showToast('Nicht gelöscht: Bestätigungswort stimmt nicht.', 'error');
@@ -1289,8 +1289,8 @@ function syncDevSidebarVisibility() {
 
           const json = await parseJsonResponse(res);
           const deleted = json?.deletedCount || 0;
-          adminLogOutput.textContent = `${deleted} Log-Einträge wurden gelöscht.`;
-          showToast(`${deleted} Log-Einträge gelöscht.`, 'success');
+          adminLogOutput.textContent = `${deleted} Alltags-Log-Einträge wurden gelöscht. Audit-Einträge bleiben erhalten.`;
+          showToast(`${deleted} Alltags-Log-Einträge gelöscht.`, 'success');
         } catch (error) {
           adminLogOutput.textContent = `Fehler beim Löschen: ${error.message}`;
           showToast('Logs konnten nicht gelöscht werden: ' + error.message, 'error');

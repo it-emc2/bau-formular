@@ -85,7 +85,7 @@ All admin UI is hidden behind the dev-mode password toggle (Testmodus). When act
 - Dry-run and delete buttons → `POST /api/form/admin/orphan-uploads`
 - Finds upload files on disk with no matching Abnahme or Entwurf in MongoDB
 
-**2. Logs aktualisieren** (`adminLogPanel`)
+**2. Logs aktualisieren** (`adminLogPanel`) — retention per entry (`expireAt`): audit events (`submit.*`, `admin.*`, `storage.*`, `n8n.*`, `client.submit.success`, `client.outbox.*`, …) 2 years, everything else 30 days. "Logs löschen" needs the word `LÖSCHEN` and deletes only the everyday entries.
 - `POST /api/form/admin/logs` → renders operation log table (submit events, Bitrix timeline attempts, compression stats)
 - Validation errors logged by workers include the exact step name and field label
 

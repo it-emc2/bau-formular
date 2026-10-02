@@ -39,6 +39,8 @@ jest.mock('../services/orphanUploads', () => ({
 jest.mock('../services/operationLogs', () => ({
   addOperationLog: jest.fn(),
   listOperationLogs: jest.fn(),
+  migrateLogRetention: jest.fn(),
+  AUDIT_EVENT_PATTERN: jest.requireActual('../services/operationLogs').AUDIT_EVENT_PATTERN,
 }));
 
 jest.mock('mongoose', () => ({
@@ -606,6 +608,9 @@ describe('form routes', () => {
       const res = await runHandlers(handlers, { body: { password: 'pw', confirm: 'LÖSCHEN' } });
 
       expect(res.body).toEqual({ success: true, deletedCount: 42 });
+      const filter = OperationLog.deleteMany.mock.calls[0][0];
+      expect(filter.event.$not.test('submit.bitrix.succeeded')).toBe(true);   // audit entry: excluded from deletion
+      expect(filter.event.$not.test('draft.save.updated')).toBe(false);       // everyday entry: deleted
       expect(addOperationLog).toHaveBeenCalledWith(expect.objectContaining({ event: 'admin.logs.cleared', context: { deletedCount: 42 } }));
     });
   });

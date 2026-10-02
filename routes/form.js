@@ -17,7 +17,7 @@ const { buildAbnahmeCheckPayload, postAbnahmeCheck } = require('../services/n8nA
 const { buildStepDocumentAttachments, buildBitrixUploadAttachment, buildSelectedPdfAttachments, buildProduktverkaufSummaryText, buildCustomerName, ADMIN_PDF_SPECS, compressUploadedFiles, compressStoredVideo, compressedVideoName, COMPRESSED_VIDEO_SUFFIX, VIDEO_EXTENSIONS } = require('../services/stepDocuments');
 const { getUploadsDir } = require('../services/uploadsPath');
 const { cleanupOrphanUploads, getDraftFileReferences, deleteExpiredDrafts, getVolumeUsage } = require('../services/orphanUploads');
-const { addOperationLog, listOperationLogs } = require('../services/operationLogs');
+const { addOperationLog, listOperationLogs, migrateLogRetention, AUDIT_EVENT_PATTERN } = require('../services/operationLogs');
 
 const router = express.Router();
 const uploadsDir = getUploadsDir();
@@ -1248,6 +1248,7 @@ async function runDailyMaintenance() {
 }
 
 function startBackgroundJobs() {
+  migrateLogRetention().catch(error => addOperationLog({ level: 'error', event: 'admin.logs.retention_migration_failed', message: error.message }).catch(() => {}));
   setTimeout(retryPendingBitrixPushes, 30 * 1000).unref();
   setInterval(retryPendingBitrixPushes, BITRIX_RETRY_AFTER_MS).unref();
   setTimeout(runDailyMaintenance, 60 * 1000).unref();
@@ -1495,19 +1496,9 @@ router.post('/save', uploadAny, async (req, res) => {
   try {
     const parsed = parsePayload(req);
     logContext = buildRequestLogContext(parsed, req.files);
-    await addOperationLog({
-      event: 'draft.save.received',
-      message: 'Entwurf-Speicherung empfangen.',
-      context: logContext,
-    });
-
+    // One entry per save (C4): auto-save (A2) runs often; failures keep the full context.
     const payload = preferCompressedVideos(mergeUploadedFiles(pickPayload(parsed), req.files));
     const formId = parsed._id || parsed.id;
-    await addOperationLog({
-      event: 'draft.save.uploads_merged',
-      message: 'Upload-Referenzen fuer Entwurf vorbereitet.',
-      context: buildRequestLogContext(parsed, req.files, { formId }),
-    });
 
     if (formId) {
       const existing = await Entwurf.findById(formId);
@@ -1657,12 +1648,12 @@ router.post('/admin/logs/clear', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Bestätigungswort fehlt: LÖSCHEN eingeben.' });
     }
 
-    const result = await OperationLog.deleteMany({});
-    // Written after the delete, so it is the first entry of the new log.
+    // Only everyday entries: the audit trail (submit, Bitrix, admin, …) only expires (C4).
+    const result = await OperationLog.deleteMany({ event: { $not: AUDIT_EVENT_PATTERN } });
     await addOperationLog({
       level: 'warn',
       event: 'admin.logs.cleared',
-      message: `Alle Logs im Testmodus geloescht (${result.deletedCount || 0} Eintraege).`,
+      message: `Alltags-Logs im Testmodus geloescht (${result.deletedCount || 0} Eintraege); Audit-Eintraege bleiben erhalten.`,
       context: { deletedCount: result.deletedCount || 0 },
     });
 
