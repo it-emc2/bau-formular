@@ -27,7 +27,7 @@ A professional web app for **non-technical workers on iPhones**:
 | A3 | Outbox: submit queued while offline | ✅ done, verified locally (server stopped → queued → edited → server back → sent from the **home page**, exactly one Abnahme with the edit, Bitrix `sent`; repeat with same `submitId` → `duplicate: true`). **Live** checked too: queued → sent 7 s later, one Abnahme, Bitrix `sent`; live duplicate check OK. **iPhone test open** | same |
 | A4 | `storage.persist()` + log (Home Screen install dropped) | ✅ done, verified locally (log arrives); not deployed | `plan/reliability-roadmap` |
 | B3 | Upload progress | ⬜ | |
-| B4 | Plain-German, persistent error messages | ✅ done, 98/98 tests; local browser check: no connection / HTTP 502 / camera blocked show the plain texts, error stays after 4.5 s, tap closes, real click on *Erneut versuchen* retries, raw text in `client.action.failed`; not deployed | `plan/reliability-roadmap` |
+| B4 | Plain-German, persistent error messages | ✅ done, 98/98 tests; local browser check: no connection / HTTP 502 / camera blocked show the plain texts, error stays after 4.5 s, tap closes, real click on *Erneut versuchen* retries, raw text in `client.action.failed`. **Live** (owner deploy): new texts, Sie-intro, sticky message with *Erneut versuchen* and the log entry confirmed | `plan/reliability-roadmap` |
 | B5 | Receipt screen after submit | ⬜ | |
 | B6 | Request timeouts + automatic retry | ⬜ | |
 | B7 | File size check at pick time | ⬜ | |
