@@ -48,6 +48,7 @@
   const adminPushCategories = $('#adminPushCategories');
   const adminPushActions = $('#adminPushActions');
   const btnAdminPushSend = $('#btnAdminPushSend');
+  const btnAdminResendFull = $('#btnAdminResendFull');
   const adminPushOutput = $('#adminPushOutput');
   const draftSearch = $('#draftSearch');
   const btnDraftRefresh = $('#btnDraftRefresh');
@@ -1488,6 +1489,10 @@ function syncDevSidebarVisibility() {
         if (!json.success) throw new Error(json.error || 'Laden fehlgeschlagen');
         adminPushInspectResult = json;
         renderAdminPushCategories(json);
+        if (json.form.bitrixStatus) {
+          adminPushOutput.classList.remove('hidden');
+          adminPushOutput.textContent = `Bitrix-Status: ${json.form.bitrixStatus} (${json.form.bitrixAttempts} Versuch(e))${json.form.bitrixError ? `\nLetzter Fehler: ${json.form.bitrixError}` : ''}`;
+        }
         const multipleHint = json.multipleCount > 1 ? ` (${json.multipleCount} Formulare gefunden, neuestes verwendet)` : '';
         showToast(`${json.form.customerName} geladen (${json.source})${multipleHint}.`, json.multipleCount > 1 ? 'warn' : 'success');
       } catch (error) {
@@ -1498,6 +1503,38 @@ function syncDevSidebarVisibility() {
         showToast('Laden fehlgeschlagen: ' + error.message, 'error');
       } finally {
         btnAdminPushLoad.disabled = false;
+      }
+    });
+
+    btnAdminResendFull?.addEventListener('click', async () => {
+      if (!adminPushInspectResult) return;
+      if (adminPushInspectResult.source !== 'abnahme') {
+        showToast('Komplett neu senden geht nur für abgesendete Abnahmen, nicht für Entwürfe.', 'error');
+        return;
+      }
+      if (!window.confirm('Alles wie beim Absenden erneut an Bitrix senden?')) return;
+
+      btnAdminResendFull.disabled = true;
+      btnAdminPushSend.disabled = true;
+      adminPushOutput.classList.remove('hidden');
+      adminPushOutput.textContent = 'Sende komplett an Bitrix … (kann einige Minuten dauern)';
+
+      try {
+        const response = await fetch('/api/form/admin/resend-full', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: devModePassword, entityId: adminPushEntityId?.value.trim() }),
+        });
+        const json = await parseJsonResponse(response);
+        if (!json.success) throw new Error(json.error || 'Senden fehlgeschlagen');
+        adminPushOutput.textContent = `Komplett gesendet. Anhänge: ${json.attachmentCount}, Dauer: ${Math.round((json.durationMs || 0) / 1000)} s.`;
+        showToast('Komplett an Bitrix gesendet.', 'success');
+      } catch (error) {
+        adminPushOutput.textContent = `Fehler: ${error.message}`;
+        showToast('Senden fehlgeschlagen: ' + error.message, 'error');
+      } finally {
+        btnAdminResendFull.disabled = false;
+        btnAdminPushSend.disabled = false;
       }
     });
 
@@ -3376,20 +3413,11 @@ function syncDevSidebarVisibility() {
           event: 'client.submit.success',
           message: `Formular übermittelt in ${(elapsedMs / 1000).toFixed(1)} s (Klick → Benachrichtigung).`,
           elapsedMs,
-          bitrixSynced: !!(json.bitrixSync?.attempted && json.bitrixSync?.sent),
           fileSummary: getFileSummary(),
         });
-        if (json.bitrixSync?.attempted && json.bitrixSync?.sent) {
-          setDocumentStatus(`Dokumenttext wurde automatisch an Bitrix-Auftrag ${json.bitrixSync.entityId} gesendet.`, 'success');
-          console.log('[bitrix-submit] sync result', json.bitrixSync);
-          showToast('Erfolgreich übermittelt und an Bitrix gesendet! ✓', 'success', 'big');
-        } else if (json.bitrixSync?.attempted && !json.bitrixSync?.sent) {
-          setDocumentStatus(`Formular übermittelt, Bitrix-Sendung fehlgeschlagen: ${json.bitrixSync.error}`, 'error');
-          console.warn('[bitrix-submit] sync failed', json.bitrixSync);
-          showToast('Formular übermittelt, aber Bitrix konnte nicht aktualisiert werden.', 'error');
-        } else {
-          showToast('Erfolgreich übermittelt! ✓', 'success', 'big');
-        }
+        // Bitrix laeuft jetzt im Hintergrund auf dem Server (B1); das Ergebnis kennt der Client nicht.
+        setDocumentStatus('Formular gespeichert. Die Übertragung an Bitrix läuft im Hintergrund.', 'success');
+        showToast('Formular übermittelt ✓\nSie können das Handy jetzt weglegen.', 'success', 'big');
         // Clear file store after successful submit
         fileStore = {};
         pendingFileRefs = {};

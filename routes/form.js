@@ -308,15 +308,6 @@ async function findByIdWithSession(Model, id, session = null) {
   return query.session && session ? query.session(session) : query;
 }
 
-function assertBitrixSubmitSucceeded(bitrixSync) {
-  if (!bitrixSync?.attempted || bitrixSync?.sent) return;
-
-  const error = new Error(`Bitrix-Sendung fehlgeschlagen: ${bitrixSync.error || 'Unbekannter Fehler'}`);
-  error.status = 502;
-  error.bitrixSync = bitrixSync;
-  throw error;
-}
-
 async function persistSubmitRecoveryDraft({ formId, payload, session = null }) {
   if (formId) {
     const existingDraft = await findByIdWithSession(Entwurf, formId, session);
@@ -353,6 +344,10 @@ async function persistSubmitRecoveryDraft({ formId, payload, session = null }) {
   return { draft, source: 'new' };
 }
 
+function bitrixPendingFields() {
+  return { bitrixStatus: 'pending', bitrixError: '', bitrixAttempts: 0, bitrixLastAttemptAt: new Date() };
+}
+
 function buildSuccessResponse(form) {
   return {
     success: true,
@@ -372,27 +367,46 @@ function buildDealLink(bitrixAuftragId) {
   }
 }
 
+function buildFormLink(shareToken) {
+  if (!shareToken) return null;
+  return `${(process.env.APP_BASE_URL || 'https://bau-formular.fly.dev').replace(/\/$/, '')}/form/${shareToken}`;
+}
+
 const BAUSTELLENABNAHME_CHAT_STATUS = {
   submitted: { emoji: '🟢', label: 'Abnahme abgeschlossen' },
   failed: { emoji: '🔴', label: 'Fehler beim Absenden' },
+  bitrix_failed: { emoji: '🔴', label: 'Bitrix-Übertragung endgültig fehlgeschlagen' },
+};
+
+const FORM_TYPE_LABELS = {
+  baustellenabnahme: 'BAUSTELLENABNAHME',
+  zusaetzliche_leistungen: 'ZUSÄTZLICHE LEISTUNGEN',
+  nachbesserung: 'NACHBESSERUNG',
+  schadensmeldung: 'SCHADENSMELDUNG',
 };
 
 async function notifyBaustellenabnahmeChat(kind, doc = {}) {
-  if (doc.formularTyp !== 'baustellenabnahme') return null;
+  // Endgueltig fehlgeschlagene Bitrix-Pushes melden wir fuer jeden Formulartyp,
+  // sonst bliebe der Fehler unsichtbar (der Monteur hat schon Gruen gesehen).
+  const formularTyp = doc.formularTyp || 'baustellenabnahme';
+  if (kind !== 'bitrix_failed' && formularTyp !== 'baustellenabnahme') return null;
 
   const { emoji, label } = BAUSTELLENABNAHME_CHAT_STATUS[kind];
   const dealId = doc.bitrixAuftragId;
   const customer = buildCustomerName(doc) || doc.name || 'Kunde';
   const dealLink = buildDealLink(dealId);
+  const formLink = buildFormLink(doc.shareToken);
   const sep = '━'.repeat(45);
 
   const lines = [
-    '📋 BAUSTELLENABNAHME',
+    `📋 ${FORM_TYPE_LABELS[formularTyp] || 'FORMULAR'}`,
     sep,
     `☐ ${emoji} ${dealId ? `[${dealId}] ` : ''}${customer} — ${label}`,
   ];
-  if (dealLink) lines.push(`     🔗 ${dealLink}`);
-  if (kind === 'failed' && doc.errorMessage) lines.push(`     Fehler: ${doc.errorMessage}`);
+  if (dealLink) lines.push(`     🔗 Auftrag: ${dealLink}`);
+  if (formLink) lines.push(`     📝 Formular: ${formLink}`);
+  if (kind !== 'submitted' && doc.errorMessage) lines.push(`     Fehler: ${doc.errorMessage}`);
+  if (kind === 'bitrix_failed') lines.push('     👉 Testmodus → Bitrix Neu-Push → Auftrag-ID laden → „Komplett neu senden“.');
   lines.push(sep, '🤖 Automatisch generiert | Quelle: bau-formular');
 
   try {
@@ -983,6 +997,146 @@ async function trySendDocumentToBitrix(data = {}, options = {}) {
       error: error.message,
     };
   }
+}
+
+const BITRIX_MAX_ATTEMPTS = 4; // 1 beim Absenden + 3 automatische Wiederholungen
+const BITRIX_RETRY_AFTER_MS = 10 * 60 * 1000;
+// ponytail: In-Memory-Sperre, reicht fuer genau eine Fly-Maschine. Bei mehreren Maschinen DB-Lock noetig.
+const bitrixPushesInFlight = new Set();
+
+// Laeuft nach der Antwort an den Monteur. Die Abnahme ist dann schon in MongoDB gespeichert.
+async function pushAbnahmeToBitrix(abnahmeId, data, logContext = {}, { trigger = 'submit' } = {}) {
+  const id = String(abnahmeId);
+  if (bitrixPushesInFlight.has(id)) return null;
+  bitrixPushesInFlight.add(id);
+  const context = { ...logContext, submittedId: id, trigger };
+
+  try {
+    const claimed = await Abnahme.findOneAndUpdate(
+      { _id: abnahmeId, bitrixStatus: { $ne: 'sent' } },
+      { $inc: { bitrixAttempts: 1 }, $set: { bitrixLastAttemptAt: new Date() } },
+      { new: true },
+    );
+    if (!claimed) return null;
+    const attempt = claimed.bitrixAttempts || 1;
+
+    await addOperationLog({
+      event: 'submit.bitrix.started',
+      message: `Bitrix-Sendung im Hintergrund gestartet (Versuch ${attempt}/${BITRIX_MAX_ATTEMPTS}).`,
+      context: { ...context, attempt },
+    });
+    const bitrixSync = await trySendDocumentToBitrix(data, {
+      onProgress: progress => addOperationLog({
+        level: progress.level || 'info',
+        event: progress.event,
+        message: progress.message,
+        context: { ...context, attempt, ...(progress.context || {}) },
+      }),
+    });
+
+    const bitrixStatus = !bitrixSync.attempted ? 'skipped' : (bitrixSync.sent ? 'sent' : 'failed');
+    await Abnahme.updateOne({ _id: abnahmeId }, {
+      $set: {
+        bitrixStatus,
+        bitrixError: bitrixStatus === 'failed' ? (bitrixSync.error || 'Unbekannter Fehler') : '',
+        ...(bitrixStatus === 'sent' ? { bitrixSentAt: new Date() } : {}),
+      },
+    });
+
+    if (bitrixStatus === 'failed') {
+      const final = attempt >= BITRIX_MAX_ATTEMPTS && trigger !== 'admin';
+      await addOperationLog({
+        level: 'error',
+        event: final ? 'submit.bitrix.failed_final' : 'submit.bitrix.failed',
+        message: final
+          ? `Bitrix-Sendung endgueltig fehlgeschlagen nach ${attempt} Versuchen: ${bitrixSync.error}`
+          : `Bitrix-Sendung fehlgeschlagen (Versuch ${attempt}/${BITRIX_MAX_ATTEMPTS}), automatischer neuer Versuch in ca. 10 Min.: ${bitrixSync.error}`,
+        context: { ...context, attempt, bitrixSync },
+      });
+      if (final) {
+        await notifyBaustellenabnahmeChat('bitrix_failed', { ...toPlainDocument(claimed), errorMessage: bitrixSync.error });
+      }
+      return bitrixSync;
+    }
+
+    await addOperationLog({
+      event: 'submit.bitrix.succeeded',
+      message: bitrixStatus === 'sent'
+        ? `Bitrix hat die Dokumente akzeptiert (Versuch ${attempt}).`
+        : 'Keine gueltige Bitrix-Auftrag-ID, Bitrix-Sendung uebersprungen.',
+      context: { ...context, attempt, bitrixStatus, bitrixAttempted: bitrixSync.attempted, bitrixSent: bitrixSync.sent },
+    });
+
+    const chatId = await notifyBaustellenabnahmeChat('submitted', { ...data, shareToken: claimed.shareToken });
+    if (chatId) {
+      const checkPayload = buildAbnahmeCheckPayload(data, {
+        chatId,
+        customerName: buildCustomerName(data) || data.name,
+        documents: bitrixSync.attachmentSummary || [],
+      });
+      // fire-and-forget: ein Fehler hier darf die Abnahme nie zuruecknehmen
+      postAbnahmeCheck(checkPayload, { log: entry => addOperationLog({ ...entry, context: { ...context, ...(entry.context || {}) } }) })
+        .catch(() => {});
+    }
+    return bitrixSync;
+  } catch (error) {
+    await addOperationLog({
+      level: 'error',
+      event: 'submit.bitrix.background_error',
+      message: error.message,
+      context,
+    }).catch(() => {});
+    return null;
+  } finally {
+    bitrixPushesInFlight.delete(id);
+  }
+}
+
+let bitrixRetrySweepRunning = false;
+
+// Sucht Abnahmen, deren Bitrix-Push fehlgeschlagen ist oder durch einen Neustart verloren ging.
+async function retryPendingBitrixPushes() {
+  if (bitrixRetrySweepRunning) return;
+  bitrixRetrySweepRunning = true;
+  try {
+    const due = await Abnahme.find({
+      bitrixLastAttemptAt: { $lt: new Date(Date.now() - BITRIX_RETRY_AFTER_MS) },
+      $or: [
+        { bitrixStatus: 'pending' },
+        { bitrixStatus: 'failed', bitrixAttempts: { $lt: BITRIX_MAX_ATTEMPTS } },
+      ],
+    }).lean();
+
+    for (const doc of due) {
+      if (bitrixPushesInFlight.has(String(doc._id))) continue;
+      const context = { bitrixAuftragId: doc.bitrixAuftragId, terminId: doc.terminId, submittedId: doc._id };
+
+      // 'pending' ohne laufenden Push und ohne Versuche uebrig: der Prozess ist dabei mehrfach gestorben.
+      if ((doc.bitrixAttempts || 0) >= BITRIX_MAX_ATTEMPTS) {
+        const errorMessage = 'Server wurde waehrend der Bitrix-Uebertragung mehrfach neu gestartet.';
+        await Abnahme.updateOne({ _id: doc._id }, { $set: { bitrixStatus: 'failed', bitrixError: errorMessage } });
+        await addOperationLog({ level: 'error', event: 'submit.bitrix.failed_final', message: errorMessage, context });
+        await notifyBaustellenabnahmeChat('bitrix_failed', { ...doc, errorMessage });
+        continue;
+      }
+
+      await addOperationLog({
+        event: 'submit.bitrix.auto_retry.started',
+        message: `Automatischer Bitrix-Wiederholungsversuch (bisher ${doc.bitrixAttempts || 0} Versuche, Status ${doc.bitrixStatus}).`,
+        context,
+      });
+      await pushAbnahmeToBitrix(doc._id, doc, context, { trigger: 'auto_retry' });
+    }
+  } catch (error) {
+    await addOperationLog({ level: 'error', event: 'submit.bitrix.auto_retry.failed', message: error.message }).catch(() => {});
+  } finally {
+    bitrixRetrySweepRunning = false;
+  }
+}
+
+function startBitrixRetryLoop() {
+  setTimeout(retryPendingBitrixPushes, 30 * 1000).unref();
+  setInterval(retryPendingBitrixPushes, BITRIX_RETRY_AFTER_MS).unref();
 }
 
 function buildDraftSearchQuery(search = '') {
@@ -1690,10 +1844,54 @@ router.post('/admin/inspect', async (req, res) => {
         bitrixAuftragId: storedEntityId,
         auftragsNummer: form.auftragsNummer || '',
         terminId: form.terminId || '',
+        bitrixStatus: form.bitrixStatus || '',
+        bitrixAttempts: form.bitrixAttempts || 0,
+        bitrixError: form.bitrixError || '',
       },
       categories: { bilder, video, pdfs: ADMIN_PDF_SPECS },
     });
   } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Komplett neu senden: exakt derselbe Push wie nach dem Absenden (Text, Dateien, PDFs, Auftragsfelder, Hinweis, Chat, n8n).
+router.post('/admin/resend-full', async (req, res) => {
+  try {
+    if (!isDevModePasswordValid(req.body?.password)) {
+      return res.status(403).json({ success: false, error: 'Passwort ungueltig' });
+    }
+    const entityId = Number(req.body?.entityId);
+    if (!Number.isFinite(entityId) || entityId <= 0) {
+      return res.status(400).json({ success: false, error: 'Bitrix-Auftrag-ID fehlt oder ungültig' });
+    }
+
+    const { form, source } = await findAdminFormByBitrixId(entityId);
+    if (!form || source !== 'abnahme') {
+      return res.status(404).json({ success: false, error: `Keine abgesendete Abnahme mit Bitrix-Auftrag-ID ${entityId} gefunden` });
+    }
+    if (bitrixPushesInFlight.has(String(form._id))) {
+      return res.status(409).json({ success: false, error: 'Für diesen Auftrag läuft gerade eine Bitrix-Übertragung. Bitte in ein paar Minuten erneut versuchen.' });
+    }
+    if (form.bitrixStatus === 'sent') {
+      return res.status(409).json({ success: false, error: 'Diese Abnahme ist bereits vollständig in Bitrix. Für einzelne Dateien „Zu Bitrix senden“ nutzen.' });
+    }
+
+    const context = { bitrixAuftragId: form.bitrixAuftragId, terminId: form.terminId, submittedId: form._id };
+    await addOperationLog({ event: 'admin.bitrix.resend_full.started', message: 'Komplett neu senden gestartet.', context });
+    const bitrixSync = await pushAbnahmeToBitrix(form._id, form, context, { trigger: 'admin' });
+    if (!bitrixSync) {
+      return res.status(500).json({ success: false, error: 'Übertragung konnte nicht gestartet werden (Details in den Logs).' });
+    }
+    const sent = !bitrixSync.attempted || bitrixSync.sent;
+    return res.status(sent ? 200 : 502).json({
+      success: sent,
+      error: sent ? undefined : `Bitrix-Sendung fehlgeschlagen: ${bitrixSync.error || 'Unbekannter Fehler'}`,
+      attachmentCount: bitrixSync.attachmentSummary?.length || 0,
+      durationMs: bitrixSync.durationMs,
+    });
+  } catch (error) {
+    await addOperationLog({ level: 'error', event: 'admin.bitrix.resend_full.failed', message: error.message, context: { entityId: req.body?.entityId } });
     return res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -1719,6 +1917,9 @@ router.post('/admin/push', async (req, res) => {
 
     const { form, source } = await findAdminFormByBitrixId(entityId);
     if (!form) return res.status(404).json({ success: false, error: `Kein Formular mit Bitrix-Auftrag-ID ${entityId} gefunden` });
+    if (source === 'abnahme' && bitrixPushesInFlight.has(String(form._id))) {
+      return res.status(409).json({ success: false, error: 'Für diesen Auftrag läuft gerade eine automatische Bitrix-Übertragung. Bitte in ein paar Minuten erneut versuchen.' });
+    }
 
     const context = { source, entityId };
     await addOperationLog({ event: 'admin.bitrix.push.started', message: `Admin-Push gestartet (${selectedFiles.length} Dateien, ${selectedPdfKeys.length} PDFs).`, context });
@@ -1783,6 +1984,10 @@ router.post('/admin/push', async (req, res) => {
     }
 
     const allOk = timelineResults.length > 0 && timelineResults.every(r => r.ok);
+    if (allOk && source === 'abnahme') {
+      // Buero hat von Hand nachgesendet: automatische Wiederholungen stoppen.
+      await Abnahme.updateOne({ _id: form._id }, { $set: { bitrixStatus: 'sent', bitrixError: '', bitrixSentAt: new Date() } });
+    }
     await addOperationLog({
       event: allOk ? 'admin.bitrix.push.succeeded' : 'admin.bitrix.push.partial',
       message: `Admin-Push ${allOk ? 'erfolgreich' : 'teilweise fehlgeschlagen'} (${attachments.length} Anhänge, ${timelineResults.length} Kommentar(e)).`,
@@ -2002,52 +2207,6 @@ router.post('/submit', uploadAny, async (req, res) => {
       ...payload,
     };
 
-    await addOperationLog({
-      event: 'submit.bitrix.started',
-      message: 'Bitrix-Sendung gestartet. MongoDB-Transaktion ist dabei nicht offen.',
-      context: logContext,
-    });
-    const bitrixSync = await trySendDocumentToBitrix(bitrixPayload, {
-      onProgress: progress => addOperationLog({
-        level: progress.level || 'info',
-        event: progress.event,
-        message: progress.message,
-        context: {
-          ...logContext,
-          ...(progress.context || {}),
-        },
-      }),
-    });
-    try {
-      assertBitrixSubmitSucceeded(bitrixSync);
-    } catch (error) {
-      await addOperationLog({
-        level: 'error',
-        event: 'submit.bitrix.failed',
-        message: error.message,
-        context: {
-          ...logContext,
-          bitrixSync,
-        },
-      });
-      throw error;
-    }
-    await addOperationLog({
-      event: 'submit.bitrix.succeeded',
-      message: 'Bitrix hat die Dokumente akzeptiert. Danach startet die kurze MongoDB-Transaktion.',
-      context: {
-        ...logContext,
-        bitrixAttempted: bitrixSync.attempted,
-        bitrixSent: bitrixSync.sent,
-      },
-    });
-    await addOperationLog({
-      level: 'warn',
-      event: 'submit.edge.bitrix_sent_before_mongo_commit',
-      message: 'Bitrix ist erfolgreich, die finale MongoDB-Transaktion ist noch nicht abgeschlossen. Falls der Server genau jetzt stoppt, bleibt der Entwurf bestehen und Bitrix kann beim erneuten Versuch doppelte Dokumente erhalten.',
-      context: logContext,
-    });
-
     const submitResult = await runMongoTransaction(async session => {
       await addOperationLog({
         event: 'submit.transaction.started',
@@ -2067,6 +2226,7 @@ router.post('/submit', uploadAny, async (req, res) => {
         const existingShareToken = submitted.shareToken || createShareToken();
         Object.assign(submitted, {
           ...draftData,
+          ...bitrixPendingFields(),
           shareToken: existingShareToken,
           status: 'submitted',
         });
@@ -2094,7 +2254,7 @@ router.post('/submit', uploadAny, async (req, res) => {
           statusCode: 200,
           response: {
             ...response,
-            bitrixSync,
+            bitrixStatus: 'pending',
           },
           submittedId: submitted._id,
         };
@@ -2102,6 +2262,7 @@ router.post('/submit', uploadAny, async (req, res) => {
 
       const submitPayload = {
         ...draftData,
+        ...bitrixPendingFields(),
         shareToken: recoveryDraft.shareToken || createShareToken(),
         status: 'submitted',
       };
@@ -2129,7 +2290,7 @@ router.post('/submit', uploadAny, async (req, res) => {
         statusCode: recovery.source === 'new' ? 201 : 200,
         response: {
           ...response,
-          bitrixSync,
+          bitrixStatus: 'pending',
         },
         submittedId: submitted._id,
       };
@@ -2143,18 +2304,11 @@ router.post('/submit', uploadAny, async (req, res) => {
         submittedId: submitResult.submittedId,
       },
     });
-    const chatId = await notifyBaustellenabnahmeChat('submitted', bitrixPayload);
-    if (chatId) {
-      const checkPayload = buildAbnahmeCheckPayload(bitrixPayload, {
-        chatId,
-        customerName: buildCustomerName(bitrixPayload) || bitrixPayload.name,
-        documents: bitrixSync.attachmentSummary || [],
-      });
-      // fire-and-forget: ein Fehler hier darf die Abnahme nie zuruecknehmen
-      postAbnahmeCheck(checkPayload, { log: entry => addOperationLog({ ...entry, context: { ...logContext, ...(entry.context || {}) } }) })
-        .catch(() => {});
-    }
-    return res.status(submitResult.statusCode).json(submitResult.response);
+    res.status(submitResult.statusCode).json(submitResult.response);
+    // Bitrix, Chat und n8n laufen nach der Antwort. Die Abnahme ist schon gespeichert.
+    // ponytail: Neustart waehrend des Pushs verliert ihn; retryPendingBitrixPushes holt ihn nach 10 Min. nach.
+    req.bitrixPush = pushAbnahmeToBitrix(submitResult.submittedId, bitrixPayload, logContext);
+    return undefined;
   } catch (error) {
     if (!uploadedFilesProtectedByDraft) {
       await deleteUploadedRequestFiles(req.files);
@@ -2174,7 +2328,6 @@ router.post('/submit', uploadAny, async (req, res) => {
 
     const details = formatErrorDetails(error);
     if (details.length) response.details = details;
-    if (error?.bitrixSync) response.bitrixSync = error.bitrixSync;
 
     await addOperationLog({
       level: 'error',
@@ -2189,7 +2342,6 @@ router.post('/submit', uploadAny, async (req, res) => {
         draftSaved: Boolean(recoveryDraft),
         uploadedFilesDeleted: !uploadedFilesProtectedByDraft,
         details,
-        bitrixSync: error?.bitrixSync,
       },
     });
     if (recoveryDraft) {
@@ -2200,3 +2352,6 @@ router.post('/submit', uploadAny, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.pushAbnahmeToBitrix = pushAbnahmeToBitrix;
+module.exports.retryPendingBitrixPushes = retryPendingBitrixPushes;
+module.exports.startBitrixRetryLoop = startBitrixRetryLoop;

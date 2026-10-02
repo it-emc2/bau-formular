@@ -136,6 +136,13 @@ const schemaDefinition = {
   /* ── System ─────────────────────────────────────── */
   status:     { type: String, enum: ['draft', 'submitted'], default: 'draft' },
   shareToken: { type: String, unique: true, sparse: true },
+
+  /* ── Bitrix-Push im Hintergrund (nur auf Abnahmen gesetzt) ── */
+  bitrixStatus:        { type: String, enum: ['pending', 'sent', 'failed', 'skipped'] },
+  bitrixError:         { type: String },
+  bitrixSentAt:        { type: Date },
+  bitrixAttempts:      { type: Number },
+  bitrixLastAttemptAt: { type: Date },
 };
 
 function createAbnahmeSchema(collectionName, options = {}) {

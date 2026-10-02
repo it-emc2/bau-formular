@@ -124,6 +124,7 @@ async function startServer() {
 
     await mongoose.connect(mongoUri, mongoOptions);
     console.log('✅  MongoDB verbunden');
+    formRoutes.startBitrixRetryLoop();
     return app.listen(PORT, () => console.log(`🚀  Server läuft auf http://localhost:${PORT}`));
   } catch (err) {
     console.error('❌  MongoDB Verbindungsfehler:', err.message);

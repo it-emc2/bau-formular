@@ -20,8 +20,8 @@ A professional web app for **non-technical workers on iPhones**:
 | A1 | Auto-save on the phone (IndexedDB) | ✅ done, verified locally (Chromium); **iPhone test open**; not deployed | `plan/reliability-roadmap` (`b6306dd`) |
 | B2 | Permanent status line | ✅ done (with A1); not deployed | same (`b6306dd`) |
 | — | No 🟡 chat message on draft save (only 🟢 submit / 🔴 failure remain) | ✅ done; not deployed | same (`b6306dd`) |
-| B1 | Fast green: Bitrix push in background | ⬜ **next** | |
-| C2 | Real errors + failed pushes → Bitrix chat | ⬜ **next** (with B1) | |
+| B1 | Fast green: Bitrix push in background + automatic retry + „Komplett neu senden“ | ✅ done. Background push live via manual `fly deploy` (owner, 2026-10-02); e2e on deal 65278 OK: green in 0.4 s, Bitrix `sent` 10 s later, 🟢 chat + n8n OK. Retry path, final alert and „Komplett neu senden“ only unit-tested; the button is **not deployed yet** | `plan/reliability-roadmap` |
+| C2 | Real errors + failed pushes → Bitrix chat (with direct links) | 🟡 links + final-push-failure alert done with B1; client-error part after C1 | same |
 | A2 | Background sync to server after each step/photo | ⬜ | |
 | A3 | Outbox: submit queued while offline | ⬜ | |
 | A4 | `storage.persist()` + Home Screen install (manifest) | ⬜ | |
@@ -150,7 +150,15 @@ Target:
 - Guard against double sending: the background push and the admin re-push (`/admin/push`, "Bitrix Neu-Push") only run when `bitrixStatus !== 'sent'`.
 - This closes the `submit.edge.bitrix_sent_before_mongo_commit` window, because Mongo commits first.
 - Infra: requires the machine to stay up. Already done on `main`: `fly.toml` has `auto_stop_machines = 'off'`, `min_machines_running = 1`.
-- Known limit (accept for now, mark with a `ponytail:` comment): a process restart during a background push loses that push; the Abnahme stays `pending` and the office re-pushes. Add a job queue only if this actually happens.
+- **Automatic retry (decided 2026-10-02):** the push's own retry (3 × 60 s + 8 MB batch fallback) can still fail after the worker already saw green. A timer in the server (every 10 min + once at startup) picks up Abnahmen that are `failed`, or `pending` with no push running in this process, whose last attempt is > 10 min old, and runs the same push again.
+  - Fields: `bitrixAttempts` (incremented at the **start** of each attempt, so a push that crashes the process still counts) and `bitrixLastAttemptAt`.
+  - Max 4 attempts in total (1 at submit + 3 automatic). Then `bitrixStatus: 'failed'` is final and a C2 chat alert asks the office to use Bitrix Neu-Push.
+  - Every attempt is logged with the existing `submit.bitrix.*` events plus `submit.bitrix.auto_retry.*`; nothing is removed from the audit log.
+  - This also covers a process restart during a push: the Abnahme stays `pending`, the timer picks it up after 10 min.
+  - Single machine: an in-memory set of running pushes prevents two pushes of the same Abnahme. Needs a DB lock if we ever run > 1 machine.
+- **„Komplett neu senden“** (Neu-Push panel, after *Laden*): `POST /api/form/admin/resend-full` runs exactly the same push as after submit (text, files, PDFs, deal fields, Hinweis, 🟢 chat, n8n), `trigger: admin`. Only for submitted Abnahmen, refused while a push runs or when already `sent`. The 🔴 final-failure alert points to this button. *Laden* now also shows `bitrixStatus`, attempts and the last error. (The old „Zu Bitrix senden“ only posts selected files with a short comment.)
+- Admin re-push guard: a manual Neu-Push is refused while an automatic push of that deal is running. A successful Neu-Push sets `bitrixStatus: 'sent'`, which stops automatic retries (the office fixed it by hand). Not blocked when already `sent`, because Neu-Push is also used to send missing files (e.g. video) afterwards.
+- Retries use the stored Abnahme document as payload (same as Neu-Push); the first push uses the in-memory request data.
 - Client: on 200 show the receipt (B5), not "an Bitrix gesendet" — the Bitrix result is not known yet.
 - Tests in `__tests__/routes.form.test.js` that assert Bitrix-before-response must be rewritten.
 
@@ -178,6 +186,9 @@ Read `UPLOAD_MAX_MB` (currently unused) into multer `limits`, expose the limit t
 
 - **C1** Drop known noise in `/client-log` before persisting: `Script error.`, `window.ethereum`, `__firefox__`, and similar extension-injected errors. Keep a counter if useful.
 - **C2** Post real errors and failed background pushes to the Bitrix chat with deal number and customer name (reuse `postChatMessage` / `notifyBaustellenabnahmeChat` in `routes/form.js`).
+  - Every chat message carries **direct links**, so nobody has to search: 🔗 the Bitrix deal (`/crm/deal/details/<id>/`) and 📝 the form itself (`<APP_BASE_URL>/form/<shareToken>`, default `https://bau-formular.fly.dev`).
+  - Final push failure (after all automatic retries) → 🔴 alert for **every** form type, not only Baustellenabnahme (otherwise failed pushes of other types would be silent now that the worker sees green). Text says what to do: *Bitte im Testmodus „Bitrix Neu-Push“ mit Auftrag-ID ausführen.*
+  - Client-side real errors → after C1 (noise filter), otherwise the chat gets spammed.
 - **C3** Admin panel: filter logs by deal/draft id to show one job's full timeline (logs already carry `bitrixAuftragId`, `draftId`, `formId`).
 - **C4** `models/OperationLog.js` has a 30-day TTL on everything. Keep `submit.*`, `draft.save.*`, `bitrix.*` events longer (separate TTL or collection). Make "Logs löschen" require a confirmation phrase or remove it.
 - **C5** Handle `SIGTERM`/`SIGINT` in `server.js`: stop accepting requests, wait for in-flight submits/background pushes (with a cap), then exit. Check Fly `kill_timeout`.

@@ -98,6 +98,10 @@ All admin UI is hidden behind the dev-mode password toggle (Testmodus). When act
 - Click **Zu Bitrix senden** → `POST /api/form/admin/push` → compresses selected files, generates selected PDFs, posts to Bitrix using the same single-comment → batch-fallback logic as normal submit
 - `POST /api/form/admin/submitted/:id/bitrix/video` — re-push `videoDesAblaufs` from a specific Abnahme (by MongoDB `_id`) to Bitrix as a separate timeline comment; useful when video was skipped during original submit
 
+- **Komplett neu senden** (same panel, after **Laden**) → `POST /api/form/admin/resend-full` → reruns the full submit push (`pushAbnahmeToBitrix`) for a submitted Abnahme that is not yet `sent`. **Laden** shows `bitrixStatus`, attempts and last error.
+
+**Background push (B1):** `/submit` saves the Abnahme with `bitrixStatus: 'pending'` and answers immediately; `pushAbnahmeToBitrix` then runs the flow below, sets `sent`/`failed`/`skipped`, and sends the 🟢 chat + n8n check. `retryPendingBitrixPushes` (every 10 min + 30 s after start) retries `failed` and stuck `pending` Abnahmen up to 4 attempts in total, then posts a 🔴 chat alert with deal + form links. Details: `docs/10-reliability-plan.md` (B1).
+
 **Bitrix submit flow (normal + admin push):**
 1. All media compressed first (`sharp` for images at upload time; `ffmpeg` for video at push time) — no timeout applies here
 2. Single `postTimelineComment` with all attachments → 60s HTTP timeout
