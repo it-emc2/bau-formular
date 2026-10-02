@@ -275,7 +275,7 @@
     if (!hasUnsavedChanges) return true;
 
     return window.confirm(
-      'Wenn du zum Hauptmenü zurückgehst, werden nicht gespeicherte oder nicht abgesendete Eingaben zurückgesetzt. Möchtest du das Formular wirklich verlassen?'
+      'Wenn Sie zum Hauptmenü zurückgehen, werden nicht gespeicherte oder nicht abgesendete Eingaben zurückgesetzt. Möchten Sie das Formular wirklich verlassen?'
     );
   }
 
@@ -307,13 +307,13 @@
 
     if (step1Intro) {
       if (currentFormularTyp === 'zusaetzliche_leistungen') {
-        step1Intro.innerHTML = 'Erfasse hier die Kundendaten und die beauftragten Zusatzleistungen. Danach kannst du den Vorgang direkt intern ergänzen und absenden.';
+        step1Intro.innerHTML = 'Erfassen Sie hier die Kundendaten und die beauftragten Zusatzleistungen. Danach können Sie den Vorgang direkt intern ergänzen und absenden.';
       } else if (currentFormularTyp === 'nachbesserung') {
-        step1Intro.innerHTML = 'Erfasse hier die Grunddaten für die Nachbesserung. Anschließend dokumentierst du die ausgeführten Restarbeiten und lässt den Vorgang bestätigen.';
+        step1Intro.innerHTML = 'Erfassen Sie hier die Grunddaten für die Nachbesserung. Anschließend dokumentieren Sie die ausgeführten Restarbeiten und lassen den Vorgang bestätigen.';
       } else if (currentFormularTyp === 'schadensmeldung') {
-        step1Intro.innerHTML = 'Erfasse hier die Grunddaten zur Schadensmeldung. Danach dokumentierst du den Schaden mit Fotos und internen Hinweisen.';
+        step1Intro.innerHTML = 'Erfassen Sie hier die Grunddaten zur Schadensmeldung. Danach dokumentieren Sie den Schaden mit Fotos und internen Hinweisen.';
       } else {
-        step1Intro.innerHTML = 'Auf den folgenden Seiten wirst du Schritt für Schritt durch den Abschluss der Baustelle geführt. Bitte beachte, dass dieser <strong>vor Ort mit dem Kunden</strong> gemeinsam vorgenommen werden muss.';
+        step1Intro.innerHTML = 'Auf den folgenden Seiten werden Sie Schritt für Schritt durch den Abschluss der Baustelle geführt. Bitte beachten Sie, dass dieser <strong>vor Ort mit dem Kunden</strong> gemeinsam vorgenommen werden muss.';
       }
     }
 
@@ -809,7 +809,7 @@
       URL.revokeObjectURL(url);
       showToast('PDF heruntergeladen.', 'success');
     } catch (error) {
-      showToast(`PDF-Download fehlgeschlagen: ${error.message}`, 'error');
+      showError('PDF-Download fehlgeschlagen.', error);
     } finally {
       btn.disabled = false;
       btn.textContent = originalLabel;
@@ -1668,7 +1668,7 @@ function syncDevSidebarVisibility() {
         renderHomeDrafts(items, query ? 'Keine passenden Entwürfe gefunden.' : 'Noch keine Entwürfe gespeichert.');
       } catch (error) {
         homeDraftList.innerHTML = '<p class="bitrix-empty">Fehler beim Laden der Entwürfe.</p>';
-        showToast('Fehler: ' + error.message, 'error');
+        showError('Suche fehlgeschlagen.', error);
       } finally {
         if (btnHomeDraftSearch) btnHomeDraftSearch.disabled = false;
       }
@@ -1701,7 +1701,7 @@ function syncDevSidebarVisibility() {
         renderHomeSubmitted(items, query ? 'Keine passenden Abnahmen gefunden.' : 'Noch keine gesendeten Abnahmen.');
       } catch (error) {
         homeSubmittedList.innerHTML = '<p class="bitrix-empty">Fehler beim Laden der Abnahmen.</p>';
-        showToast('Fehler: ' + error.message, 'error');
+        showError('Suche fehlgeschlagen.', error);
       } finally {
         if (btnHomeSubmittedSearch) btnHomeSubmittedSearch.disabled = false;
       }
@@ -1915,7 +1915,7 @@ function syncDevSidebarVisibility() {
       arbeitsberichtResults = [];
       renderArbeitsberichtResults([], 'Fehler bei der externen Suche.');
       setArbeitsberichtStatus(`Fehler bei der externen Suche: ${error.message}`, 'error');
-      showToast('Fehler bei der externen Suche: ' + error.message, 'error');
+      showError('Suche fehlgeschlagen.', error);
     } finally {
       if (btnArbeitsberichtSearch) btnArbeitsberichtSearch.disabled = false;
     }
@@ -2050,7 +2050,7 @@ function syncDevSidebarVisibility() {
     } catch (error) {
       drafts = [];
       renderDrafts([], 'Fehler beim Laden der Entwürfe.');
-      showToast('Fehler beim Laden der Entwürfe: ' + error.message, 'error');
+      showError('Entwürfe konnten nicht geladen werden.', error, { sticky: false });
     } finally {
       if (btnDraftRefresh) btnDraftRefresh.disabled = false;
     }
@@ -2127,7 +2127,7 @@ function syncDevSidebarVisibility() {
       showStep(getNextVisibleStep(0));
       showToast('Entwurf geladen.', 'success');
     } catch (error) {
-      showToast('Fehler beim Laden des Entwurfs: ' + error.message, 'error');
+      showError('Entwurf konnte nicht geladen werden.', error, { retry: () => loadDraftById(id) });
     }
   }
 
@@ -2569,7 +2569,7 @@ function syncDevSidebarVisibility() {
         setFormLocked(true);
       }
     } catch (error) {
-      showToast('Fehler beim Abrufen des Deals: ' + error.message, 'error');
+      showError('Auftrag konnte nicht aus Bitrix geladen werden.', error, { retry: fetchBitrixDealById });
     } finally {
       if (btnFetchBitrixLead) btnFetchBitrixLead.disabled = false;
     }
@@ -3051,7 +3051,7 @@ function syncDevSidebarVisibility() {
     } catch (error) {
       clearDocumentPreview();
       setDocumentStatus(`Fehler bei der Vorschau: ${error.message}`, 'error');
-      showToast('Fehler bei der Vorschau: ' + error.message, 'error');
+      showError('Vorschau fehlgeschlagen.', error);
     }
   }
 
@@ -3120,7 +3120,7 @@ function syncDevSidebarVisibility() {
       showToast('Dokument heruntergeladen.', 'success');
     } catch (error) {
       setDocumentStatus(`Fehler beim Download: ${error.message}`, 'error');
-      showToast('Fehler beim Download: ' + error.message, 'error');
+      showError('Download fehlgeschlagen.', error);
     }
   }
 
@@ -3185,7 +3185,7 @@ function syncDevSidebarVisibility() {
     } catch (error) {
       setArbeitsberichtStatus(`Fehler beim Arbeitsbericht PDF: ${error.message}`, 'error');
       setDocumentStatus(`Fehler beim Arbeitsbericht PDF: ${error.message}`, 'error');
-      showToast('Fehler beim Arbeitsbericht PDF: ' + error.message, 'error');
+      showError('Arbeitsbericht-PDF fehlgeschlagen.', error);
     } finally {
       setArbeitsberichtLoading(false);
     }
@@ -3264,7 +3264,7 @@ function syncDevSidebarVisibility() {
       showToast('Dokument wurde per E-Mail versendet.', 'success');
     } catch (error) {
       setDocumentStatus(`Fehler beim E-Mail-Versand: ${error.message}`, 'error');
-      showToast('Fehler beim E-Mail-Versand: ' + error.message, 'error');
+      showError('E-Mail konnte nicht gesendet werden.', error);
     }
   }
 
@@ -3279,7 +3279,7 @@ function syncDevSidebarVisibility() {
       showToast('Dokument an Bitrix gesendet.', 'success');
     } catch (error) {
       setDocumentStatus(`Fehler beim Bitrix-Versand: ${error.message}`, 'error');
-      showToast('Fehler beim Bitrix-Versand: ' + error.message, 'error');
+      showError('Senden an Bitrix fehlgeschlagen.', error);
     }
   }
 
@@ -3461,7 +3461,7 @@ function syncDevSidebarVisibility() {
       if (action === 'autosave') { autosaveQueued = true; return; }
       if (saveAction === 'autosave') await currentSave;
       if (saveInProgress) {
-        showToast('Speichern läuft bereits. Bitte kurz warten.', 'error');
+        showToast('Wird gerade gespeichert – bitte einen Moment warten.', '');
         return;
       }
     }
@@ -3538,7 +3538,7 @@ function syncDevSidebarVisibility() {
       } else if (isSubmit && err.isNetwork) {
         await queueSubmit(err);
       } else {
-        showToast(`Fehler beim ${isSubmit ? 'Absenden' : 'Speichern'}:\n${err.message}`, 'error', 'big validation');
+        showError(isSubmit ? 'Absenden hat nicht geklappt.' : 'Speichern hat nicht geklappt.', err, { dataSafe: true, retry: () => saveForm(action) });
       }
     } finally {
       saveInProgress = false;
@@ -3596,7 +3596,7 @@ function syncDevSidebarVisibility() {
     await writeLocalSnapshot();
     if (localSaveFailed) {
       outboxQueuedAt = null;
-      showToast(`Fehler beim Absenden:\n${err.message}\nBitte bei Empfang erneut „Absenden“ drücken.`, 'error', 'big validation');
+      showError('Absenden hat nicht geklappt. Bitte bei Empfang erneut „Absenden“ drücken.', err, { retry: () => saveForm('submit') });
       return;
     }
     logClientEvent({
@@ -3683,9 +3683,9 @@ function syncDevSidebarVisibility() {
       });
       if (isCurrentPage) {
         outboxQueuedAt = null;
-        showToast(`Fehler beim Absenden:\n${err.message}`, 'error', 'big validation');
+        showError('Das wartende Formular wurde vom Server abgelehnt.', err);
       } else {
-        showToast('Ein wartendes Formular konnte nicht gesendet werden. Bitte das Formular über den Auftrags-Link erneut öffnen.', 'error', 'big');
+        showToast('Ein wartendes Formular wurde vom Server abgelehnt. Bitte das Formular über den Auftrags-Link erneut öffnen und prüfen.', 'error', 'big validation');
       }
       return 'rejected';
     }
@@ -3987,7 +3987,7 @@ function syncDevSidebarVisibility() {
     } else if (saveAction) {
       text = '⏳ Wird gespeichert …';
     } else if (localSaveFailed) {
-      text = '⚠ Sicherung auf dem Handy nicht möglich – bitte „Zwischenspeichern“ nutzen';
+      text = '⚠ Sicherung auf dem Handy nicht möglich – bei Empfang wird automatisch auf dem Server gespeichert';
       tone = 'warn';
     } else if (!navigator.onLine) {
       text = '⚠ Kein Netz – Eingaben bleiben auf dem Handy gesichert';
@@ -4291,7 +4291,7 @@ function syncDevSidebarVisibility() {
         modal.classList.add('open');
       })
       .catch(err => {
-        showToast('Kamera-Zugriff nicht möglich: ' + err.message, 'error');
+        showError('Kamera konnte nicht geöffnet werden.', err);
       });
 
     let recording = false;
@@ -4682,11 +4682,80 @@ function syncDevSidebarVisibility() {
   }
 
   // ── Toast Notifications ────────────────────────────────
-  function showToast(msg, type = '', size = '') {
-    toast.textContent = msg;
-    toast.className = ['toast', 'visible', type, size].filter(Boolean).join(' ');
+  // Errors stay until tapped (B4); everything else hides after 3.5 s.
+  function showToast(msg, type = '', size = '', { action = null, sticky = type === 'error' } = {}) {
     clearTimeout(toast._timer);
-    toast._timer = setTimeout(() => { toast.className = 'toast'; }, 3500);
+    toast.textContent = '';
+    const text = document.createElement('div');
+    text.className = 'toast-text';
+    text.textContent = msg;
+    toast.appendChild(text);
+    if (action) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'toast-action';
+      btn.textContent = action.label;
+      btn.addEventListener('click', event => {
+        event.stopPropagation();
+        hideToast();
+        action.onClick();
+      });
+      toast.appendChild(btn);
+    }
+    if (sticky) {
+      const close = document.createElement('span');
+      close.className = 'toast-close';
+      close.textContent = '✕';
+      close.setAttribute('aria-hidden', 'true');
+      toast.appendChild(close);
+    }
+    toast.className = ['toast', 'visible', type, size, sticky ? 'sticky' : ''].filter(Boolean).join(' ');
+    if (!sticky) toast._timer = setTimeout(hideToast, 3500);
+  }
+
+  toast.addEventListener('click', () => {
+    if (toast.classList.contains('sticky')) hideToast();
+  });
+
+  function hideToast() {
+    clearTimeout(toast._timer);
+    toast.className = 'toast';
+  }
+
+  // Plain German for technical failures. German messages from our own server
+  // (validation, size limit, …) are specific already and pass through unchanged.
+  function friendlyError(err, { dataSafe = false } = {}) {
+    const raw = String(err?.message || err || '');
+    const safe = dataSafe && !localSaveFailed ? ' Ihre Eingaben sind auf dem Handy gesichert.' : '';
+    if (err?.name === 'NotAllowedError' || /NotAllowedError|Permission denied/i.test(raw)) {
+      return 'Kamera-Zugriff ist nicht erlaubt. Bitte in den iPhone-Einstellungen (Safari → Kamera) erlauben oder „Foto hochladen“ nutzen.';
+    }
+    if (err?.name === 'NotFoundError' || /NotFoundError|Requested device not found/i.test(raw)) {
+      return 'Keine Kamera gefunden. Bitte „Foto hochladen“ nutzen.';
+    }
+    if (/Zeitüberschreitung|AbortError|timed? ?out/i.test(raw)) {
+      return `Der Server hat zu lange nicht geantwortet.${safe} Bitte erneut versuchen.`;
+    }
+    if (/HTTP 5\d\d|Unerwartete Server-Antwort|Leere Server-Antwort/i.test(raw)) {
+      return `Der Server hat gerade ein Problem.${safe} Bitte in einer Minute erneut versuchen.`;
+    }
+    if (err?.isNetwork || /Load failed|Failed to fetch|NetworkError|Netzwerkfehler|network connection was lost/i.test(raw)) {
+      return `Keine Verbindung zum Server.${safe} Bitte bei Empfang erneut versuchen.`;
+    }
+    return raw || 'Unbekannter Fehler. Bitte erneut versuchen.';
+  }
+
+  // Worker-facing failure: friendly text on screen, the raw text in the log.
+  function showError(prefix, err, { dataSafe = false, retry = null, sticky = true } = {}) {
+    logClientEvent({
+      level: 'warn',
+      event: 'client.action.failed',
+      message: `${prefix.replace(/[.:]\s*$/, '')} – ${err?.name && err.name !== 'Error' ? `${err.name}: ` : ''}${err?.message || err}`.slice(0, 500),
+    });
+    showToast(`${prefix}\n${friendlyError(err, { dataSafe })}`, 'error', sticky ? 'big validation' : '', {
+      sticky,
+      action: retry ? { label: 'Erneut versuchen', onClick: retry } : null,
+    });
   }
 
   // ── Boot ───────────────────────────────────────────────

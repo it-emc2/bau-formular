@@ -1595,6 +1595,32 @@ input[type="radio"], input[type="checkbox"] {
 }
 .toast.success { background: var(--clr-green); }
 .toast.error { background: #e53935; }
+.toast.warn { background: #ef6c00; }
+
+/* Errors stay until tapped (B4). */
+.toast-text { white-space: pre-line; }
+.toast.sticky { pointer-events: auto; cursor: pointer; padding-right: 44px; }
+.toast-close {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  font-size: 1.1rem;
+  line-height: 1;
+  opacity: .85;
+}
+.toast-action {
+  display: block;
+  margin: 14px auto 0;
+  padding: 10px 18px;
+  border: 0;
+  border-radius: 8px;
+  background: #fff;
+  color: #c62828;
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
 
 .toast.big {
   top: 50%;

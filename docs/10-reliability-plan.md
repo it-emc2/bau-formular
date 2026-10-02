@@ -27,7 +27,7 @@ A professional web app for **non-technical workers on iPhones**:
 | A3 | Outbox: submit queued while offline | ✅ done, verified locally (server stopped → queued → edited → server back → sent from the **home page**, exactly one Abnahme with the edit, Bitrix `sent`; repeat with same `submitId` → `duplicate: true`). **Live** checked too: queued → sent 7 s later, one Abnahme, Bitrix `sent`; live duplicate check OK. **iPhone test open** | same |
 | A4 | `storage.persist()` + log (Home Screen install dropped) | ✅ done, verified locally (log arrives); not deployed | `plan/reliability-roadmap` |
 | B3 | Upload progress | ⬜ | |
-| B4 | Plain-German, persistent error messages | 📝 planned (below) | |
+| B4 | Plain-German, persistent error messages | ✅ done, 98/98 tests; local browser check: no connection / HTTP 502 / camera blocked show the plain texts, error stays after 4.5 s, tap closes, real click on *Erneut versuchen* retries, raw text in `client.action.failed`; not deployed | `plan/reliability-roadmap` |
 | B5 | Receipt screen after submit | ⬜ | |
 | B6 | Request timeouts + automatic retry | ⬜ | |
 | B7 | File size check at pick time | ⬜ | |
@@ -38,7 +38,7 @@ A professional web app for **non-technical workers on iPhones**:
 | C6 | Tests block a broken `fly deploy` (Docker build) + GitHub workflow tests-only | ✅ done; verified with `fly deploy --build-only`: passes (89 + 1 skipped), and a deliberately broken test aborts the build | `plan/reliability-roadmap` |
 | C7 | Compress video on upload, daily orphan cleanup, 80 % volume alarm | ✅ done, 90/90 tests; local e2e: 17.6 MB `.mov` → 186 KB `.mp4` in 1.6 s, original + temp removed. **Live** (owner deploy 2026-10-02 12:11): same test via `/debug-bitrix-payload` → 180 KB `.mp4` on the volume, no `.mov`/temp left; volume 28 %. The test file `1790943930554-c14ac81c-IMG_TEST.mp4` is an orphan on purpose: the daily cleanup should delete it after 24 h (`storage.orphans.deleted`) | `plan/reliability-roadmap` |
 
-Recommended order: ~~A1+B2~~ → ~~B1+C2~~ → ~~A2+A3~~ → ~~A4~~ → ~~C7~~ → ~~C6~~ → ~~C1+C2~~ → ~~C7b~~ → **B4** → the rest (small items, any order).
+Recommended order: ~~A1+B2~~ → ~~B1+C2~~ → ~~A2+A3~~ → ~~A4~~ → ~~C7~~ → ~~C6~~ → ~~C1+C2~~ → ~~C7b~~ → ~~B4~~ → the rest (small items, any order).
 
 Branches: `plan/reliability-roadmap` (local, **not pushed**) = `form-submit-upload-once-v2` + everything in this plan. **Production runs this branch** (owner's manual `fly deploy`s on 2026-10-02).
 
@@ -208,6 +208,7 @@ One always-visible line (like Google Docs): *"✓ Alles gespeichert · 10:42"*, 
 - Status line when the local backup fails: *⚠ Sicherung auf dem Handy nicht möglich – bei Empfang wird automatisch auf dem Server gespeichert*.
 - **Anrede: Sie** everywhere workers read it (~10 *du* texts in `index.html` / `app.js`: start page, step intros, leave dialog).
 - Scope: worker-facing messages only; Testmodus/admin panels keep technical text.
+- **As built:** `showToast(msg, type, size, { action, sticky })` (errors sticky by default, ✕ + tap to close, optional button), `hideToast`, `friendlyError`, `showError(prefix, err, { dataSafe, retry, sticky })`. Background draft-list loading uses `sticky: false` (no stuck message on every page load without signal). "Speichern läuft bereits" became a neutral *Wird gerade gespeichert – bitte einen Moment warten.* Styles `.toast.sticky`, `.toast-action`, `.toast-close`, `.toast.warn` (was unstyled).
 
 ### B5 · Receipt screen after submit
 *"Abnahme übermittelt ✓ – Sie können das Handy jetzt weglegen."* Show customer name, deal number, time. Optional: later status (gesendet an Bitrix) for the office view.
