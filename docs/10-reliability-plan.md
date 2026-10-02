@@ -28,7 +28,7 @@ A professional web app for **non-technical workers on iPhones**:
 | A4 | `storage.persist()` + log (Home Screen install dropped) | ✅ done, verified locally (log arrives); not deployed | `plan/reliability-roadmap` |
 | B3 | Upload progress | ⬜ | |
 | B4 | Plain-German, persistent error messages | ✅ done, 98/98 tests; local browser check: no connection / HTTP 502 / camera blocked show the plain texts, error stays after 4.5 s, tap closes, real click on *Erneut versuchen* retries, raw text in `client.action.failed`. **Live** (owner deploy): new texts, Sie-intro, sticky message with *Erneut versuchen* and the log entry confirmed | `plan/reliability-roadmap` |
-| B5 | Receipt screen after submit | ⬜ | |
+| B5 | Receipt screen after submit | 📝 planned (below) | |
 | B6 | Request timeouts + automatic retry | ⬜ | |
 | B7 | File size check at pick time | ⬜ | |
 | C1 | Filter client-log noise | ✅ done, 95/95 tests; local check: extension errors dropped in the browser, `Script error.` dropped by the server. **Live** (owner deploy): new client code served; `Script error.` and `__firefox__` → `ignored: true` | `plan/reliability-roadmap` |
@@ -212,6 +212,14 @@ One always-visible line (like Google Docs): *"✓ Alles gespeichert · 10:42"*, 
 
 ### B5 · Receipt screen after submit
 *"Abnahme übermittelt ✓ – Sie können das Handy jetzt weglegen."* Show customer name, deal number, time. Optional: later status (gesendet an Bitrix) for the office view.
+
+**B5 plan (owner, 2026-10-02):**
+- Today: big toast (3.5 s), then `window.location.href = '/'` after 2 s unless "Auf Seite bleiben" is ticked. Median Bitrix push since B1: ~17 s.
+- Receipt modal (`#receiptModal`) built from the submit response (`json.data` = the stored Abnahme): ✓ *Formular übermittelt* · *Sie können das Handy jetzt weglegen.* · Kunde (name, address) · Auftrag (`bitrixAuftragId` · `auftragsNummer`) · Formular type · Übermittelt (date, time) · Umfang (photos, video, signatures).
+- **Live Bitrix line:** poll `GET /api/form/token/:shareToken` every 5 s for up to 2 min: `pending` → *⏳ Wird an Bitrix übertragen …*; `sent` → *✓ In Bitrix angekommen (HH:MM)*; `skipped` → *Ohne Bitrix-Auftrag gespeichert*; `failed` or still pending after 2 min → *Übertragung läuft im Hintergrund weiter – bei Problemen wird das Büro automatisch informiert.* Never a red error for the worker (B1 retries + C2 alert handle it).
+- **Stays until *Fertig*** (no auto-redirect). *Fertig* → home; with "Auf Seite bleiben" ticked it only closes the receipt.
+- Also shown when a queued submit (A3) is sent later, on the form page or on the home page.
+- No server change.
 
 ### B6 · Timeouts + retry
 `AbortController` timeout on every API call; automatic retry with backoff for `/save`; never leave a button disabled without a visible reason.
