@@ -21,7 +21,7 @@ A professional web app for **non-technical workers on iPhones**:
 | B2 | Permanent status line | ✅ done (with A1); not deployed | same (`b6306dd`) |
 | — | No 🟡 chat message on draft save (only 🟢 submit / 🔴 failure remain) | ✅ done; not deployed | same (`b6306dd`) |
 | B1 | Fast green: Bitrix push in background + automatic retry + „Komplett neu senden“ | ✅ done. Background push live via manual `fly deploy` (owner, 2026-10-02); e2e on deal 65278 OK: green in 0.4 s, Bitrix `sent` 10 s later, 🟢 chat + n8n OK. „Komplett neu senden“ deployed; live-checked: *Laden* shows status, button refuses an already `sent` Abnahme; full resend of a `failed` Abnahme OK (6 attachments, 10 s, status → `sent`, timeline + Hinweis + n8n OK). Automatic retry path and final 🔴 alert only unit-tested | `plan/reliability-roadmap` |
-| C2 | Real errors + failed pushes → Bitrix chat (with direct links) | 🟡 links + final-push-failure alert done with B1; client-error part after C1 | same |
+| C2 | Real errors + failed pushes → Bitrix chat (with direct links) | 🟡 links + final-push-failure alert done with B1; client-error part 📝 planned with C1 | same |
 | A2 | Background sync to server after each step/photo (+ continue server draft by `dealId`, 30-day draft cleanup) | ✅ done, verified locally against prod DB (Chromium): silent saves, photo added during an upload adopted correctly (1+1+1 uploads, no `adopt_skipped`), deal draft continued after local copy deleted. **live since 2026-10-02** (owner deploy), checked on live: silent save, no modal. **iPhone test open** | `plan/reliability-roadmap` |
 | A3 | Outbox: submit queued while offline | ✅ done, verified locally (server stopped → queued → edited → server back → sent from the **home page**, exactly one Abnahme with the edit, Bitrix `sent`; repeat with same `submitId` → `duplicate: true`). **Live** checked too: queued → sent 7 s later, one Abnahme, Bitrix `sent`; live duplicate check OK. **iPhone test open** | same |
 | A4 | `storage.persist()` + log (Home Screen install dropped) | ✅ done, verified locally (log arrives); not deployed | `plan/reliability-roadmap` |
@@ -30,7 +30,7 @@ A professional web app for **non-technical workers on iPhones**:
 | B5 | Receipt screen after submit | ⬜ | |
 | B6 | Request timeouts + automatic retry | ⬜ | |
 | B7 | File size check at pick time | ⬜ | |
-| C1 | Filter client-log noise | ⬜ | |
+| C1 | Filter client-log noise | 📝 planned (below) | |
 | C3 | One timeline per job in admin panel | ⬜ | |
 | C4 | Longer retention for submit/Bitrix logs, protect "Logs löschen" | ⬜ | |
 | C5 | Graceful shutdown on deploy | ⬜ | |
@@ -214,6 +214,13 @@ Read `UPLOAD_MAX_MB` (currently unused) into multer `limits`, expose the limit t
   - Every chat message carries **direct links**, so nobody has to search: 🔗 the Bitrix deal (`/crm/deal/details/<id>/`) and 📝 the form itself (`<APP_BASE_URL>/form/<shareToken>`, default `https://bau-formular.fly.dev`).
   - Final push failure (after all automatic retries) → 🔴 alert for **every** form type, not only Baustellenabnahme (otherwise failed pushes of other types would be silent now that the worker sees green). Text says what to do: *Bitte im Testmodus „Bitrix Neu-Push“ mit Auftrag-ID ausführen.*
   - Client-side real errors → after C1 (noise filter), otherwise the chat gets spammed.
+- **C1 + C2 rest + part of C4 — plan (owner, 2026-10-02):**
+  - **Incident:** all OperationLogs were deleted on 2026-10-02 between 12:29 and ~12:35 UTC (collection count 0). Only `POST /admin/logs/clear` ("Logs löschen", no confirmation, not logged) does that. The Fly console (`fly logs`) still had the last entries. Cause not yet confirmed with the owner.
+  - **C1a (client):** `initClientErrorLogging` reports `client.error` only when `event.filename` starts with `location.origin` (our own scripts); extension/injected errors are dropped.
+  - **C1b (server):** `/client-log` drops known noise for all clients (also cached old `app.js`): `Script error.`, `__firefox__`, `window.ethereum`, `prompt() is not supported`.
+  - **C2 rest:** after the filter, `client.error`, `client.unhandled_rejection` and `client.outbox.rejected` post a 🔴 message to the **same chat 9534**, with deal number, customer name, deal link and form link (looked up via `formId`). Rate limit: max 1 message per event + message per hour (in memory). Not posted: `client.autosave.failed` (normal without signal), `client.local.failed` (worker already sees a warning).
+  - **C4 part:** "Logs löschen" requires typing `LÖSCHEN` (checked on the server too) and logs `admin.logs.cleared` with the number of deleted entries.
+  - **Seen in the same Fly console lines:** a 57 MB video was uploaded twice (12:28:16 saved on the server, 12:28:20 `client.autosave.failed: Load failed`, 12:28:58 re-sent). The ~30 s upload-time compression (C7) keeps the request open longer, so a locked phone loses the response more often. Separate follow-up: answer first, compress the video right after the response.
 - **C3** Admin panel: filter logs by deal/draft id to show one job's full timeline (logs already carry `bitrixAuftragId`, `draftId`, `formId`).
 - **C4** `models/OperationLog.js` has a 30-day TTL on everything. Keep `submit.*`, `draft.save.*`, `bitrix.*` events longer (separate TTL or collection). Make "Logs löschen" require a confirmation phrase or remove it.
 - **C5** Handle `SIGTERM`/`SIGINT` in `server.js`: stop accepting requests, wait for in-flight submits/background pushes (with a cap), then exit. Check Fly `kill_timeout`.
