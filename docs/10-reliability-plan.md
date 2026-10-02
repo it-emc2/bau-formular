@@ -21,7 +21,7 @@ A professional web app for **non-technical workers on iPhones**:
 | B2 | Permanent status line | ✅ done (with A1); not deployed | same (`b6306dd`) |
 | — | No 🟡 chat message on draft save (only 🟢 submit / 🔴 failure remain) | ✅ done; not deployed | same (`b6306dd`) |
 | B1 | Fast green: Bitrix push in background + automatic retry + „Komplett neu senden“ | ✅ done. Background push live via manual `fly deploy` (owner, 2026-10-02); e2e on deal 65278 OK: green in 0.4 s, Bitrix `sent` 10 s later, 🟢 chat + n8n OK. „Komplett neu senden“ deployed; live-checked: *Laden* shows status, button refuses an already `sent` Abnahme; full resend of a `failed` Abnahme OK (6 attachments, 10 s, status → `sent`, timeline + Hinweis + n8n OK). Automatic retry path and final 🔴 alert only unit-tested | `plan/reliability-roadmap` |
-| C2 | Real errors + failed pushes → Bitrix chat (with direct links) | ✅ done; local check: one real 🔴 message in chat 9534 with deal, customer, step, device, deal link; repeat suppressed (1/h); not deployed | same |
+| C2 | Real errors + failed pushes → Bitrix chat (with direct links) | ✅ done; local check: one real 🔴 message in chat 9534 with deal, customer, step, device, deal link; repeat suppressed (1/h); live since owner deploy (chat path tested locally only) | same |
 | C7b | Answer the upload first, compress the video right after | 📝 planned (below), not started | |
 | A2 | Background sync to server after each step/photo (+ continue server draft by `dealId`, 30-day draft cleanup) | ✅ done, verified locally against prod DB (Chromium): silent saves, photo added during an upload adopted correctly (1+1+1 uploads, no `adopt_skipped`), deal draft continued after local copy deleted. **live since 2026-10-02** (owner deploy), checked on live: silent save, no modal. **iPhone test open** | `plan/reliability-roadmap` |
 | A3 | Outbox: submit queued while offline | ✅ done, verified locally (server stopped → queued → edited → server back → sent from the **home page**, exactly one Abnahme with the edit, Bitrix `sent`; repeat with same `submitId` → `duplicate: true`). **Live** checked too: queued → sent 7 s later, one Abnahme, Bitrix `sent`; live duplicate check OK. **iPhone test open** | same |
@@ -31,7 +31,7 @@ A professional web app for **non-technical workers on iPhones**:
 | B5 | Receipt screen after submit | ⬜ | |
 | B6 | Request timeouts + automatic retry | ⬜ | |
 | B7 | File size check at pick time | ⬜ | |
-| C1 | Filter client-log noise | ✅ done, 95/95 tests; local check: extension errors dropped in the browser, `Script error.` dropped by the server; not deployed | `plan/reliability-roadmap` |
+| C1 | Filter client-log noise | ✅ done, 95/95 tests; local check: extension errors dropped in the browser, `Script error.` dropped by the server. **Live** (owner deploy): new client code served; `Script error.` and `__firefox__` → `ignored: true` | `plan/reliability-roadmap` |
 | C3 | One timeline per job in admin panel | ⬜ | |
 | C4 | Longer retention for submit/Bitrix logs, protect "Logs löschen" | ⬜ | |
 | C5 | Graceful shutdown on deploy | ⬜ | |
@@ -256,6 +256,7 @@ Native app (Home Screen PWA is enough) · Tigris/R2 object storage (`docs/TODO.m
 - ⚠️ That `.env` points at the **production MongoDB** and the **live Bitrix webhook**. Local `/save` creates real drafts; local `/submit` posts to real Bitrix deals and the real chat. Only submit against the test deal.
 - Use a free port and allow it for CORS: set `PORT=3007` and add `ALLOWED_ORIGINS=http://localhost:3007` (the default CORS list only contains port 3000). `node --watch` does **not** reload `.env` — restart the server after editing it.
 - Local uploads go to `./uploads` in the worktree (production uses `/data/uploads` on the Fly volume).
+- **Background jobs (Bitrix retry, daily maintenance) only run on Fly** (`FLY_APP_NAME`) or with `ENABLE_BACKGROUND_JOBS=1`. Found 2026-10-02: a local test server ran them against the production DB and posted a false volume alarm about the laptop disk (96 % of 465 GB) to chat 9534; it could also have pushed a pending Abnahme a second time (none was pending).
 
 ### Testing
 - `npm test` — 74 tests, all green (as of `b6306dd`). If old worktrees exist under `.claude/worktrees/`, plain `npm test` also picks up their copies and shows ~35 unrelated failures; run `npx jest --runInBand --watchman=false --testPathIgnorePatterns /.claude/`.
