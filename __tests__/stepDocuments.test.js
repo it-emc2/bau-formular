@@ -146,32 +146,36 @@ describe('stepDocuments', () => {
   });
 });
 
-describe('compressUploadedFiles for videos', () => {
+describe('compressStoredVideo', () => {
   const fs = require('fs');
   const os = require('os');
   const path = require('path');
   const { spawnSync } = require('child_process');
-  const { compressUploadedFiles: compress } = require('../services/stepDocuments');
+  const { compressStoredVideo, compressUploadedFiles: compress } = require('../services/stepDocuments');
   const hasFfmpeg = spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' }).status === 0;
   const maybe = hasFfmpeg ? it : it.skip;
 
-  maybe('replaces a phone video with the smaller 720p mp4 and updates the file reference', async () => {
+  maybe('writes <name>-720p.mp4 next to the original and keeps the original', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'uploads-'));
     try {
       const original = path.join(dir, '123-abc-IMG_0001.mov');
       // Large, barely compressed 1080p source, like a phone recording.
       spawnSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=size=1920x1080:rate=25:duration=2', '-c:v', 'mjpeg', '-q:v', '2', original], { stdio: 'ignore' });
-      const file = { fieldname: 'videoDesAblaufs', filename: '123-abc-IMG_0001.mov', path: original, size: fs.statSync(original).size };
 
-      const [result] = await compress([file], dir);
+      const result = await compressStoredVideo('123-abc-IMG_0001.mov', dir);
 
-      expect(result).toEqual(expect.objectContaining({ kind: 'video', filename: '123-abc-IMG_0001.mp4' }));
-      expect(file.filename).toBe('123-abc-IMG_0001.mp4');
-      expect(fs.existsSync(original)).toBe(false);
-      expect(fs.statSync(path.join(dir, file.filename)).size).toBeLessThan(result.originalSizeKB * 1024);
-      expect(fs.readdirSync(dir)).toEqual(['123-abc-IMG_0001.mp4']);
+      expect(result).toEqual(expect.objectContaining({ kind: 'video', filename: '123-abc-IMG_0001-720p.mp4' }));
+      expect(result.compressedSizeKB).toBeLessThan(result.originalSizeKB);
+      expect(fs.readdirSync(dir).sort()).toEqual(['123-abc-IMG_0001-720p.mp4', '123-abc-IMG_0001.mov']);
+      expect(await compressStoredVideo('123-abc-IMG_0001-720p.mp4', dir)).toBeNull();
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   }, 60000);
+
+  it('leaves videos alone during the upload itself (they are compressed after the answer)', async () => {
+    const file = { fieldname: 'videoDesAblaufs', filename: 'x.mov', size: 10 };
+    expect(await compress([file], os.tmpdir())).toEqual([]);
+    expect(file.filename).toBe('x.mov');
+  });
 });

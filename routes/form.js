@@ -14,7 +14,7 @@ const OperationLog = require('../models/OperationLog');
 const { buildDocumentPackage } = require('../services/documentLetter');
 const { postTimelineComment, updateDealFields, postChatMessage, chatDialogId } = require('../services/bitrix');
 const { buildAbnahmeCheckPayload, postAbnahmeCheck } = require('../services/n8nAbnahmeCheck');
-const { buildStepDocumentAttachments, buildBitrixUploadAttachment, buildSelectedPdfAttachments, buildProduktverkaufSummaryText, buildCustomerName, ADMIN_PDF_SPECS, compressUploadedFiles } = require('../services/stepDocuments');
+const { buildStepDocumentAttachments, buildBitrixUploadAttachment, buildSelectedPdfAttachments, buildProduktverkaufSummaryText, buildCustomerName, ADMIN_PDF_SPECS, compressUploadedFiles, compressStoredVideo, compressedVideoName, COMPRESSED_VIDEO_SUFFIX, VIDEO_EXTENSIONS } = require('../services/stepDocuments');
 const { getUploadsDir } = require('../services/uploadsPath');
 const { cleanupOrphanUploads, getDraftFileReferences, deleteExpiredDrafts, getVolumeUsage } = require('../services/orphanUploads');
 const { addOperationLog, listOperationLogs } = require('../services/operationLogs');
@@ -49,6 +49,14 @@ function uploadAny(req, res, next) {
     if (!error) {
       if (req.files && req.files.length > 0) {
         const compressed = await compressUploadedFiles(req.files, uploadsDir).catch(() => []);
+        // Videos take ~30 s: answer the phone first, compress afterwards (C7b).
+        const videos = req.files.filter(file => SINGLE_UPLOAD_FIELDS.has(file.fieldname)
+          && VIDEO_EXTENSIONS.has(path.extname(file.filename).toLowerCase()));
+        if (videos.length) {
+          res.on('finish', () => {
+            if (res.statusCode < 400) compressVideosAfterResponse(videos).catch(() => {});
+          });
+        }
         if (compressed.length > 0) {
           addOperationLog({
             event: 'upload.compressed',
@@ -82,6 +90,39 @@ function uploadAny(req, res, next) {
       }],
     });
   });
+}
+
+async function compressVideosAfterResponse(files) {
+  for (const file of files) {
+    const result = await compressStoredVideo(file.filename, uploadsDir);
+    if (!result) continue;
+    const oldUrl = `/uploads/${file.filename}`;
+    const newUrl = `/uploads/${result.filename}`;
+    const filter = { [file.fieldname]: oldUrl };
+    const update = { $set: { [file.fieldname]: newUrl } };
+    // timestamps: false — a newer updatedAt would make the phone drop local edits (A1).
+    const [drafts, abnahmen] = await Promise.all([
+      Entwurf.updateMany(filter, update, { timestamps: false }),
+      Abnahme.updateMany(filter, update, { timestamps: false }),
+    ]);
+    await addOperationLog({
+      event: 'upload.compressed',
+      message: `Video nach der Antwort komprimiert (${result.originalSizeKB} KB -> ${result.compressedSizeKB} KB), ${drafts.modifiedCount + abnahmen.modifiedCount} Formular(e) umgestellt.`,
+      context: { files: [{ ...result, fieldName: file.fieldname, original: file.filename }] },
+    });
+  }
+}
+
+// A phone may still send the original video URL (it got it before the compression
+// finished). Use the compressed sibling whenever it exists; works after restarts too.
+function preferCompressedVideos(payload) {
+  SINGLE_UPLOAD_FIELDS.forEach(field => {
+    const url = payload[field];
+    if (typeof url !== 'string' || !url.startsWith('/uploads/') || url.endsWith(COMPRESSED_VIDEO_SUFFIX)) return;
+    const candidate = compressedVideoName(path.basename(url));
+    if (fs.existsSync(path.join(uploadsDir, candidate))) payload[field] = `/uploads/${candidate}`;
+  });
+  return payload;
 }
 
 function createShareToken() {
@@ -1460,7 +1501,7 @@ router.post('/save', uploadAny, async (req, res) => {
       context: logContext,
     });
 
-    const payload = mergeUploadedFiles(pickPayload(parsed), req.files);
+    const payload = preferCompressedVideos(mergeUploadedFiles(pickPayload(parsed), req.files));
     const formId = parsed._id || parsed.id;
     await addOperationLog({
       event: 'draft.save.uploads_merged',
@@ -2372,7 +2413,7 @@ router.post('/submit', uploadAny, async (req, res) => {
       context: logContext,
     });
 
-    const payload = mergeUploadedFiles(pickPayload(parsed), req.files);
+    const payload = preferCompressedVideos(mergeUploadedFiles(pickPayload(parsed), req.files));
     const formId = parsed._id || parsed.id;
     const recovery = await runMongoTransaction(session => persistSubmitRecoveryDraft({ formId, payload, session }));
     recoveryDraft = recovery.draft;
@@ -2558,3 +2599,5 @@ module.exports.cleanupExpiredDrafts = cleanupExpiredDrafts;
 module.exports.cleanupOrphanFiles = cleanupOrphanFiles;
 module.exports.checkVolumeUsage = checkVolumeUsage;
 module.exports.notifyClientErrorChat = notifyClientErrorChat;
+module.exports.compressVideosAfterResponse = compressVideosAfterResponse;
+module.exports.preferCompressedVideos = preferCompressedVideos;

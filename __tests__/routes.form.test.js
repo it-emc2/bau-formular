@@ -5,6 +5,7 @@ jest.mock('../models/Abnahme', () => ({
   findOne: jest.fn(),
   findOneAndUpdate: jest.fn(),
   updateOne: jest.fn(),
+  updateMany: jest.fn(),
 }));
 
 jest.mock('../models/Entwurf', () => ({
@@ -12,6 +13,7 @@ jest.mock('../models/Entwurf', () => ({
   find: jest.fn(),
   findById: jest.fn(),
   findOne: jest.fn(),
+  updateMany: jest.fn(),
 }));
 
 jest.mock('nodemailer', () => ({
@@ -1009,6 +1011,40 @@ describe('form routes', () => {
     await checkVolumeUsage({ statfs: async () => ({ blocks: 100, bfree: 15, bsize: 1024 }) });
     expect(postChatMessage).toHaveBeenCalledWith(expect.stringContaining('Volume 85 % voll'));
     expect(addOperationLog).toHaveBeenCalledWith(expect.objectContaining({ event: 'storage.volume.alarm' }));
+  });
+
+  describe('video compression after the response (C7b)', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const { spawnSync } = require('child_process');
+    const { getUploadsDir } = require('../services/uploadsPath');
+    const dir = getUploadsDir();
+    const hasFfmpeg = spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' }).status === 0;
+    const maybe = hasFfmpeg ? it : it.skip;
+    const names = ['c7b-test-IMG.mov', 'c7b-test-IMG-720p.mp4'];
+    afterEach(() => names.forEach(name => fs.rmSync(path.join(dir, name), { force: true })));
+
+    it('uses the compressed sibling when a phone still sends the original URL', () => {
+      const { preferCompressedVideos } = require('../routes/form');
+      expect(preferCompressedVideos({ videoDesAblaufs: '/uploads/c7b-test-IMG.mov' }).videoDesAblaufs).toBe('/uploads/c7b-test-IMG.mov');
+      fs.writeFileSync(path.join(dir, 'c7b-test-IMG-720p.mp4'), 'x');
+      expect(preferCompressedVideos({ videoDesAblaufs: '/uploads/c7b-test-IMG.mov' }).videoDesAblaufs).toBe('/uploads/c7b-test-IMG-720p.mp4');
+    });
+
+    maybe('compresses, then switches drafts and Abnahmen to the mp4 without touching updatedAt', async () => {
+      const { compressVideosAfterResponse } = require('../routes/form');
+      spawnSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=size=1920x1080:rate=25:duration=2', '-c:v', 'mjpeg', '-q:v', '2', path.join(dir, 'c7b-test-IMG.mov')], { stdio: 'ignore' });
+      Entwurf.updateMany.mockResolvedValue({ modifiedCount: 1 });
+      Abnahme.updateMany.mockResolvedValue({ modifiedCount: 0 });
+
+      await compressVideosAfterResponse([{ fieldname: 'videoDesAblaufs', filename: 'c7b-test-IMG.mov' }]);
+
+      const expected = [{ videoDesAblaufs: '/uploads/c7b-test-IMG.mov' }, { $set: { videoDesAblaufs: '/uploads/c7b-test-IMG-720p.mp4' } }, { timestamps: false }];
+      expect(Entwurf.updateMany).toHaveBeenCalledWith(...expected);
+      expect(Abnahme.updateMany).toHaveBeenCalledWith(...expected);
+      expect(fs.existsSync(path.join(dir, 'c7b-test-IMG-720p.mp4'))).toBe(true);
+      expect(addOperationLog).toHaveBeenCalledWith(expect.objectContaining({ event: 'upload.compressed', message: expect.stringContaining('1 Formular(e) umgestellt') }));
+    }, 60000);
   });
 
   describe('POST /admin/resend-full', () => {

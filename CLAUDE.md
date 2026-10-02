@@ -43,7 +43,7 @@ Tests use Jest (node environment, no supertest). Test files live in `__tests__/`
 - `models/Entwurf.js` — Draft model, reuses the same schema via `createAbnahmeSchema` but writes to a separate `Entwürfe` collection; drafts do not require `terminId`
 - `services/bitrix.js` — Bitrix webhook REST client (all calls use GET, including writes — this is how Bitrix webhooks work). GET timeout 30s, POST timeout 60s (on the HTTP call only — compression happens before the timer starts).
 - `services/documentLetter.js` — HTML/Word document generation from form data
-- `services/stepDocuments.js` — PDF generation using pdf-lib. Exports `buildBitrixUploadAttachment` (compresses images via sharp at 1600px/q68 and video via ffmpeg at 1280×720 CRF30 `fast` preset), `buildStepDocumentAttachments`, `buildSelectedPdfAttachments`, `buildCustomerName`, `ADMIN_PDF_SPECS`, `compressUploadedFiles`. Images **and videos** are compressed at upload time (in `uploadAny` middleware; the compressed file replaces the original, videos become `<name>.mp4`) and skipped during Bitrix attachment building if already compressed in the current server process (`uploadTimeCompressed` Set). Videos uploaded before C7 (or after a restart) are still compressed at Bitrix push time.
+- `services/stepDocuments.js` — PDF generation using pdf-lib. Exports `buildBitrixUploadAttachment` (compresses images via sharp at 1600px/q68 and video via ffmpeg at 1280×720 CRF30 `fast` preset), `buildStepDocumentAttachments`, `buildSelectedPdfAttachments`, `buildCustomerName`, `ADMIN_PDF_SPECS`, `compressUploadedFiles`. Images are compressed at upload time (in `uploadAny`, replacing the original); videos are compressed **right after the response** to `<name>-720p.mp4` (`compressVideosAfterResponse`, references switched with `timestamps: false`, original removed later by the daily orphan cleanup; `preferCompressedVideos` swaps old URLs on later saves) and skipped during Bitrix attachment building if already compressed in the current server process (`uploadTimeCompressed` Set). Videos uploaded before C7 (or after a restart) are still compressed at Bitrix push time.
 - `services/orphanUploads.js` — finds upload files on disk with no matching Abnahme or Entwurf in MongoDB
 
 **Frontend (vanilla JS SPA in `public/`):**
@@ -106,7 +106,7 @@ All admin UI is hidden behind the dev-mode password toggle (Testmodus). When act
 **Background push (B1):** `/submit` saves the Abnahme with `bitrixStatus: 'pending'` and answers immediately; `pushAbnahmeToBitrix` then runs the flow below, sets `sent`/`failed`/`skipped`, and sends the 🟢 chat + n8n check. `retryPendingBitrixPushes` (every 10 min + 30 s after start) retries `failed` and stuck `pending` Abnahmen up to 4 attempts in total, then posts a 🔴 chat alert with deal + form links. Details: `docs/10-reliability-plan.md` (B1).
 
 **Bitrix submit flow (normal + admin push):**
-1. All media compressed first (`sharp` / `ffmpeg` at upload time; older videos at push time) — no timeout applies here
+1. All media compressed first (images at upload, videos right after the upload response; anything not yet compressed at push time) — no timeout applies here
 2. Single `postTimelineComment` with all attachments → 60s HTTP timeout
 3. If that fails: wait 10s, retry up to 2 more times (3 attempts total), each with its own 60s window
 4. If all 3 attempts fail: split into ≤8 MB base64 batches, each with its own 60s window
