@@ -27,7 +27,7 @@ A professional web app for **non-technical workers on iPhones**:
 | A3 | Outbox: submit queued while offline | ✅ done, verified locally (server stopped → queued → edited → server back → sent from the **home page**, exactly one Abnahme with the edit, Bitrix `sent`; repeat with same `submitId` → `duplicate: true`). **Live** checked too: queued → sent 7 s later, one Abnahme, Bitrix `sent`; live duplicate check OK. **iPhone test open** | same |
 | A4 | `storage.persist()` + log (Home Screen install dropped) | ✅ done, verified locally (log arrives); not deployed | `plan/reliability-roadmap` |
 | B3 | Upload progress | ⬜ | |
-| B4 | Plain-German, persistent error messages | ⬜ | |
+| B4 | Plain-German, persistent error messages | 📝 planned (below) | |
 | B5 | Receipt screen after submit | ⬜ | |
 | B6 | Request timeouts + automatic retry | ⬜ | |
 | B7 | File size check at pick time | ⬜ | |
@@ -198,6 +198,16 @@ One always-visible line (like Google Docs): *"✓ Alles gespeichert · 10:42"*, 
 - Replace raw texts (`HTTP 502`, `Load failed`, `Failed to fetch`, `Unerwartete Server-Antwort…`) with messages that say what happened, that the data is safe (when it is), and one action: *"Senden hat nicht geklappt. Ihre Daten sind sicher. [Erneut versuchen]"*.
 - Errors stay until dismissed (today `showToast` hides everything after 3.5 s).
 - Keep the technical detail in the client log, not on screen.
+
+**B4 plan (owner, 2026-10-02):**
+- Findings: `showToast` hides everything after 3.5 s, errors included; 42 error toasts, ~25 worker-facing, many show raw text (`Load failed`, `Unerwartete Server-Antwort (HTTP 502): <html…>`, `Kamera-Zugriff nicht möglich: NotAllowedError`); UI mixes *du* and *Sie*; the B2 status text still says "bitte „Zwischenspeichern“ nutzen" (outdated since A2).
+- **Errors stay until tapped** (✕); success/info still auto-hide after 3.5 s.
+- One `friendlyError(err, { dataSafe })` maps: network → *Keine Verbindung zum Server …*, timeout → *Der Server hat zu lange nicht geantwortet …*, 5xx / HTML response → *Der Server hat gerade ein Problem … in einer Minute erneut versuchen*, camera `NotAllowedError` / `NotFoundError` → settings hint / *„Foto hochladen“ nutzen*. German, specific server messages (validation, size limit) are shown as they are. *Ihre Eingaben sind gesichert* only when the local backup works.
+- **Erneut versuchen** button on failed save / draft load / deal load.
+- Raw error text → client log `client.action.failed` (no chat).
+- Status line when the local backup fails: *⚠ Sicherung auf dem Handy nicht möglich – bei Empfang wird automatisch auf dem Server gespeichert*.
+- **Anrede: Sie** everywhere workers read it (~10 *du* texts in `index.html` / `app.js`: start page, step intros, leave dialog).
+- Scope: worker-facing messages only; Testmodus/admin panels keep technical text.
 
 ### B5 · Receipt screen after submit
 *"Abnahme übermittelt ✓ – Sie können das Handy jetzt weglegen."* Show customer name, deal number, time. Optional: later status (gesendet an Bitrix) for the office view.
