@@ -35,7 +35,7 @@ A professional web app for **non-technical workers on iPhones**:
 | C4 | Longer retention for submit/Bitrix logs, protect "Logs löschen" | ⬜ | |
 | C5 | Graceful shutdown on deploy | ⬜ | |
 | C6 | Run tests in CI before deploy | ⬜ | |
-| C7 | Compress video on upload, daily orphan cleanup, 80 % volume alarm | ✅ done, 90/90 tests; local e2e: 17.6 MB `.mov` → 186 KB `.mp4` in 1.6 s, original + temp removed; not deployed | `plan/reliability-roadmap` |
+| C7 | Compress video on upload, daily orphan cleanup, 80 % volume alarm | ✅ done, 90/90 tests; local e2e: 17.6 MB `.mov` → 186 KB `.mp4` in 1.6 s, original + temp removed. **Live** (owner deploy 2026-10-02 12:11): same test via `/debug-bitrix-payload` → 180 KB `.mp4` on the volume, no `.mov`/temp left; volume 28 %. The test file `1790943930554-c14ac81c-IMG_TEST.mp4` is an orphan on purpose: the daily cleanup should delete it after 24 h (`storage.orphans.deleted`) | `plan/reliability-roadmap` |
 
 Recommended order: ~~A1+B2~~ → ~~B1+C2~~ → ~~A2+A3~~ → ~~A4~~ → ~~C7~~ → **C6** → C1+C2 rest → B4 → the rest (small items, any order).
 
