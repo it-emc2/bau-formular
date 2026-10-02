@@ -35,9 +35,9 @@ A professional web app for **non-technical workers on iPhones**:
 | C4 | Longer retention for submit/Bitrix logs, protect "Logs löschen" | ⬜ | |
 | C5 | Graceful shutdown on deploy | ⬜ | |
 | C6 | Run tests in CI before deploy | ⬜ | |
-| C7 | Keep compressed video, automatic orphan cleanup | ⬜ | |
+| C7 | Compress video on upload, daily orphan cleanup, 80 % volume alarm | 📝 planned (decisions below), not started | |
 
-Recommended order: ~~A1+B2~~ → ~~B1+C2~~ → ~~A2+A3~~ → ~~A4~~ → the rest (small items, any order).
+Recommended order: ~~A1+B2~~ → ~~B1+C2~~ → ~~A2+A3~~ → ~~A4~~ → **C7** → C6 → C1+C2 rest → B4 → the rest (small items, any order).
 
 Branches: `plan/reliability-roadmap` (local, **not pushed**) = `form-submit-upload-once-v2` + this plan + A1/B2 (`b6306dd`). Nothing of A1/B2 is live yet.
 
@@ -217,7 +217,14 @@ Read `UPLOAD_MAX_MB` (currently unused) into multer `limits`, expose the limit t
 - **C4** `models/OperationLog.js` has a 30-day TTL on everything. Keep `submit.*`, `draft.save.*`, `bitrix.*` events longer (separate TTL or collection). Make "Logs löschen" require a confirmation phrase or remove it.
 - **C5** Handle `SIGTERM`/`SIGINT` in `server.js`: stop accepting requests, wait for in-flight submits/background pushes (with a cap), then exit. Check Fly `kill_timeout`.
 - **C6** Add `npm ci && npm test` before `flyctl deploy` in `.github/workflows/fly-deploy.yml`.
-- **C7** Write the ffmpeg output back over the original video instead of deleting it (`services/stepDocuments.js`), and run the orphan/age cleanup (`services/orphanUploads.js`, `/admin/storage/cleanup`) on a timer. Volume is 2 GB (`bau_uploads`).
+- **C7** Volume `bau_uploads` (2 GB). **Measured 2026-10-02** (`fly ssh console -C "df -h /data"`): 514 MB used (28 %), 308 files; 17 videos > 10 MB = 426 MB (83 %); 15 files older than 30 days = 81 MB.
+  Today photos are compressed on upload (`compressUploadedFile`, replaced in place as `.jpg`), but videos are kept as sent by the phone and only compressed at Bitrix push time (`optimizeVideoBuffer`), where the output is deleted afterwards.
+  **Decisions (owner, 2026-10-02):**
+  1. **Compress videos on upload** in `uploadAny`, same ffmpeg settings as for Bitrix (≤ 1280×720, CRF 30); the `.mp4` replaces the original and `file.filename` is updated before `mergeUploadedFiles`, so drafts/Abnahmen reference the compressed file. Originals are **not** kept. Mark it like images (`uploadTimeCompressed`) so the Bitrix push skips re-encoding. Cost: a save with a video takes ~30 s longer on the server (runs in the A2 background save).
+  2. **Daily orphan cleanup** (`cleanupOrphanUploads`) on the background-job timer, with a new **minimum age of 24 h** (file mtime) so files of uploads in flight are never deleted. Logged.
+  3. **Volume alarm:** daily `statfs` on the uploads dir; above 80 % → 🔴 Bitrix chat message with usage (C2 style), logged.
+  - Not done: the 17 existing videos stay as they are (owner). No automatic age-based deletion; "Alte Dateien löschen" stays a manual button (owner).
+  - Forecast after C7: ~5 MB per job, ~100 MB/month at current volume → > 1 year of headroom.
 
 ## Out of scope for now
 Native app (Home Screen PWA is enough) · Tigris/R2 object storage (`docs/TODO.md`; only if the volume still runs short after C7; Tigris free tier is 5 GB, $0.02/GB after, no egress fees) · server-side job queue (only if background pushes actually get lost).
