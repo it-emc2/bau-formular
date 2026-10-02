@@ -33,12 +33,12 @@ A professional web app for **non-technical workers on iPhones**:
 | B7 | File size check at pick time | ⬜ | |
 | C1 | Filter client-log noise | ✅ done, 95/95 tests; local check: extension errors dropped in the browser, `Script error.` dropped by the server. **Live** (owner deploy): new client code served; `Script error.` and `__firefox__` → `ignored: true` | `plan/reliability-roadmap` |
 | C3 | One timeline per job in admin panel | ⬜ | |
-| C4 | Longer retention for submit/Bitrix logs, protect "Logs löschen" | ✅ done, 102/102 tests; migration steps verified on a temporary Atlas collection; not deployed — the switch runs on the first production start | `plan/reliability-roadmap` |
+| C4 | Longer retention for submit/Bitrix logs, protect "Logs löschen" | ✅ done, 102/102 tests; migration steps verified on a temporary Atlas collection. **Live** (owner deploy 13:58): `createdAt_1` gone, `expireAt_1` TTL 0 present, 0 entries without `expireAt`, 18 audit entries at 730 days and 60 everyday at 30 days, one `admin.logs.retention_migrated` (17 + 60 backfilled) | `plan/reliability-roadmap` |
 | C5 | Graceful shutdown on deploy | ⬜ | |
 | C6 | Tests block a broken `fly deploy` (Docker build) + GitHub workflow tests-only | ✅ done; verified with `fly deploy --build-only`: passes (89 + 1 skipped), and a deliberately broken test aborts the build | `plan/reliability-roadmap` |
 | C7 | Compress video on upload, daily orphan cleanup, 80 % volume alarm | ✅ done, 90/90 tests; local e2e: 17.6 MB `.mov` → 186 KB `.mp4` in 1.6 s, original + temp removed. **Live** (owner deploy 2026-10-02 12:11): same test via `/debug-bitrix-payload` → 180 KB `.mp4` on the volume, no `.mov`/temp left; volume 28 %. The test file `1790943930554-c14ac81c-IMG_TEST.mp4` is an orphan on purpose: the daily cleanup should delete it after 24 h (`storage.orphans.deleted`) | `plan/reliability-roadmap` |
 
-Recommended order: ~~A1+B2~~ → ~~B1+C2~~ → ~~A2+A3~~ → ~~A4~~ → ~~C7~~ → ~~C6~~ → ~~C1+C2~~ → ~~C7b~~ → ~~B4~~ → the rest (small items, any order).
+Recommended order: ~~A1+B2~~ → ~~B1+C2~~ → ~~A2+A3~~ → ~~A4~~ → ~~C7~~ → ~~C6~~ → ~~C1+C2~~ → ~~C7b~~ → ~~B4~~ → ~~C4~~ → the rest (small items, any order).
 
 Branches: `plan/reliability-roadmap` (local, **not pushed**) = `form-submit-upload-once-v2` + everything in this plan. **Production runs this branch** (owner's manual `fly deploy`s on 2026-10-02).
 
