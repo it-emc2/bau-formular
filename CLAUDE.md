@@ -6,6 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **bau-formular** is a digital construction site inspection form application for emc2. It's a Node.js/Express backend with a vanilla JavaScript SPA frontend for managing multi-step inspection forms, document generation, and Bitrix24 CRM integration. All UI text is in German.
 
+## Active Work — read first
+
+A reliability roadmap is in progress: **`docs/10-reliability-plan.md`**. It holds the goal, the research findings (production usage data, code gaps, iOS limits), the task list with status, and working notes (local dev against production `.env`, test deal `65278`, deploy/rollback). Read it before starting any task, and update its status table when a task lands.
+
+⚠️ Production currently runs the branch `form-submit-upload-once-v2` via a manual `fly deploy`; `main` does not have it yet. See the plan's "Open deployment issue".
+
 ## Commands
 
 ```bash
@@ -106,11 +112,11 @@ All admin UI is hidden behind the dev-mode password toggle (Testmodus). When act
 - Hosted on Fly.io (Frankfurt region, app name: `bau-formular`)
 - GitHub Actions CI/CD deploys on push to main (`.github/workflows/fly-deploy.yml`)
 - Docker container using Node.js 24.11.1-slim base image
-- Auto-stop/auto-start machines enabled, min 0 running
+- Machine always on: `auto_stop_machines = 'off'`, `min_machines_running = 1` (needed for background work after a response)
 
 ## Frontend State
 
-State is managed via module-scope JS variables in `app.js`: `currentStep`, `formId`, `shareToken`, `fileStore`, `signaturePads`, `devMode`, `bitrixDeals`, `drafts`. Testmodus requires a server-side password and persists across page navigations via `sessionStorage` (cleared on tab close or explicit "Testmodus: Aus" click). localStorage persists demo presets.
+State is managed via module-scope JS variables in `app.js`: `currentStep`, `formId`, `shareToken`, `fileStore`, `existingFileStore`, `pendingFileRefs`, `signaturePads`, `devMode`, `bitrixDeals`, `drafts`. Files go up once per draft: after a successful save, `adoptSavedFiles` moves fresh `File`s from `fileStore` into `existingFileStore` (server URLs), guarded by a count check that falls back to re-uploading and logs `client.save.adopt_skipped`. Testmodus requires a server-side password and persists across page navigations via `sessionStorage` (cleared on tab close or explicit "Testmodus: Aus" click). localStorage persists demo presets.
 
 ## Client-Side Routes
 
