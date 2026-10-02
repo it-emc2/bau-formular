@@ -34,17 +34,18 @@ A professional web app for **non-technical workers on iPhones**:
 | C3 | One timeline per job in admin panel | ⬜ | |
 | C4 | Longer retention for submit/Bitrix logs, protect "Logs löschen" | ⬜ | |
 | C5 | Graceful shutdown on deploy | ⬜ | |
-| C6 | Run tests in CI before deploy | ⬜ | |
+| C6 | Tests block a broken `fly deploy` (Docker build) + GitHub workflow tests-only | ✅ done; verified with `fly deploy --build-only`: passes (89 + 1 skipped), and a deliberately broken test aborts the build | `plan/reliability-roadmap` |
 | C7 | Compress video on upload, daily orphan cleanup, 80 % volume alarm | ✅ done, 90/90 tests; local e2e: 17.6 MB `.mov` → 186 KB `.mp4` in 1.6 s, original + temp removed. **Live** (owner deploy 2026-10-02 12:11): same test via `/debug-bitrix-payload` → 180 KB `.mp4` on the volume, no `.mov`/temp left; volume 28 %. The test file `1790943930554-c14ac81c-IMG_TEST.mp4` is an orphan on purpose: the daily cleanup should delete it after 24 h (`storage.orphans.deleted`) | `plan/reliability-roadmap` |
 
-Recommended order: ~~A1+B2~~ → ~~B1+C2~~ → ~~A2+A3~~ → ~~A4~~ → ~~C7~~ → **C6** → C1+C2 rest → B4 → the rest (small items, any order).
+Recommended order: ~~A1+B2~~ → ~~B1+C2~~ → ~~A2+A3~~ → ~~A4~~ → ~~C7~~ → ~~C6~~ → **C1+C2 rest** → B4 → the rest (small items, any order).
 
-Branches: `plan/reliability-roadmap` (local, **not pushed**) = `form-submit-upload-once-v2` + this plan + A1/B2 (`b6306dd`). Nothing of A1/B2 is live yet.
+Branches: `plan/reliability-roadmap` (local, **not pushed**) = `form-submit-upload-once-v2` + everything in this plan. **Production runs this branch** (owner's manual `fly deploy`s on 2026-10-02).
 
-### ⚠️ Open deployment issue — read first
+### ⚠️ Deployment — read first
 
-Production currently runs `form-submit-upload-once-v2` because it was deployed by hand with `fly deploy --remote-only` from a worktree. **`main` still has the old code.** GitHub Actions deploys `main` on every push, so the next push to `main` silently reverts production to the old upload behaviour.
-→ Before or together with the first task of this plan: merge `form-submit-upload-once-v2` (or this branch, which contains it) into `main`. The owner said they will do this themselves; confirm with them before merging.
+- **Deploys are manual only:** the owner runs `fly deploy` by hand and wants to keep it that way. The old "Fly Deploy" GitHub workflow never deployed anything (the `FLY_API_TOKEN` secret is empty, every run failed after ~8 s); since C6 it is a tests-only workflow (`.github/workflows/tests.yml`).
+- **Production runs `plan/reliability-roadmap`; `main` is behind.** A manual `fly deploy` from `main` would roll production back to the old code. Merge this branch into `main` before the next deploy from `main` (owner does the merge).
+- Every `fly deploy` runs `npm test` in the Docker build stage (C6); a failing test aborts the deploy and production keeps running.
 
 ---
 
@@ -216,7 +217,7 @@ Read `UPLOAD_MAX_MB` (currently unused) into multer `limits`, expose the limit t
 - **C3** Admin panel: filter logs by deal/draft id to show one job's full timeline (logs already carry `bitrixAuftragId`, `draftId`, `formId`).
 - **C4** `models/OperationLog.js` has a 30-day TTL on everything. Keep `submit.*`, `draft.save.*`, `bitrix.*` events longer (separate TTL or collection). Make "Logs löschen" require a confirmation phrase or remove it.
 - **C5** Handle `SIGTERM`/`SIGINT` in `server.js`: stop accepting requests, wait for in-flight submits/background pushes (with a cap), then exit. Check Fly `kill_timeout`.
-- **C6** Add `npm ci && npm test` before `flyctl deploy` in `.github/workflows/fly-deploy.yml`.
+- **C6** *(adapted 2026-10-02: owner deploys by hand)* Dockerfile build stage: `npm ci --include=dev` → `npm test && npm prune --omit=dev`, so every `fly deploy` is gated by the tests (~15 s). `fly-deploy.yml` → `tests.yml` (checkout, Node 24.11.1, `npm ci`, `npm test`; no deploy step, so adding a Fly token later can't start auto-deploys). `jest.config.js` ignores `<rootDir>/.claude/` (old worktrees). In the Docker build the video test is skipped (no ffmpeg in the build stage).
 - **C7** Volume `bau_uploads` (2 GB). **Measured 2026-10-02** (`fly ssh console -C "df -h /data"`): 514 MB used (28 %), 308 files; 17 videos > 10 MB = 426 MB (83 %); 15 files older than 30 days = 81 MB.
   Today photos are compressed on upload (`compressUploadedFile`, replaced in place as `.jpg`), but videos are kept as sent by the phone and only compressed at Bitrix push time (`optimizeVideoBuffer`), where the output is deleted afterwards.
   **Decisions (owner, 2026-10-02):**
@@ -250,6 +251,6 @@ Native app (Home Screen PWA is enough) · Tigris/R2 object storage (`docs/TODO.m
 - Bitrix timeline can be read (read-only) with the app's own `BITRIX_WEBHOOK_BASE` from `.env`: `crm.timeline.comment.list` filtered by `ENTITY_ID`/`ENTITY_TYPE=deal`, then `crm.timeline.comment.get` for `FILES`.
 
 ### Deploy
-- Push to `main` → GitHub Actions → `flyctl deploy --remote-only`. **No tests run** (until C6).
-- Manual deploy from a worktree: `fly deploy --remote-only` deploys the working tree; `.env` is excluded by `.dockerignore`. A later push to `main` overwrites it.
+- Manual only: `fly deploy` (or `--remote-only`) deploys the **working tree** (uncommitted changes included); `.env` is excluded by `.dockerignore`. Pushing to GitHub never deploys.
+- `npm test` runs inside the build; a failure aborts the deploy. Check a build without deploying: `fly deploy --build-only --remote-only`.
 - Rollback: `fly releases --image`, then `fly deploy --image <previous-image-ref>`.

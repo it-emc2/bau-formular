@@ -20,12 +20,15 @@ FROM base AS build
 RUN apt-get update -qq && \
     apt-get install --no-install-recommends -y build-essential node-gyp pkg-config python-is-python3
 
-# Install node modules
+# Install node modules (dev dependencies too, for the test gate below)
 COPY package-lock.json package.json ./
-RUN npm ci
+RUN npm ci --include=dev
 
 # Copy application code
 COPY . .
+
+# Test gate: a failing test aborts `fly deploy`; production keeps the running image.
+RUN npm test && npm prune --omit=dev
 
 
 # Final stage for app image

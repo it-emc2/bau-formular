@@ -10,14 +10,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A reliability roadmap is in progress: **`docs/10-reliability-plan.md`**. It holds the goal, the research findings (production usage data, code gaps, iOS limits), the task list with status, and working notes (local dev against production `.env`, test deal `65278`, deploy/rollback). Read it before starting any task, and update its status table when a task lands.
 
-⚠️ Production currently runs the branch `form-submit-upload-once-v2` via a manual `fly deploy`; `main` does not have it yet. See the plan's "Open deployment issue".
+⚠️ Production runs the branch `plan/reliability-roadmap` via manual `fly deploy`; `main` is behind, so a deploy from `main` would roll production back. See the plan's "Deployment — read first".
 
 ## Commands
 
 ```bash
 npm run dev          # Start dev server with file watching (node --watch)
 npm start            # Production server
-npm test             # Run Jest tests (--runInBand --watchman=false)
+npm test             # Run Jest tests (--runInBand --watchman=false); also runs inside every fly deploy
 npm run test:watch   # Run tests in watch mode
 ```
 
@@ -117,7 +117,7 @@ All admin UI is hidden behind the dev-mode password toggle (Testmodus). When act
 ## Deployment
 
 - Hosted on Fly.io (Frankfurt region, app name: `bau-formular`)
-- GitHub Actions CI/CD deploys on push to main (`.github/workflows/fly-deploy.yml`)
+- Deploys are **manual** (`fly deploy`, by the owner). `npm test` runs in the Docker build stage and aborts a deploy on failure. GitHub Actions (`.github/workflows/tests.yml`) only runs tests and never deploys.
 - Docker container using Node.js 24.11.1-slim base image
 - Machine always on: `auto_stop_machines = 'off'`, `min_machines_running = 1` (needed for background work after a response)
 
