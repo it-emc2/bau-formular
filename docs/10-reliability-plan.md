@@ -24,7 +24,7 @@ A professional web app for **non-technical workers on iPhones**:
 | C2 | Real errors + failed pushes → Bitrix chat (with direct links) | 🟡 links + final-push-failure alert done with B1; client-error part after C1 | same |
 | A2 | Background sync to server after each step/photo (+ continue server draft by `dealId`, 30-day draft cleanup) | ✅ done, verified locally against prod DB (Chromium): silent saves, photo added during an upload adopted correctly (1+1+1 uploads, no `adopt_skipped`), deal draft continued after local copy deleted. **live since 2026-10-02** (owner deploy), checked on live: silent save, no modal. **iPhone test open** | `plan/reliability-roadmap` |
 | A3 | Outbox: submit queued while offline | ✅ done, verified locally (server stopped → queued → edited → server back → sent from the **home page**, exactly one Abnahme with the edit, Bitrix `sent`; repeat with same `submitId` → `duplicate: true`). **Live** checked too: queued → sent 7 s later, one Abnahme, Bitrix `sent`; live duplicate check OK. **iPhone test open** | same |
-| A4 | `storage.persist()` + Home Screen install (manifest) | ⬜ | |
+| A4 | `storage.persist()` + log (Home Screen install dropped) | ✅ done, verified locally (log arrives); not deployed | `plan/reliability-roadmap` |
 | B3 | Upload progress | ⬜ | |
 | B4 | Plain-German, persistent error messages | ⬜ | |
 | B5 | Receipt screen after submit | ⬜ | |
@@ -37,7 +37,7 @@ A professional web app for **non-technical workers on iPhones**:
 | C6 | Run tests in CI before deploy | ⬜ | |
 | C7 | Keep compressed video, automatic orphan cleanup | ⬜ | |
 
-Recommended order: ~~A1+B2~~ → ~~B1+C2~~ → ~~A2+A3~~ → the rest (small items, any order).
+Recommended order: ~~A1+B2~~ → ~~B1+C2~~ → ~~A2+A3~~ → ~~A4~~ → the rest (small items, any order).
 
 Branches: `plan/reliability-roadmap` (local, **not pushed**) = `form-submit-upload-once-v2` + this plan + A1/B2 (`b6306dd`). Nothing of A1/B2 is live yet.
 
@@ -155,9 +155,10 @@ Verified end-to-end on production (2026-10-02, deal 65278): saves uploaded 3 →
 - Testing tip: on live, simulate "no signal" by wrapping `window.fetch` in the tab to reject `/api/form/submit` with `TypeError('Load failed')`, then restore it and dispatch `online`. Close other tabs of the same origin before deleting the IndexedDB, or the delete blocks every open.
 - Testing tip: stopping the local server (`preview_stop`) while the page is open simulates "no signal"; restarting it via `preview_start` reloads the tab to `/`, which also exercises sending from another page.
 
-### A4 · Keep local data
-- `navigator.storage.persist()` on first load.
-- Add a web app manifest + icons so workers can "Zum Home-Bildschirm" (exempt from the 7-day eviction, opens like an app). Show a one-time hint on iOS.
+### A4 · Keep local data *(reduced, decided 2026-10-02)*
+- **Built:** `requestPersistentStorage()` at the end of `init` asks `navigator.storage.persist()` on every page load and logs once per tab session `client.storage.persist` (*Speicher dauerhaft: granted/denied/unsupported · belegt X MB von Y MB · Home-Bildschirm-App: ja/nein*, plus the user agent in `context.browser`). Use these logs to see how many phones grant it and whether workers use Safari or FortyTools' in-app browser.
+- **Dropped: manifest + "Zum Home-Bildschirm".** Workers always open jobs via the deal link from FortyTools; on iOS links from other apps open in Safari / the in-app browser, never in a Home Screen app, and a Home Screen app has its own separate storage. So it would not protect the data of jobs opened via the link.
+- Why the 7-day ITP eviction is no longer a real risk: since A2 a job is on the server within seconds; the local copy only matters until the first save, or for a queued submit (A3) left more than 7 days without opening the app.
 
 ## Phase B — The worker always knows what's happening
 

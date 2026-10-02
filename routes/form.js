@@ -2060,6 +2060,7 @@ router.post('/client-log', async (req, res) => {
       'client.outbox.sent',
       'client.outbox.retry_failed',
       'client.outbox.rejected',
+      'client.storage.persist',
     ]);
 
     if (!allowedEvents.has(event)) {

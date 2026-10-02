@@ -447,6 +447,30 @@
     bindLocalAutoSave();
     if (!restoredAt && !draftLoaded) await autofillFromDealIdParam();
     flushOutbox();
+    requestPersistentStorage();
+  }
+
+  // Asks the browser not to evict our IndexedDB (photos/videos) when the phone
+  // runs low on space. iOS decides by itself; we only log the outcome once per
+  // tab session to learn how many phones grant it and which browser they use.
+  async function requestPersistentStorage() {
+    let persisted = 'unsupported';
+    try {
+      if (navigator.storage?.persist) {
+        persisted = (await navigator.storage.persisted()) || (await navigator.storage.persist()) ? 'granted' : 'denied';
+      }
+      if (sessionStorage.getItem('storagePersistLogged')) return;
+      sessionStorage.setItem('storagePersistLogged', '1');
+      const { usage, quota } = navigator.storage?.estimate ? await navigator.storage.estimate() : {};
+      const mb = bytes => (typeof bytes === 'number' ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : '?');
+      logClientEvent({
+        level: 'info',
+        event: 'client.storage.persist',
+        message: `Speicher dauerhaft: ${persisted} · belegt ${mb(usage)} von ${mb(quota)} · Home-Bildschirm-App: ${navigator.standalone ? 'ja' : 'nein'}`,
+      });
+    } catch (err) {
+      console.warn('[storage] persist failed', err);
+    }
   }
 
   async function autofillFromDealIdParam() {
