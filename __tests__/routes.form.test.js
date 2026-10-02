@@ -132,6 +132,17 @@ describe('form routes', () => {
       sessionMocks.push(session);
       return session;
     });
+    // The Bitrix submit waits 10s between retry attempts. Run that pause
+    // instantly so retry/fallback tests don't exceed Jest's 5s timeout;
+    // every other timer keeps its real behaviour.
+    const realSetTimeout = global.setTimeout;
+    jest.spyOn(global, 'setTimeout').mockImplementation((fn, ms, ...args) => (
+      ms === 10_000 ? realSetTimeout(fn, 0, ...args) : realSetTimeout(fn, ms, ...args)
+    ));
+  });
+
+  afterEach(() => {
+    global.setTimeout.mockRestore?.();
   });
 
   afterAll(() => {
@@ -724,7 +735,10 @@ describe('form routes', () => {
   it('tries one Bitrix timeline comment first and falls back to batches if it fails', async () => {
     const handlers = findRouteHandlers('/submit', 'post');
 
+    // All 3 single-comment attempts time out, then the batch upload succeeds.
     postTimelineComment
+      .mockRejectedValueOnce(new Error('Bitrix POST Timeout nach 60s'))
+      .mockRejectedValueOnce(new Error('Bitrix POST Timeout nach 60s'))
       .mockRejectedValueOnce(new Error('Bitrix POST Timeout nach 60s'))
       .mockResolvedValue({ result: 999 });
     Entwurf.create.mockImplementation(async payload => createDraftMock({
@@ -752,9 +766,9 @@ describe('form routes', () => {
     const res = await runHandlers(handlers, req);
 
     expect(res.statusCode).toBe(201);
-    expect(postTimelineComment).toHaveBeenCalledTimes(2);
+    expect(postTimelineComment).toHaveBeenCalledTimes(4);
     expect(postTimelineComment.mock.calls[0][0].comment).toContain('Bestaetigung erfolgreicher Umbau');
-    expect(postTimelineComment.mock.calls[1][0].comment).toContain('Bestaetigung erfolgreicher Umbau');
+    expect(postTimelineComment.mock.calls[3][0].comment).toContain('Bestaetigung erfolgreicher Umbau');
     expect(res.body.bitrixSync.requests).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ mode: 'single', ok: false }),
