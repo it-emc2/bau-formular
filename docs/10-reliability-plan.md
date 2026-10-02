@@ -21,7 +21,8 @@ A professional web app for **non-technical workers on iPhones**:
 | B2 | Permanent status line | ✅ done (with A1); not deployed | same (`b6306dd`) |
 | — | No 🟡 chat message on draft save (only 🟢 submit / 🔴 failure remain) | ✅ done; not deployed | same (`b6306dd`) |
 | B1 | Fast green: Bitrix push in background + automatic retry + „Komplett neu senden“ | ✅ done. Background push live via manual `fly deploy` (owner, 2026-10-02); e2e on deal 65278 OK: green in 0.4 s, Bitrix `sent` 10 s later, 🟢 chat + n8n OK. „Komplett neu senden“ deployed; live-checked: *Laden* shows status, button refuses an already `sent` Abnahme; full resend of a `failed` Abnahme OK (6 attachments, 10 s, status → `sent`, timeline + Hinweis + n8n OK). Automatic retry path and final 🔴 alert only unit-tested | `plan/reliability-roadmap` |
-| C2 | Real errors + failed pushes → Bitrix chat (with direct links) | 🟡 links + final-push-failure alert done with B1; client-error part 📝 planned with C1 | same |
+| C2 | Real errors + failed pushes → Bitrix chat (with direct links) | ✅ done; local check: one real 🔴 message in chat 9534 with deal, customer, step, device, deal link; repeat suppressed (1/h); not deployed | same |
+| C7b | Answer the upload first, compress the video right after | 📝 planned (below), not started | |
 | A2 | Background sync to server after each step/photo (+ continue server draft by `dealId`, 30-day draft cleanup) | ✅ done, verified locally against prod DB (Chromium): silent saves, photo added during an upload adopted correctly (1+1+1 uploads, no `adopt_skipped`), deal draft continued after local copy deleted. **live since 2026-10-02** (owner deploy), checked on live: silent save, no modal. **iPhone test open** | `plan/reliability-roadmap` |
 | A3 | Outbox: submit queued while offline | ✅ done, verified locally (server stopped → queued → edited → server back → sent from the **home page**, exactly one Abnahme with the edit, Bitrix `sent`; repeat with same `submitId` → `duplicate: true`). **Live** checked too: queued → sent 7 s later, one Abnahme, Bitrix `sent`; live duplicate check OK. **iPhone test open** | same |
 | A4 | `storage.persist()` + log (Home Screen install dropped) | ✅ done, verified locally (log arrives); not deployed | `plan/reliability-roadmap` |
@@ -30,14 +31,14 @@ A professional web app for **non-technical workers on iPhones**:
 | B5 | Receipt screen after submit | ⬜ | |
 | B6 | Request timeouts + automatic retry | ⬜ | |
 | B7 | File size check at pick time | ⬜ | |
-| C1 | Filter client-log noise | 📝 planned (below) | |
+| C1 | Filter client-log noise | ✅ done, 95/95 tests; local check: extension errors dropped in the browser, `Script error.` dropped by the server; not deployed | `plan/reliability-roadmap` |
 | C3 | One timeline per job in admin panel | ⬜ | |
 | C4 | Longer retention for submit/Bitrix logs, protect "Logs löschen" | ⬜ | |
 | C5 | Graceful shutdown on deploy | ⬜ | |
 | C6 | Tests block a broken `fly deploy` (Docker build) + GitHub workflow tests-only | ✅ done; verified with `fly deploy --build-only`: passes (89 + 1 skipped), and a deliberately broken test aborts the build | `plan/reliability-roadmap` |
 | C7 | Compress video on upload, daily orphan cleanup, 80 % volume alarm | ✅ done, 90/90 tests; local e2e: 17.6 MB `.mov` → 186 KB `.mp4` in 1.6 s, original + temp removed. **Live** (owner deploy 2026-10-02 12:11): same test via `/debug-bitrix-payload` → 180 KB `.mp4` on the volume, no `.mov`/temp left; volume 28 %. The test file `1790943930554-c14ac81c-IMG_TEST.mp4` is an orphan on purpose: the daily cleanup should delete it after 24 h (`storage.orphans.deleted`) | `plan/reliability-roadmap` |
 
-Recommended order: ~~A1+B2~~ → ~~B1+C2~~ → ~~A2+A3~~ → ~~A4~~ → ~~C7~~ → ~~C6~~ → **C1+C2 rest** → B4 → the rest (small items, any order).
+Recommended order: ~~A1+B2~~ → ~~B1+C2~~ → ~~A2+A3~~ → ~~A4~~ → ~~C7~~ → ~~C6~~ → ~~C1+C2~~ → **C7b** → B4 → the rest (small items, any order).
 
 Branches: `plan/reliability-roadmap` (local, **not pushed**) = `form-submit-upload-once-v2` + everything in this plan. **Production runs this branch** (owner's manual `fly deploy`s on 2026-10-02).
 
@@ -215,12 +216,20 @@ Read `UPLOAD_MAX_MB` (currently unused) into multer `limits`, expose the limit t
   - Final push failure (after all automatic retries) → 🔴 alert for **every** form type, not only Baustellenabnahme (otherwise failed pushes of other types would be silent now that the worker sees green). Text says what to do: *Bitte im Testmodus „Bitrix Neu-Push“ mit Auftrag-ID ausführen.*
   - Client-side real errors → after C1 (noise filter), otherwise the chat gets spammed.
 - **C1 + C2 rest + part of C4 — plan (owner, 2026-10-02):**
-  - **Incident:** all OperationLogs were deleted on 2026-10-02 between 12:29 and ~12:35 UTC (collection count 0). Only `POST /admin/logs/clear` ("Logs löschen", no confirmation, not logged) does that. The Fly console (`fly logs`) still had the last entries. Cause not yet confirmed with the owner.
+  - **Incident:** all OperationLogs were deleted on 2026-10-02 between 12:29 and ~12:35 UTC (collection count 0). Only `POST /admin/logs/clear` ("Logs löschen": yes/no dialog only, not logged) does that. **Owner confirmed they cleared them.** The Fly console (`fly logs`) still had the last entries.
   - **C1a (client):** `initClientErrorLogging` reports `client.error` only when `event.filename` starts with `location.origin` (our own scripts); extension/injected errors are dropped.
   - **C1b (server):** `/client-log` drops known noise for all clients (also cached old `app.js`): `Script error.`, `__firefox__`, `window.ethereum`, `prompt() is not supported`.
   - **C2 rest:** after the filter, `client.error`, `client.unhandled_rejection` and `client.outbox.rejected` post a 🔴 message to the **same chat 9534**, with deal number, customer name, deal link and form link (looked up via `formId`). Rate limit: max 1 message per event + message per hour (in memory). Not posted: `client.autosave.failed` (normal without signal), `client.local.failed` (worker already sees a warning).
   - **C4 part:** "Logs löschen" requires typing `LÖSCHEN` (checked on the server too) and logs `admin.logs.cleared` with the number of deleted entries.
-  - **Seen in the same Fly console lines:** a 57 MB video was uploaded twice (12:28:16 saved on the server, 12:28:20 `client.autosave.failed: Load failed`, 12:28:58 re-sent). The ~30 s upload-time compression (C7) keeps the request open longer, so a locked phone loses the response more often. Separate follow-up: answer first, compress the video right after the response.
+  - **As built:** client `initClientErrorLogging` skips errors whose `filename` is not on `location.origin`; server `isClientNoise` + `CLIENT_NOISE_PATTERNS`; `notifyClientErrorChat` (`CLIENT_CHAT_EVENTS`, in-memory 1 h limit per event + message, customer from the draft/Abnahme via `formId`, else `customerName` sent by the phone, device from the user agent). `client.outbox.rejected` now carries the queued form's own ids, not the current page's.
+  - **Seen in the same Fly console lines (→ C7b):** a 57 MB video was uploaded twice (12:28:16 saved on the server, 12:28:20 `client.autosave.failed: Load failed`, 12:28:58 re-sent). The ~30 s upload-time compression (C7) keeps the request open longer, so a locked phone loses the response more often. Separate follow-up: answer first, compress the video right after the response.
+- **C7b** Answer the upload first, compress the video right after *(planned 2026-10-02, owner)*. Problem: since C7 the server compresses a video (~30 s for 57 MB) before answering the save; a phone locked during that wait loses the answer and re-sends the whole video (seen live: 57 MB twice).
+  - `uploadAny` no longer compresses videos inside the request (images stay as they are, they take < 1 s).
+  - After the response (`res.on('finish')`): compress each uploaded video to `<name>.mp4`, remember `old → new` in an in-memory alias map, and rewrite `videoDesAblaufs` from the old to the new URL in `Entwürfe` and `Abnahmen` (`updateMany`). Logged as `upload.compressed`.
+  - `/save` and `/submit` map incoming upload URLs through the alias map, so a phone that still holds the old URL cannot write it back.
+  - The original is **not** deleted right away: once nothing references it, the daily orphan cleanup removes it (> 24 h). This avoids a broken reference after a restart (alias map lost) — then the draft simply keeps the original and the Bitrix push compresses it as before C7.
+  - A submit that arrives before the compression finished is fine: the Bitrix push compresses on its own (old path).
+  - Tests: unit test for the alias rewrite; local e2e with a large video: the save answers before compression, the draft points to the `.mp4` afterwards.
 - **C3** Admin panel: filter logs by deal/draft id to show one job's full timeline (logs already carry `bitrixAuftragId`, `draftId`, `formId`).
 - **C4** `models/OperationLog.js` has a 30-day TTL on everything. Keep `submit.*`, `draft.save.*`, `bitrix.*` events longer (separate TTL or collection). Make "Logs löschen" require a confirmation phrase or remove it.
 - **C5** Handle `SIGTERM`/`SIGINT` in `server.js`: stop accepting requests, wait for in-flight submits/background pushes (with a cap), then exit. Check Fly `kill_timeout`.

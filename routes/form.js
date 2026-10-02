@@ -1612,7 +1612,18 @@ router.post('/admin/logs/clear', async (req, res) => {
       return res.status(403).json({ success: false, error: 'Passwort ungueltig' });
     }
 
+    if (String(req.body?.confirm || '').trim() !== 'LÖSCHEN') {
+      return res.status(400).json({ success: false, error: 'Bestätigungswort fehlt: LÖSCHEN eingeben.' });
+    }
+
     const result = await OperationLog.deleteMany({});
+    // Written after the delete, so it is the first entry of the new log.
+    await addOperationLog({
+      level: 'warn',
+      event: 'admin.logs.cleared',
+      message: `Alle Logs im Testmodus geloescht (${result.deletedCount || 0} Eintraege).`,
+      context: { deletedCount: result.deletedCount || 0 },
+    });
 
     return res.json({
       success: true,
@@ -2089,6 +2100,73 @@ router.post('/admin/push', async (req, res) => {
   }
 });
 
+// Errors injected by browsers/extensions, not by our code (seen in production:
+// Brave on iOS, crypto wallets, cross-origin "Script error.", embedded browsers).
+const CLIENT_NOISE_PATTERNS = [/^Script error\.?$/i, /__firefox__/, /window\.ethereum/, /prompt\(\) is not supported/i];
+
+function isClientNoise(event, message = '') {
+  if (event !== 'client.error' && event !== 'client.unhandled_rejection') return false;
+  return CLIENT_NOISE_PATTERNS.some(pattern => pattern.test(String(message).trim()));
+}
+
+const CLIENT_CHAT_EVENTS = {
+  'client.error': 'Programmfehler im Formular',
+  'client.unhandled_rejection': 'Programmfehler im Formular',
+  'client.outbox.rejected': 'Wartendes Absenden vom Server abgelehnt',
+};
+const CLIENT_CHAT_INTERVAL_MS = 60 * 60 * 1000;
+// ponytail: in-memory rate limit, resets on restart; fine for one machine.
+const clientChatLastSent = new Map();
+
+function describeDevice(userAgent = '') {
+  const os = /iPhone|iPad/.test(userAgent) ? 'iPhone' : (/Android/.test(userAgent) ? 'Android' : 'Computer');
+  const browser = /Brave/.test(userAgent) ? 'Brave'
+    : /CriOS|Chrome/.test(userAgent) ? 'Chrome'
+      : /FxiOS|Firefox/.test(userAgent) ? 'Firefox'
+        : /Safari/.test(userAgent) ? 'Safari' : 'Browser';
+  return `${os} ${browser}`;
+}
+
+async function findFormForChat(formId) {
+  if (!formId || !mongoose.isValidObjectId?.(formId)) return null;
+  return (await Entwurf.findById(formId).lean()) || (await Abnahme.findById(formId).lean());
+}
+
+async function notifyClientErrorChat(event, payload = {}) {
+  const message = String(payload.message || '').slice(0, 300);
+  const key = `${event}|${message.slice(0, 120)}`;
+  const now = Date.now();
+  if (now - (clientChatLastSent.get(key) || 0) < CLIENT_CHAT_INTERVAL_MS) return false;
+  clientChatLastSent.set(key, now);
+
+  const form = await findFormForChat(payload.formId).catch(() => null);
+  const dealId = form?.bitrixAuftragId || payload.bitrixAuftragId;
+  const customer = (form && (buildCustomerName(form) || form.name)) || String(payload.customerName || '').slice(0, 80) || 'Kunde unbekannt';
+  const dealLink = buildDealLink(dealId);
+  const formLink = buildFormLink(form?.shareToken);
+  const sep = '━'.repeat(45);
+  const lines = [
+    '⚠️ FEHLER IM FORMULAR',
+    sep,
+    `☐ 🔴 ${dealId ? `[${dealId}] ` : ''}${customer} — ${CLIENT_CHAT_EVENTS[event]}`,
+    `     Fehler: ${message || 'ohne Text'}`,
+  ];
+  if (payload.stepTitle) lines.push(`     Schritt: ${payload.stepTitle}`);
+  lines.push(`     Gerät: ${describeDevice(payload.browser)}`);
+  if (dealLink) lines.push(`     🔗 Auftrag: ${dealLink}`);
+  if (formLink) lines.push(`     📝 Formular: ${formLink}`);
+  lines.push('     ℹ️ Gleicher Fehler wird höchstens 1× pro Stunde gemeldet. Details: Testmodus → Logs.');
+  lines.push(sep, '🤖 Automatisch generiert | Quelle: bau-formular');
+
+  try {
+    await postChatMessage(lines.join('\n'));
+    return true;
+  } catch (error) {
+    await addOperationLog({ level: 'error', event: 'chat.notify.failed', message: error.message, context: { kind: event } });
+    return false;
+  }
+}
+
 router.post('/client-log', async (req, res) => {
   try {
     const payload = req.body || {};
@@ -2112,6 +2190,9 @@ router.post('/client-log', async (req, res) => {
 
     if (!allowedEvents.has(event)) {
       return res.status(400).json({ success: false, error: 'Log event not allowed' });
+    }
+    if (isClientNoise(event, payload.message)) {
+      return res.json({ success: true, ignored: true });
     }
 
     await addOperationLog({
@@ -2139,6 +2220,9 @@ router.post('/client-log', async (req, res) => {
       },
     });
 
+    if (CLIENT_CHAT_EVENTS[event]) {
+      notifyClientErrorChat(event, payload).catch(() => {});
+    }
     return res.json({ success: true });
   } catch (error) {
     return res.status(400).json({ success: false, error: error.message });
@@ -2473,3 +2557,4 @@ module.exports.startBackgroundJobs = startBackgroundJobs;
 module.exports.cleanupExpiredDrafts = cleanupExpiredDrafts;
 module.exports.cleanupOrphanFiles = cleanupOrphanFiles;
 module.exports.checkVolumeUsage = checkVolumeUsage;
+module.exports.notifyClientErrorChat = notifyClientErrorChat;

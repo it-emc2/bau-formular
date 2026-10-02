@@ -45,6 +45,7 @@ jest.mock('mongoose', () => ({
 
 const Abnahme = require('../models/Abnahme');
 const Entwurf = require('../models/Entwurf');
+const OperationLog = require('../models/OperationLog');
 const nodemailer = require('nodemailer');
 const mongoose = require('mongoose');
 const { postTimelineComment, updateDealFields, postChatMessage } = require('../services/bitrix');
@@ -534,6 +535,77 @@ describe('form routes', () => {
     }));
     expect(res.statusCode).toBe(200);
     expect(res.body).toEqual({ success: true });
+  });
+
+  it('drops known browser/extension noise without logging it', async () => {
+    const handlers = findRouteHandlers('/client-log', 'post');
+    for (const message of ['Script error.', "ReferenceError: Can't find variable: __firefox__", "TypeError: undefined is not an object (evaluating 'window.ethereum.selectedAddress = undefined')", 'prompt() is not supported.']) {
+      const res = await runHandlers(handlers, { body: { event: 'client.error', level: 'error', message } });
+      expect(res.body).toEqual({ success: true, ignored: true });
+    }
+    expect(addOperationLog).not.toHaveBeenCalled();
+    expect(postChatMessage).not.toHaveBeenCalled();
+  });
+
+  it('logs a real client error and posts it to the chat at most once per hour', async () => {
+    const handlers = findRouteHandlers('/client-log', 'post');
+    postChatMessage.mockResolvedValue({});
+    process.env.BITRIX_WEBHOOK_BASE = 'https://example.bitrix24.de/rest/1/x/';
+    const body = {
+      event: 'client.error', level: 'error', message: 'TypeError: x is undefined (C2 test)', bitrixAuftragId: '65278', customerName: 'Stefan Wolfrum',
+      stepTitle: 'Fotos & Video', browser: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) Version/18.7 Mobile/15E148 Safari/604.1',
+    };
+
+    await runHandlers(handlers, { body });
+    await new Promise(resolve => setImmediate(resolve));
+    await runHandlers(handlers, { body });
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect(addOperationLog).toHaveBeenCalledWith(expect.objectContaining({ event: 'client.error', level: 'error' }));
+    expect(postChatMessage).toHaveBeenCalledTimes(1);
+    const text = postChatMessage.mock.calls[0][0];
+    expect(text).toContain('[65278] Stefan Wolfrum');
+    expect(text).toContain('Programmfehler im Formular');
+    expect(text).toContain('TypeError: x is undefined (C2 test)');
+    expect(text).toContain('Gerät: iPhone Safari');
+    expect(text).toContain('https://example.bitrix24.de/crm/deal/details/65278/');
+  });
+
+  it('posts a rejected queued submit to the chat but not an auto-save failure', async () => {
+    const handlers = findRouteHandlers('/client-log', 'post');
+    postChatMessage.mockResolvedValue({});
+
+    await runHandlers(handlers, { body: { event: 'client.autosave.failed', message: 'Load failed' } });
+    await runHandlers(handlers, { body: { event: 'client.outbox.rejected', level: 'error', message: 'Wartendes Absenden abgelehnt: terminId fehlt (C2 test)' } });
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect(postChatMessage).toHaveBeenCalledTimes(1);
+    expect(postChatMessage.mock.calls[0][0]).toContain('Wartendes Absenden vom Server abgelehnt');
+  });
+
+  describe('POST /admin/logs/clear', () => {
+    beforeEach(() => { process.env.TESTMODUS_PASSWORD = 'pw'; });
+    afterEach(() => { delete process.env.TESTMODUS_PASSWORD; });
+
+    it('refuses without the confirmation word', async () => {
+      const handlers = findRouteHandlers('/admin/logs/clear', 'post');
+      OperationLog.deleteMany = jest.fn();
+
+      const res = await runHandlers(handlers, { body: { password: 'pw' } });
+
+      expect(res.statusCode).toBe(400);
+      expect(OperationLog.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('deletes and logs the clearing with the confirmation word', async () => {
+      const handlers = findRouteHandlers('/admin/logs/clear', 'post');
+      OperationLog.deleteMany = jest.fn().mockResolvedValue({ deletedCount: 42 });
+
+      const res = await runHandlers(handlers, { body: { password: 'pw', confirm: 'LÖSCHEN' } });
+
+      expect(res.body).toEqual({ success: true, deletedCount: 42 });
+      expect(addOperationLog).toHaveBeenCalledWith(expect.objectContaining({ event: 'admin.logs.cleared', context: { deletedCount: 42 } }));
+    });
   });
 
   it('rejects unknown client log events', async () => {

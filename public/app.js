@@ -906,6 +906,9 @@
 
   function initClientErrorLogging() {
     window.addEventListener('error', event => {
+      // Only errors from our own scripts. Browser extensions and injected scripts
+      // (Brave's __firefox__, wallets, "Script error." from other origins) are noise.
+      if (!event.filename || !event.filename.startsWith(window.location.origin)) return;
       logClientEvent({
         level: 'error',
         event: 'client.error',
@@ -1265,8 +1268,13 @@ function syncDevSidebarVisibility() {
 
     if (btnAdminLogsClear) {
       btnAdminLogsClear.addEventListener('click', async () => {
-        const confirmed = window.confirm('Alle Logs wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.');
-        if (!confirmed) return;
+        // A typed word, not a yes/no click: the logs are the audit trail.
+        const confirmWord = window.prompt('Alle Logs werden endgültig gelöscht.\nZum Bestätigen LÖSCHEN eingeben:');
+        if (confirmWord === null) return;
+        if (confirmWord.trim() !== 'LÖSCHEN') {
+          showToast('Nicht gelöscht: Bestätigungswort stimmt nicht.', 'error');
+          return;
+        }
 
         btnAdminLogsClear.disabled = true;
         adminLogOutput.classList.remove('hidden');
@@ -1276,7 +1284,7 @@ function syncDevSidebarVisibility() {
           const res = await fetch('/api/form/admin/logs/clear', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ password: devModePassword }),
+            body: JSON.stringify({ password: devModePassword, confirm: 'LÖSCHEN' }),
           });
 
           const json = await parseJsonResponse(res);
@@ -2715,6 +2723,7 @@ function syncDevSidebarVisibility() {
       terminId: $('[name="terminId"]', form)?.value || '',
       bitrixAuftragId: $('[name="bitrixAuftragId"]', form)?.value || '',
       auftragsNummer: $('[name="auftragsNummer"]', form)?.value || '',
+      customerName: [$('[name="vorname"]', form)?.value, $('[name="nachname"]', form)?.value].filter(Boolean).join(' '),
       formId,
       draftId: formId,
     };
@@ -3661,7 +3670,17 @@ function syncDevSidebarVisibility() {
       }
       // The server rejected the form (e.g. validation): stop retrying, show it.
       await idbRequest(db.transaction('forms', 'readwrite').objectStore('forms').put({ ...record, outboxQueuedAt: null }, key));
-      logClientEvent({ level: 'error', event: 'client.outbox.rejected', message: `Wartendes Absenden abgelehnt: ${err.message}`.slice(0, 500) });
+      logClientEvent({
+        level: 'error',
+        event: 'client.outbox.rejected',
+        message: `Wartendes Absenden abgelehnt: ${err.message}`.slice(0, 500),
+        terminId: record.data?.terminId,
+        bitrixAuftragId: record.data?.bitrixAuftragId,
+        auftragsNummer: record.data?.auftragsNummer,
+        customerName: [record.data?.vorname, record.data?.nachname].filter(Boolean).join(' '),
+        formId: record.formId,
+        draftId: record.formId,
+      });
       if (isCurrentPage) {
         outboxQueuedAt = null;
         showToast(`Fehler beim Absenden:\n${err.message}`, 'error', 'big validation');
