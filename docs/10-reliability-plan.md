@@ -17,8 +17,9 @@ A professional web app for **non-technical workers on iPhones**:
 |---|---|---|---|
 | — | Step 1: upload each file once per draft | ✅ done, **live via manual `fly deploy`**, **not on main** | `form-submit-upload-once-v2` (`19d35cb`) |
 | — | Fix 2 timing-out Bitrix retry tests | ✅ done | same branch (`4a2c30f`) |
-| A1 | Auto-save on the phone (IndexedDB) | ⬜ next | |
-| B2 | Permanent status line | ⬜ next (with A1) | |
+| A1 | Auto-save on the phone (IndexedDB) | 🟡 built, verified locally (reload restores text, photos, signature); not deployed | `feat/a1-b2-autosave-status` |
+| B2 | Permanent status line | 🟡 built with A1 | `feat/a1-b2-autosave-status` |
+| — | No 🟡 chat message on draft save (only 🟢 submit / 🔴 failure) | 🟡 built | `feat/a1-b2-autosave-status` |
 | B1 | Fast green: Bitrix push in background | ⬜ | |
 | C2 | Real errors + failed pushes → Bitrix chat | ⬜ (with B1) | |
 | A2 | Background sync to server after each step/photo | ⬜ | |

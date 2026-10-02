@@ -1508,6 +1508,23 @@ input[type="radio"], input[type="checkbox"] {
   cursor: not-allowed;
 }
 
+/* ── Save status line ───────────────────────────────────── */
+.save-status {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  margin: 0 0 12px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: #f2f2f2;
+  color: #555;
+  font-size: .85rem;
+  text-align: center;
+}
+.save-status.ok { background: #e8f5ee; color: #2e6b4f; }
+.save-status.warn { background: #fff3e0; color: #8a4b00; font-weight: 600; }
+.save-status.hidden { display: none; }
+
 .step-counter {
   text-align: right;
   color: var(--clr-gray);

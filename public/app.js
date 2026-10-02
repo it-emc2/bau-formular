@@ -11,6 +11,7 @@
 
   const form          = $('#abnahmeForm');
   const stepIndicator = $('#stepIndicator');
+  const saveStatus = $('#saveStatus');
   const stepCounter   = $('#stepCounter');
   const appSubtitle   = $('.subtitle');
   const btnBackToHome = $('#btnBackToHome');
@@ -261,6 +262,7 @@
   function markFormDirty() {
     if (suppressDirtyTracking || currentStep === 0) return;
     hasUnsavedChanges = true;
+    scheduleLocalSave();
   }
 
   function clearDirtyState() {
@@ -419,7 +421,10 @@
     injectDevStepPdfButtons();
     bindDemoPresetSelection();
     const draftLoaded = await loadDraftIfNeeded();
-    if (draftLoaded) {
+    const restoredAt = await restoreLocalSnapshot(draftLoaded);
+    if (restoredAt) {
+      showToast(`Ihr Stand von ${formatClock(restoredAt)} wurde wiederhergestellt.`, 'success', 'big');
+    } else if (draftLoaded) {
       showStep(getNextVisibleStep(0));
     } else {
       const routeFormularTyp = getRouteFormularTyp();
@@ -434,7 +439,8 @@
     }
     fetchDrafts();
     renderArbeitsberichtResults([], 'Noch keine externen Treffer geladen.');
-    await autofillFromDealIdParam();
+    bindLocalAutoSave();
+    if (!restoredAt) await autofillFromDealIdParam();
   }
 
   async function autofillFromDealIdParam() {
@@ -594,6 +600,8 @@
       sec.classList.toggle('active', Number(sec.dataset.step) === targetStep);
     });
     updateStepDots();
+    scheduleLocalSave();
+    renderSaveStatus();
 
     // Signature canvases inside a newly-visible step need resizing (they had
     // width=0 while hidden). This also re-applies any cached data URL.
@@ -855,9 +863,10 @@
     });
 
     if (btnBackToHome) {
-      btnBackToHome.addEventListener('click', () => {
+      btnBackToHome.addEventListener('click', async () => {
         if (!confirmLeaveToHome()) return;
         clearDirtyState();
+        await deleteLocalSnapshot();
         window.location.href = '/home';
       });
     }
@@ -2037,6 +2046,7 @@ function syncDevSidebarVisibility() {
 
       resetFormState();
       populateForm(data);
+      serverSavedAt = Date.parse(data.updatedAt) || null;
       renderDrafts(drafts);
       showStep(getNextVisibleStep(0));
       showToast('Entwurf geladen.', 'success');
@@ -2899,8 +2909,11 @@ function syncDevSidebarVisibility() {
 
     // Signatures → write base64 to data + timestamp
     for (const [name, pad] of Object.entries(signaturePads)) {
-      if (!pad.isEmpty()) {
-        data[name] = compactSignaturePadDataUrl(pad);
+      // The cache holds loaded/pasted signatures whose canvas is hidden
+      // (0-sized) or still painting; strokes clear it (see initSignaturePads).
+      const dataUrl = signaturePadDataUrls[name] || (pad.isEmpty() ? null : compactSignaturePadDataUrl(pad));
+      if (dataUrl) {
+        data[name] = dataUrl;
         // set corresponding timestamp
         // map the names properly
         const tsMap = {
@@ -3322,6 +3335,8 @@ function syncDevSidebarVisibility() {
 
     const submitClickedAt = action === 'submit' ? Date.now() : null;
     saveInProgress = true;
+    saveAction = action;
+    renderSaveStatus();
     const data = collectFormData();
     const fd   = new FormData();
     fd.append('formData', JSON.stringify(data));
@@ -3347,6 +3362,8 @@ function syncDevSidebarVisibility() {
 
       if (action === 'save') {
         adoptSavedFiles(json.data);
+        serverSavedAt = Date.parse(json.data?.updatedAt) || Date.now();
+        scheduleLocalSave();
         // Show draft link modal
         $('#draftLink').value = json.shareLink;
         $('#draftModal').classList.add('open');
@@ -3376,6 +3393,7 @@ function syncDevSidebarVisibility() {
         // Clear file store after successful submit
         fileStore = {};
         pendingFileRefs = {};
+        await deleteLocalSnapshot();
         const stayOnPage = $('#stayOnPage')?.checked;
         if (!stayOnPage) {
           setTimeout(() => {
@@ -3388,6 +3406,8 @@ function syncDevSidebarVisibility() {
       showToast(`Fehler beim ${action === 'save' ? 'Speichern' : 'Absenden'}:\n${err.message}`, 'error', 'big validation');
     } finally {
       saveInProgress = false;
+      saveAction = null;
+      renderSaveStatus();
       [btnDraft, btnSubmit, btnNext].forEach(b => b.disabled = false);
     }
   }
@@ -3396,12 +3416,12 @@ function syncDevSidebarVisibility() {
   async function loadDraftIfNeeded() {
     // Check URL for /form/:token
     const match = window.location.pathname.match(/^\/form\/(.+)/);
-    if (!match) return false;
+    if (!match) return null;
 
     try {
       const res  = await fetch(`/api/form/token/${match[1]}`);
       const json = await res.json();
-      if (!json.success) return false;
+      if (!json.success) return null;
 
       const data = json.data;
       formId     = data._id;
@@ -3410,13 +3430,244 @@ function syncDevSidebarVisibility() {
 
       resetFormState();
       populateForm(data);
+      serverSavedAt = Date.parse(data.updatedAt) || null;
       fetchDrafts();
       showToast('Entwurf geladen', 'success');
-      return true;
+      return data;
     } catch (err) {
       console.error('Load draft error:', err);
-      return false;
+      return null;
     }
+  }
+
+  // ── Local auto-save (IndexedDB) ────────────────────────
+  // iOS often reloads the tab after camera use, which would lose everything
+  // typed, signed or picked since the last server save. Keep a copy on the
+  // phone, keyed by the page URL (a reload keeps it: path + ?dealId=…).
+  // Form state lives in "forms"; picked files in "files", written once each.
+  const LOCAL_SAVE_DELAY_MS = 500;
+  let localDbPromise = null;
+  let localSaveTimer = null;
+  let localSavedAt = null;
+  let localSaveFailed = false;
+  let serverSavedAt = null;
+  let saveAction = null;               // 'save' | 'submit' while a request runs
+  const localFileIds = new WeakMap();  // File → key in the "files" store
+  let localFileSeq = 0;
+
+  function getLocalFormKey() {
+    return window.location.pathname + window.location.search;
+  }
+
+  function localFileRange(key) {
+    return IDBKeyRange.bound(`${key}|`, `${key}|\uffff`);
+  }
+
+  function idbRequest(req) {
+    return new Promise((resolve, reject) => {
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  function idbDone(tx) {
+    return new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = tx.onabort = () => reject(tx.error);
+    });
+  }
+
+  function openLocalDb() {
+    if (!localDbPromise) {
+      const req = indexedDB.open('bauFormular', 1);
+      req.onupgradeneeded = () => {
+        req.result.createObjectStore('forms');
+        req.result.createObjectStore('files');
+      };
+      localDbPromise = idbRequest(req);
+      localDbPromise.catch(() => { localDbPromise = null; });
+    }
+    return localDbPromise;
+  }
+
+  function scheduleLocalSave() {
+    // Untouched forms are not worth a snapshot (and must not block the
+    // ?dealId autofill on the next load).
+    if (currentStep === 0 || (!hasUnsavedChanges && !formId)) return;
+    clearTimeout(localSaveTimer);
+    localSaveTimer = setTimeout(writeLocalSnapshot, LOCAL_SAVE_DELAY_MS);
+  }
+
+  async function writeLocalSnapshot() {
+    clearTimeout(localSaveTimer);
+    localSaveTimer = null;
+    if (currentStep === 0) return;
+
+    const key = getLocalFormKey();
+    const files = {};
+    const newFiles = [];
+    FILE_UPLOAD_FIELDS.forEach(fieldName => {
+      files[fieldName] = (fileStore[fieldName] || []).map(file => {
+        let id = localFileIds.get(file);
+        if (!id) {
+          id = `${key}|${Date.now()}-${localFileSeq++}`;
+          localFileIds.set(file, id);
+          newFiles.push([id, file]);
+        }
+        return id;
+      });
+    });
+    const record = {
+      data: collectFormData(),
+      files,
+      step: currentStep,
+      formId,
+      shareToken,
+      dirty: hasUnsavedChanges,
+      serverSavedAt,
+      savedAt: Date.now(),
+    };
+
+    try {
+      const db = await openLocalDb();
+      const tx = db.transaction(['forms', 'files'], 'readwrite');
+      const blobs = tx.objectStore('files');
+      tx.objectStore('forms').put(record, key);
+      newFiles.forEach(([id, file]) => {
+        blobs.put({ blob: file, name: file.name, type: file.type, lastModified: file.lastModified }, id);
+      });
+      // Drop blobs of thumbnails removed or uploaded since the last snapshot.
+      const keep = new Set(Object.values(files).flat());
+      const keysReq = blobs.getAllKeys(localFileRange(key));
+      keysReq.onsuccess = () => keysReq.result.forEach(id => { if (!keep.has(id)) blobs.delete(id); });
+      await idbDone(tx);
+      localSavedAt = record.savedAt;
+      localSaveFailed = false;
+    } catch (err) {
+      newFiles.forEach(([, file]) => localFileIds.delete(file));
+      if (!localSaveFailed) {
+        logClientEvent({
+          level: 'warn',
+          event: 'client.local.failed',
+          message: `Lokale Sicherung fehlgeschlagen: ${err?.name || ''} ${err?.message || err}`.slice(0, 500),
+          fileSummary: getFileSummary(),
+        });
+      }
+      localSaveFailed = true;
+    }
+    renderSaveStatus();
+  }
+
+  async function deleteLocalSnapshot(key = getLocalFormKey()) {
+    clearTimeout(localSaveTimer);
+    localSaveTimer = null;
+    localSavedAt = null;
+    try {
+      const db = await openLocalDb();
+      const tx = db.transaction(['forms', 'files'], 'readwrite');
+      tx.objectStore('forms').delete(key);
+      tx.objectStore('files').delete(localFileRange(key));
+      await idbDone(tx);
+    } catch (err) {
+      console.warn('[local-save] delete failed', err);
+    }
+  }
+
+  // Returns the snapshot time when one was restored, otherwise null.
+  // A server draft newer than the snapshot wins (e.g. edited on another device).
+  async function restoreLocalSnapshot(serverData) {
+    const key = getLocalFormKey();
+    let record;
+    let blobs;
+    try {
+      const db = await openLocalDb();
+      record = await idbRequest(db.transaction('forms').objectStore('forms').get(key));
+      if (!record) return null;
+      if (serverData && record.savedAt <= (Date.parse(serverData.updatedAt) || 0)) {
+        await deleteLocalSnapshot(key);
+        return null;
+      }
+      // Separate transaction: Safari may auto-commit across awaited promises.
+      const store = db.transaction('files').objectStore('files');
+      const ids = Object.values(record.files || {}).flat();
+      blobs = new Map(await Promise.all(ids.map(id => idbRequest(store.get(id)).then(value => [id, value]))));
+    } catch (err) {
+      console.warn('[local-save] restore failed', err);
+      return null;
+    }
+
+    resetFormState();
+    populateForm(record.data);
+    formId = record.formId || null;
+    shareToken = record.shareToken || null;
+    activeDraftId = formId;
+    serverSavedAt = record.serverSavedAt || null;
+
+    let restoredFiles = 0;
+    let missingFiles = 0;
+    Object.entries(record.files || {}).forEach(([fieldName, ids]) => {
+      const preview = $(`.file-upload[data-name="${fieldName}"] .file-preview`);
+      if (!preview) return;
+      const restored = ids.map(id => {
+        const stored = blobs.get(id);
+        if (!stored) { missingFiles++; return null; }
+        const file = new File([stored.blob], stored.name, { type: stored.type, lastModified: stored.lastModified });
+        localFileIds.set(file, id);
+        return file;
+      }).filter(Boolean);
+      restoredFiles += restored.length;
+      // multi=true: the snapshot already reflects single-field replacement.
+      if (restored.length) addFiles(fieldName, restored, preview, true);
+    });
+
+    hasUnsavedChanges = !!record.dirty;
+    localSavedAt = record.savedAt;
+    showStep(record.step);
+    logClientEvent({
+      level: missingFiles ? 'warn' : 'info',
+      event: 'client.local.restored',
+      message: `Lokaler Stand wiederhergestellt (${restoredFiles} Dateien${missingFiles ? `, ${missingFiles} fehlen` : ''}).`,
+      fileSummary: getFileSummary(),
+    });
+    return record.savedAt;
+  }
+
+  function formatClock(ts) {
+    return new Date(ts).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function renderSaveStatus() {
+    if (!saveStatus) return;
+    let text = '';
+    let tone = '';
+    if (currentStep === 0) {
+      text = '';
+    } else if (saveAction) {
+      text = saveAction === 'submit' ? '⏳ Wird gesendet … bitte Seite offen lassen' : '⏳ Wird gespeichert …';
+    } else if (localSaveFailed) {
+      text = '⚠ Sicherung auf dem Handy nicht möglich – bitte „Zwischenspeichern“ nutzen';
+      tone = 'warn';
+    } else if (!navigator.onLine) {
+      text = '⚠ Kein Netz – Eingaben bleiben auf dem Handy gesichert';
+      tone = 'warn';
+    } else if (!hasUnsavedChanges && serverSavedAt) {
+      text = `✓ Alles gespeichert · ${formatClock(serverSavedAt)}`;
+      tone = 'ok';
+    } else if (localSavedAt) {
+      text = `💾 Auf dem Handy gesichert · ${formatClock(localSavedAt)}`;
+    }
+    saveStatus.textContent = text;
+    saveStatus.className = ['save-status', tone, text ? '' : 'hidden'].filter(Boolean).join(' ');
+  }
+
+  function bindLocalAutoSave() {
+    window.addEventListener('online', renderSaveStatus);
+    window.addEventListener('offline', renderSaveStatus);
+    // iOS may kill a backgrounded tab without further events: flush now.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden' && localSaveTimer) writeLocalSnapshot();
+    });
+    renderSaveStatus();
   }
 
   function resetFormState() {
@@ -3861,6 +4112,7 @@ function syncDevSidebarVisibility() {
         wrapper.style.borderColor = '';
         markFormDirty();
       });
+      pad.addEventListener('endStroke', () => scheduleLocalSave());
     });
     resizeAllSignatureCanvases();
     window.addEventListener('resize', () => resizeAllSignatureCanvases());

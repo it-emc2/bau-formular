@@ -373,7 +373,6 @@ function buildDealLink(bitrixAuftragId) {
 }
 
 const BAUSTELLENABNAHME_CHAT_STATUS = {
-  draft: { emoji: '🟡', label: 'Entwurf gespeichert' },
   submitted: { emoji: '🟢', label: 'Abnahme abgeschlossen' },
   failed: { emoji: '🔴', label: 'Fehler beim Absenden' },
 };
@@ -1243,7 +1242,6 @@ router.post('/save', uploadAny, async (req, res) => {
             shareToken: existing.shareToken,
           }),
         });
-        await notifyBaustellenabnahmeChat('draft', existing);
         return res.json(buildSuccessResponse(existing));
       }
 
@@ -1277,7 +1275,6 @@ router.post('/save', uploadAny, async (req, res) => {
           shareToken: draft.shareToken,
         }),
       });
-      await notifyBaustellenabnahmeChat('draft', draft);
       return res.status(201).json(buildSuccessResponse(draft));
     }
 
@@ -1297,7 +1294,6 @@ router.post('/save', uploadAny, async (req, res) => {
         shareToken: form.shareToken,
       }),
     });
-    await notifyBaustellenabnahmeChat('draft', form);
     return res.status(201).json(buildSuccessResponse(form));
   } catch (error) {
     await deleteUploadedRequestFiles(req.files);
@@ -1810,6 +1806,8 @@ router.post('/client-log', async (req, res) => {
       'client.unhandled_rejection',
       'client.submit.success',
       'client.save.adopt_skipped',
+      'client.local.restored',
+      'client.local.failed',
     ]);
 
     if (!allowedEvents.has(event)) {
