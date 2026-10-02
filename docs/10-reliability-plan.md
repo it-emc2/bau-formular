@@ -22,8 +22,8 @@ A professional web app for **non-technical workers on iPhones**:
 | — | No 🟡 chat message on draft save (only 🟢 submit / 🔴 failure remain) | ✅ done; not deployed | same (`b6306dd`) |
 | B1 | Fast green: Bitrix push in background + automatic retry + „Komplett neu senden“ | ✅ done. Background push live via manual `fly deploy` (owner, 2026-10-02); e2e on deal 65278 OK: green in 0.4 s, Bitrix `sent` 10 s later, 🟢 chat + n8n OK. „Komplett neu senden“ deployed; live-checked: *Laden* shows status, button refuses an already `sent` Abnahme; full resend of a `failed` Abnahme OK (6 attachments, 10 s, status → `sent`, timeline + Hinweis + n8n OK). Automatic retry path and final 🔴 alert only unit-tested | `plan/reliability-roadmap` |
 | C2 | Real errors + failed pushes → Bitrix chat (with direct links) | 🟡 links + final-push-failure alert done with B1; client-error part after C1 | same |
-| A2 | Background sync to server after each step/photo | ⬜ | |
-| A3 | Outbox: submit queued while offline | ⬜ | |
+| A2 | Background sync to server after each step/photo (+ continue server draft by `dealId`, 30-day draft cleanup) | ✅ done, verified locally against prod DB (Chromium): silent saves, photo added during an upload adopted correctly (1+1+1 uploads, no `adopt_skipped`), deal draft continued after local copy deleted. **iPhone test open**; not deployed | `plan/reliability-roadmap` |
+| A3 | Outbox: submit queued while offline | ✅ done, verified locally (server stopped → queued → edited → server back → sent from the **home page**, exactly one Abnahme with the edit, Bitrix `sent`; repeat with same `submitId` → `duplicate: true`). **iPhone test open**; not deployed | same |
 | A4 | `storage.persist()` + Home Screen install (manifest) | ⬜ | |
 | B3 | Upload progress | ⬜ | |
 | B4 | Plain-German, persistent error messages | ⬜ | |
@@ -37,7 +37,7 @@ A professional web app for **non-technical workers on iPhones**:
 | C6 | Run tests in CI before deploy | ⬜ | |
 | C7 | Keep compressed video, automatic orphan cleanup | ⬜ | |
 
-Recommended order: ~~A1+B2~~ → **B1+C2** → A2+A3 → the rest (small items, any order).
+Recommended order: ~~A1+B2~~ → ~~B1+C2~~ → ~~A2+A3~~ → the rest (small items, any order).
 
 Branches: `plan/reliability-roadmap` (local, **not pushed**) = `form-submit-upload-once-v2` + this plan + A1/B2 (`b6306dd`). Nothing of A1/B2 is live yet.
 
@@ -128,10 +128,30 @@ Verified end-to-end on production (2026-10-02, deal 65278): saves uploaded 3 →
 - Serialise saves (the existing `saveInProgress` flag); if a change happens during a save, schedule one more.
 - Acceptance: a job where the worker never presses *Zwischenspeichern* still has a server draft with all media after step 3.
 
+**A2 decisions (owner, 2026-10-02):**
+- Triggers: step change (immediately), photo/video added (after 3 s), back online, tab hidden. Text-only edits ride along with the next step change.
+- Silent: no draft-name modal, no toast, buttons stay usable; only the status line (B2) changes. Failures are logged once per streak (`client.autosave.failed`) and retried on the next trigger.
+- **Fix needed first:** `adoptSavedFiles` must only adopt the files that request actually sent (a photo added or removed during an upload otherwise trips the count guard). Dirty state is cleared only if nothing changed during the save (`changeSeq`).
+- *Absenden* / *Zwischenspeichern* during an auto-save wait for it instead of failing with "Speichern läuft bereits".
+- No auto-save once a submit is queued (A3) or done, otherwise a late save would recreate a draft from the submitted Abnahme.
+- Request timeout: 60 s + 1 s per 125 KB sent (≈ 1 Mbit/s floor), for auto-save and submit.
+- **Continue the server draft by deal:** workers always open the form via the `?dealId=` link (Bitrix automation → field → FortyTools); currently only `/AbschlussderBaustelle`. On load without a newer local copy, `GET /api/form/drafts/by-deal/:dealId` loads the newest Baustellenabnahme draft for that deal ("Gespeicherter Stand von HH:MM geladen."), so a second phone or a lost local copy does not start a second draft.
+- **Draft cleanup:** drafts **created on/after 2026-10-02** and untouched for 30 days are deleted daily with their files (files still referenced by an Abnahme or another draft are kept). Older drafts are never touched. Logged as `draft.cleanup.*`.
+
 ### A3 · Outbox for submit
 - If *Absenden* happens offline or fails on the network, store the submit intent locally and show: *"Kein Netz – wird automatisch gesendet, sobald Empfang da ist. Bitte Seite offen lassen."*
 - Retry on the `online` event, on `visibilitychange` back to visible, on page load, and with backoff while the page is open (no Background Sync on iOS).
 - The server must make submit **idempotent** per draft (e.g. a client-generated submit id stored on the Abnahme) so a retry after a lost response cannot create a second Abnahme or a second Bitrix post.
+
+**A3 decisions (owner, 2026-10-02):**
+- Queue only on network failure (fetch error, timeout, HTTP 502/503/504). Validation errors (4xx) are shown as today.
+- The outbox is the A1 record with `outbox: { submitId, queuedAt }`. A sender builds the request from the stored record (data + blobs), so it works from any page of the app, not only the open form.
+- Retries: page load (any route), `online`, tab visible again, and 30 s → 1 → 2 → 5 min while open.
+- **Editing stays allowed** while queued; each attempt sends the latest local state.
+- `submitId` (`crypto.randomUUID()`) is created on the first *Absenden* and sent on every attempt, including the first direct one. Server: unique sparse index on `Abnahme.submitId`; a known `submitId` returns the existing Abnahme (`submit.duplicate_ignored`), also when two attempts race (E11000).
+- Status line: *📤 Kein Netz – wird automatisch gesendet, sobald Empfang da ist. Bitte Seite offen lassen.*
+- Known limit: `client.outbox.queued` is logged while offline and therefore usually lost; `client.outbox.sent` carries the delay since the click instead.
+- Testing tip: stopping the local server (`preview_stop`) while the page is open simulates "no signal"; restarting it via `preview_start` reloads the tab to `/`, which also exercises sending from another page.
 
 ### A4 · Keep local data
 - `navigator.storage.persist()` on first load.
@@ -212,7 +232,7 @@ Native app (Home Screen PWA is enough) · Tigris/R2 object storage (`docs/TODO.m
 - `npm test` — 74 tests, all green (as of `b6306dd`). If old worktrees exist under `.claude/worktrees/`, plain `npm test` also picks up their copies and shows ~35 unrelated failures; run `npx jest --runInBand --watchman=false --testPathIgnorePatterns /.claude/`.
 - Local server for the in-app browser: `.claude/launch.json` (untracked) starts `PORT=3007 ALLOWED_ORIGINS=http://localhost:3007 node server.js`. Local client logs go to the **production** OperationLogs.
 - `public/app.js` is a single IIFE with no exports; client logic can't be unit-tested directly. Verify client changes in a real browser.
-- **Test deal: `65278` — Stefan Wolfrum** (`/AbschlussderBaustelle?dealId=65278` pre-fills step 1). Use it for any end-to-end submit. Put a "TESTLAUF – bitte ignorieren" note in *Hinweise für das Büro*. Kept on purpose: test Abnahme `6abf7207d8e9ae2c375c6b8a` (B1 test, 2026-10-02) on this deal.
+- **Test deal: `65278` — Stefan Wolfrum** (`/AbschlussderBaustelle?dealId=65278` pre-fills step 1). Use it for any end-to-end submit. Put a "TESTLAUF – bitte ignorieren" note in *Hinweise für das Büro*. Kept on purpose: test Abnahmen `6abf7207d8e9ae2c375c6b8a` (B1 test) and `6abf8217d36c55305dcefa56` (A3 test), both 2026-10-02, on this deal.
 - In the browser, test media can be generated on a `<canvas>` (photos via `toBlob`, video via `MediaRecorder` on `canvas.captureStream()`) and handed to the file inputs with a `DataTransfer` — the form treats them exactly like gallery picks.
 - The Claude Code integrated browser blocks `window.prompt`, so Testmodus cannot be switched on there. Use Claude in Chrome, and let the owner enter the Testmodus password in that tab (it lives in `sessionStorage`, per tab). Never type the password yourself on production.
 - Bitrix timeline can be read (read-only) with the app's own `BITRIX_WEBHOOK_BASE` from `.env`: `crm.timeline.comment.list` filtered by `ENTITY_ID`/`ENTITY_TYPE=deal`, then `crm.timeline.comment.get` for `FILES`.

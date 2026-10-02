@@ -157,6 +157,34 @@ async function cleanupOrphanUploads({ deleteFiles = false, uploadsDir = getUploa
   };
 }
 
+// Loescht Entwuerfe, die seit `olderThanDays` unveraendert sind, samt ihren Dateien.
+// Dateien, die eine Abnahme oder ein anderer Entwurf noch referenziert, bleiben.
+async function deleteExpiredDrafts({ createdSince, olderThanDays = 30, uploadsDir = getUploadsDir() } = {}) {
+  const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000);
+  const expired = await Entwurf.find({ createdAt: { $gte: createdSince }, updatedAt: { $lt: cutoff } }).lean();
+  if (!expired.length) return { deletedDrafts: [], deletedFiles: [] };
+
+  await Entwurf.deleteMany({ _id: { $in: expired.map(draft => draft._id) } });
+
+  const expiredReferences = new Set();
+  expired.forEach(draft => collectUploadReferences(draft, expiredReferences));
+  const stillReferenced = new Set();
+  await collectReferencesFromModel(Abnahme, stillReferenced);
+  await collectReferencesFromModel(Entwurf, stillReferenced);
+
+  const deletedFiles = [];
+  for (const relativePath of expiredReferences) {
+    if (stillReferenced.has(relativePath)) continue;
+    await fs.rm(path.join(uploadsDir, relativePath), { force: true });
+    deletedFiles.push(relativePath);
+  }
+
+  return {
+    deletedDrafts: expired.map(draft => ({ id: String(draft._id), bitrixAuftragId: draft.bitrixAuftragId, updatedAt: draft.updatedAt })),
+    deletedFiles,
+  };
+}
+
 async function getDraftFileReferences() {
   const references = new Set();
   await collectReferencesFromModel(Entwurf, references);
@@ -165,6 +193,7 @@ async function getDraftFileReferences() {
 
 module.exports = {
   cleanupOrphanUploads,
+  deleteExpiredDrafts,
   getDraftFileReferences,
   formatBytes,
 };

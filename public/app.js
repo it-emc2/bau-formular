@@ -263,6 +263,7 @@
   function markFormDirty() {
     if (suppressDirtyTracking || currentStep === 0) return;
     hasUnsavedChanges = true;
+    changeSeq++;
     scheduleLocalSave();
   }
 
@@ -421,12 +422,15 @@
     initDevModeToggle();
     injectDevStepPdfButtons();
     bindDemoPresetSelection();
-    const draftLoaded = await loadDraftIfNeeded();
+    const draftLoaded = await loadDraftIfNeeded() || await loadDraftForDeal();
     const restoredAt = await restoreLocalSnapshot(draftLoaded);
     if (restoredAt) {
       showToast(`Ihr Stand von ${formatClock(restoredAt)} wurde wiederhergestellt.`, 'success', 'big');
     } else if (draftLoaded) {
       showStep(getNextVisibleStep(0));
+      if (draftLoaded.loadedByDeal) {
+        showToast(`Gespeicherter Stand von ${formatClock(serverSavedAt)} geladen.`, 'success', 'big');
+      }
     } else {
       const routeFormularTyp = getRouteFormularTyp();
       if (routeFormularTyp) {
@@ -441,7 +445,8 @@
     fetchDrafts();
     renderArbeitsberichtResults([], 'Noch keine externen Treffer geladen.');
     bindLocalAutoSave();
-    if (!restoredAt) await autofillFromDealIdParam();
+    if (!restoredAt && !draftLoaded) await autofillFromDealIdParam();
+    flushOutbox();
   }
 
   async function autofillFromDealIdParam() {
@@ -602,6 +607,7 @@
     });
     updateStepDots();
     scheduleLocalSave();
+    scheduleServerSave(0);
     renderSaveStatus();
 
     // Signature canvases inside a newly-visible step need resizing (they had
@@ -867,7 +873,8 @@
       btnBackToHome.addEventListener('click', async () => {
         if (!confirmLeaveToHome()) return;
         clearDirtyState();
-        await deleteLocalSnapshot();
+        // A queued submit must survive: the home page keeps sending it.
+        if (!outboxQueuedAt) await deleteLocalSnapshot();
         window.location.href = '/home';
       });
     }
@@ -3328,18 +3335,16 @@ function syncDevSidebarVisibility() {
   // The count guard is deliberate: if the response does not match what we sent,
   // we keep the files in fileStore and fall back to the old re-upload behaviour
   // rather than dropping the only remaining copy of a camera-captured photo.
-  function adoptSavedFiles(saved) {
+  function adoptSavedFiles(saved, sent) {
     if (!saved || typeof saved !== 'object') return;
 
-    FILE_UPLOAD_FIELDS.forEach(fieldName => {
-      const fresh = fileStore[fieldName] || [];
-      if (!fresh.length) return;
+    Object.entries(sent).forEach(([fieldName, { existing, files }]) => {
+      if (!files.length) return;
 
       const raw = saved[fieldName];
       const urls = (Array.isArray(raw) ? raw : (raw ? [raw] : [])).filter(Boolean);
-      const existing = existingFileStore[fieldName] || [];
       const single = SINGLE_FILE_UPLOAD_FIELDS.has(fieldName);
-      const expected = single ? 1 : existing.length + fresh.length;
+      const expected = single ? 1 : existing.length + files.length;
 
       if (urls.length !== expected) {
         logClientEvent({
@@ -3353,41 +3358,110 @@ function syncDevSidebarVisibility() {
         return;
       }
 
+      // Only the files this request sent. A file removed or replaced while it was
+      // uploading is not adopted; the next save drops it from the server draft.
       const newUrls = single ? urls : urls.slice(existing.length);
-      (pendingFileRefs[fieldName] || []).forEach((ref, index) => {
-        if (!ref.url && newUrls[index]) ref.url = newUrls[index];
+      files.forEach((file, index) => {
+        const idx = (fileStore[fieldName] || []).indexOf(file);
+        if (idx === -1) return;
+        fileStore[fieldName].splice(idx, 1);
+        existingFileStore[fieldName] = [...(existingFileStore[fieldName] || []), newUrls[index]];
+        const refs = pendingFileRefs[fieldName] || [];
+        const refIdx = refs.findIndex(ref => ref.file === file);
+        if (refIdx > -1) {
+          refs[refIdx].url = newUrls[index];
+          refs.splice(refIdx, 1);
+        }
       });
-
-      existingFileStore[fieldName] = urls;
-      fileStore[fieldName] = [];
-      pendingFileRefs[fieldName] = [];
     });
+  }
+
+  // Generous on purpose: assumes ~1 Mbit/s upload on bad LTE plus a minute of slack.
+  async function fetchWithTimeout(url, body, bytes) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 60000 + Math.round(bytes / 125));
+    try {
+      const res = await fetch(url, { method: 'POST', body, signal: controller.signal });
+      if ([502, 503, 504].includes(res.status)) {
+        throw Object.assign(new Error(`Server nicht erreichbar (HTTP ${res.status})`), { isNetwork: true });
+      }
+      return res;
+    } catch (err) {
+      if (err.isNetwork) throw err;
+      // fetch only rejects on network failure / abort, never on HTTP status.
+      throw Object.assign(new Error(err.name === 'AbortError' ? 'Zeitüberschreitung' : (err.message || 'Netzwerkfehler')), { isNetwork: true });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  function newSubmitId() {
+    if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+    return `${Date.now()}-${Math.random().toString(16).slice(2)}-${Math.random().toString(16).slice(2)}`;
+  }
+
+  // ── Auto-save to the server (A2) ───────────────────────
+  // Silent /save on step change, after a photo/video, when back online and when
+  // the tab is hidden. One save at a time; a change during a save queues one more.
+  let changeSeq = 0;
+  let autosaveTimer = null;
+  let autosaveQueued = false;
+  let autosaveFailedLogged = false;
+  let currentSave = null;
+  let formSubmitted = false;
+
+  function canAutosave() {
+    return currentStep !== 0 && hasUnsavedChanges && !formSubmitted && !outboxQueuedAt && navigator.onLine;
+  }
+
+  function scheduleServerSave(delayMs = 0) {
+    if (!canAutosave()) return;
+    clearTimeout(autosaveTimer);
+    autosaveTimer = setTimeout(() => {
+      autosaveTimer = null;
+      if (canAutosave()) saveForm('autosave');
+    }, delayMs);
   }
 
   async function saveForm(action) {
     if (saveInProgress) {
-      showToast('Speichern läuft bereits. Bitte kurz warten.', 'error');
-      return;
+      if (action === 'autosave') { autosaveQueued = true; return; }
+      if (saveAction === 'autosave') await currentSave;
+      if (saveInProgress) {
+        showToast('Speichern läuft bereits. Bitte kurz warten.', 'error');
+        return;
+      }
     }
+    currentSave = performSave(action);
+    return currentSave;
+  }
 
-    const submitClickedAt = action === 'submit' ? Date.now() : null;
+  async function performSave(action) {
+    const isSubmit = action === 'submit';
+    const silent = action === 'autosave';
+    const submitClickedAt = isSubmit ? Date.now() : null;
+    if (isSubmit && !submitId) submitId = newSubmitId();
+    const seqAtStart = changeSeq;
     saveInProgress = true;
     saveAction = action;
     renderSaveStatus();
+
     const data = collectFormData();
-    const fd   = new FormData();
+    if (isSubmit) data.submitId = submitId;
+    const fd = new FormData();
     fd.append('formData', JSON.stringify(data));
+    const sent = {};
+    let bytes = 0;
+    FILE_UPLOAD_FIELDS.forEach(fieldName => {
+      const files = [...(fileStore[fieldName] || [])];
+      sent[fieldName] = { existing: [...(existingFileStore[fieldName] || [])], files };
+      files.forEach(f => { fd.append(fieldName, f); bytes += f.size || 0; });
+    });
 
-    // Append files
-    for (const [fieldName, files] of Object.entries(fileStore)) {
-      files.forEach(f => fd.append(fieldName, f));
-    }
-
-    // Disable buttons while saving
-    [btnDraft, btnSubmit, btnNext].forEach(b => b.disabled = true);
+    if (!silent) [btnDraft, btnSubmit, btnNext].forEach(b => b.disabled = true);
 
     try {
-      const res  = await fetch(`/api/form/${action}`, { method: 'POST', body: fd });
+      const res  = await fetchWithTimeout(`/api/form/${isSubmit ? 'submit' : 'save'}`, fd, bytes);
       const json = await parseJsonResponse(res);
 
       if (!json.success) throw new Error(json.error);
@@ -3395,49 +3469,198 @@ function syncDevSidebarVisibility() {
       formId     = json.id;
       shareToken = json.shareToken;
       activeDraftId = json.id;
-      clearDirtyState();
 
-      if (action === 'save') {
-        adoptSavedFiles(json.data);
-        serverSavedAt = Date.parse(json.data?.updatedAt) || Date.now();
-        scheduleLocalSave();
+      if (isSubmit) {
+        clearDirtyState();
+        await handleSubmitSuccess(json, Date.now() - submitClickedAt);
+        return;
+      }
+
+      adoptSavedFiles(json.data, sent);
+      serverSavedAt = Date.parse(json.data?.updatedAt) || Date.now();
+      if (changeSeq === seqAtStart) clearDirtyState();
+      else autosaveQueued = true;
+      autosaveFailedLogged = false;
+      scheduleLocalSave();
+
+      if (!silent) {
         // Show draft link modal
         $('#draftLink').value = json.shareLink;
         $('#draftModal').classList.add('open');
         fetchDrafts();
         showToast('Entwurf gespeichert.', 'success');
-      } else {
-        fetchDrafts();
-        const elapsedMs = Date.now() - submitClickedAt;
-        logClientEvent({
-          event: 'client.submit.success',
-          message: `Formular übermittelt in ${(elapsedMs / 1000).toFixed(1)} s (Klick → Benachrichtigung).`,
-          elapsedMs,
-          fileSummary: getFileSummary(),
-        });
-        // Bitrix laeuft jetzt im Hintergrund auf dem Server (B1); das Ergebnis kennt der Client nicht.
-        setDocumentStatus('Formular gespeichert. Die Übertragung an Bitrix läuft im Hintergrund.', 'success');
-        showToast('Formular übermittelt ✓\nSie können das Handy jetzt weglegen.', 'success', 'big');
-        // Clear file store after successful submit
-        fileStore = {};
-        pendingFileRefs = {};
-        await deleteLocalSnapshot();
-        const stayOnPage = $('#stayOnPage')?.checked;
-        if (!stayOnPage) {
-          setTimeout(() => {
-            window.location.href = '/';
-          }, 2000);
-        }
       }
     } catch (err) {
       console.error(`[form-${action}] failed`, err);
-      showToast(`Fehler beim ${action === 'save' ? 'Speichern' : 'Absenden'}:\n${err.message}`, 'error', 'big validation');
+      if (silent) {
+        if (!autosaveFailedLogged) {
+          autosaveFailedLogged = true;
+          logClientEvent({
+            level: 'warn',
+            event: 'client.autosave.failed',
+            message: `Automatisches Speichern fehlgeschlagen: ${err.message}`.slice(0, 500),
+            fileSummary: getFileSummary(),
+          });
+        }
+      } else if (isSubmit && err.isNetwork) {
+        await queueSubmit(err);
+      } else {
+        showToast(`Fehler beim ${isSubmit ? 'Absenden' : 'Speichern'}:\n${err.message}`, 'error', 'big validation');
+      }
     } finally {
       saveInProgress = false;
       saveAction = null;
       renderSaveStatus();
-      [btnDraft, btnSubmit, btnNext].forEach(b => b.disabled = false);
+      if (!silent) [btnDraft, btnSubmit, btnNext].forEach(b => b.disabled = false);
+      if (autosaveQueued) {
+        autosaveQueued = false;
+        scheduleServerSave(3000);
+      }
     }
+  }
+
+  async function handleSubmitSuccess(json, elapsedMs) {
+    formSubmitted = true;
+    submitId = null;
+    outboxQueuedAt = null;
+    clearTimeout(autosaveTimer);
+    fetchDrafts();
+    logClientEvent({
+      event: 'client.submit.success',
+      message: `Formular übermittelt in ${(elapsedMs / 1000).toFixed(1)} s (Klick → Benachrichtigung).`,
+      elapsedMs,
+      fileSummary: getFileSummary(),
+    });
+    // Bitrix laeuft jetzt im Hintergrund auf dem Server (B1); das Ergebnis kennt der Client nicht.
+    setDocumentStatus('Formular gespeichert. Die Übertragung an Bitrix läuft im Hintergrund.', 'success');
+    showToast('Formular übermittelt ✓\nSie können das Handy jetzt weglegen.', 'success', 'big');
+    // Clear file store after successful submit
+    fileStore = {};
+    pendingFileRefs = {};
+    await deleteLocalSnapshot();
+    renderSaveStatus();
+    const stayOnPage = $('#stayOnPage')?.checked;
+    if (!stayOnPage) {
+      setTimeout(() => {
+        window.location.href = '/';
+      }, 2000);
+    }
+  }
+
+  // ── Outbox for submit (A3) ─────────────────────────────
+  // No Background Sync on iOS: a queued submit is sent while the app is open
+  // (any page), on the next open, when back online or when the tab is visible.
+  const OUTBOX_RETRY_DELAYS_MS = [30000, 60000, 120000, 300000];
+  let submitId = null;
+  let outboxQueuedAt = null;
+  let outboxBusy = false;
+  let outboxTimer = null;
+  let outboxRetryIndex = 0;
+  const outboxFailureLogged = new Set();
+
+  async function queueSubmit(err) {
+    outboxQueuedAt = Date.now();
+    await writeLocalSnapshot();
+    if (localSaveFailed) {
+      outboxQueuedAt = null;
+      showToast(`Fehler beim Absenden:\n${err.message}\nBitte bei Empfang erneut „Absenden“ drücken.`, 'error', 'big validation');
+      return;
+    }
+    logClientEvent({
+      level: 'warn',
+      event: 'client.outbox.queued',
+      message: `Absenden ohne Netz, in Warteschlange: ${err.message}`.slice(0, 500),
+      fileSummary: getFileSummary(),
+    });
+    showToast('Kein Netz – das Formular wird automatisch gesendet, sobald Empfang da ist.\nBitte Seite offen lassen.', 'warn', 'big');
+    outboxRetryIndex = 0;
+    clearTimeout(outboxTimer);
+    outboxTimer = setTimeout(flushOutbox, OUTBOX_RETRY_DELAYS_MS[0]);
+  }
+
+  async function flushOutbox() {
+    if (outboxBusy || !window.indexedDB) return;
+    outboxBusy = true;
+    clearTimeout(outboxTimer);
+    let waiting = 0;
+    try {
+      if (outboxQueuedAt && localSaveTimer) await writeLocalSnapshot();
+      const db = await openLocalDb();
+      const keys = await idbRequest(db.transaction('forms').objectStore('forms').getAllKeys());
+      for (const key of keys) {
+        const record = await idbRequest(db.transaction('forms').objectStore('forms').get(key));
+        if (!record?.outboxQueuedAt) continue;
+        if (key === getLocalFormKey() && saveInProgress) { waiting++; continue; }
+        if (await sendOutboxRecord(db, key, record) === 'retry') waiting++;
+      }
+    } catch (err) {
+      console.warn('[outbox] flush failed', err);
+      if (outboxQueuedAt) waiting++;
+    } finally {
+      outboxBusy = false;
+    }
+    if (waiting) {
+      outboxTimer = setTimeout(flushOutbox, OUTBOX_RETRY_DELAYS_MS[Math.min(outboxRetryIndex++, OUTBOX_RETRY_DELAYS_MS.length - 1)]);
+    } else {
+      outboxRetryIndex = 0;
+    }
+    renderSaveStatus();
+  }
+
+  async function sendOutboxRecord(db, key, record) {
+    const isCurrentPage = key === getLocalFormKey();
+    const store = db.transaction('files').objectStore('files');
+    const entries = Object.entries(record.files || {});
+    const stored = await Promise.all(entries.map(([, ids]) => Promise.all(ids.map(id => idbRequest(store.get(id))))));
+    const fd = new FormData();
+    fd.append('formData', JSON.stringify({ ...record.data, submitId: record.submitId }));
+    let bytes = 0;
+    entries.forEach(([fieldName], i) => {
+      stored[i].filter(Boolean).forEach(item => {
+        fd.append(fieldName, new File([item.blob], item.name, { type: item.type, lastModified: item.lastModified }));
+        bytes += item.blob.size || 0;
+      });
+    });
+
+    let json;
+    try {
+      const res = await fetchWithTimeout('/api/form/submit', fd, bytes);
+      json = await parseJsonResponse(res);
+      if (!json.success) throw new Error(json.error);
+    } catch (err) {
+      if (err.isNetwork) {
+        if (!outboxFailureLogged.has(key)) {
+          outboxFailureLogged.add(key);
+          logClientEvent({ level: 'warn', event: 'client.outbox.retry_failed', message: `Wartendes Absenden noch nicht moeglich: ${err.message}`.slice(0, 500) });
+        }
+        return 'retry';
+      }
+      // The server rejected the form (e.g. validation): stop retrying, show it.
+      await idbRequest(db.transaction('forms', 'readwrite').objectStore('forms').put({ ...record, outboxQueuedAt: null }, key));
+      logClientEvent({ level: 'error', event: 'client.outbox.rejected', message: `Wartendes Absenden abgelehnt: ${err.message}`.slice(0, 500) });
+      if (isCurrentPage) {
+        outboxQueuedAt = null;
+        showToast(`Fehler beim Absenden:\n${err.message}`, 'error', 'big validation');
+      } else {
+        showToast('Ein wartendes Formular konnte nicht gesendet werden. Bitte das Formular über den Auftrags-Link erneut öffnen.', 'error', 'big');
+      }
+      return 'rejected';
+    }
+
+    logClientEvent({
+      event: 'client.outbox.sent',
+      message: `Wartendes Absenden gesendet (${Math.round((Date.now() - record.outboxQueuedAt) / 1000)} s nach dem Klick)${json.duplicate ? ', war bereits angekommen' : ''}.`,
+    });
+    if (isCurrentPage && outboxQueuedAt) {
+      formId = json.id;
+      shareToken = json.shareToken;
+      clearDirtyState();
+      await handleSubmitSuccess(json, Date.now() - record.outboxQueuedAt);
+    } else {
+      await deleteLocalSnapshot(key);
+      showToast('Ein wartendes Formular wurde übermittelt ✓', 'success', 'big');
+    }
+    return 'sent';
   }
 
   // ── Load Draft ─────────────────────────────────────────
@@ -3467,6 +3690,38 @@ function syncDevSidebarVisibility() {
       return null;
     }
   }
+  // Workers always open the job via the Bitrix link (?dealId=). Continue the
+  // server draft of that deal so a second phone does not start a second draft.
+  async function loadDraftForDeal() {
+    const dealId = new URLSearchParams(window.location.search).get('dealId');
+    if (!dealId || getRouteFormularTyp() !== 'baustellenabnahme') return null;
+
+    try {
+      const res = await fetch(`/api/form/drafts/by-deal/${encodeURIComponent(dealId)}`);
+      if (!res.ok) return null;
+      const json = await res.json();
+      if (!json.success) return null;
+
+      const data = json.data;
+      formId     = data._id;
+      shareToken = data.shareToken;
+      activeDraftId = data._id;
+
+      resetFormState();
+      populateForm(data);
+      setFormLocked(true); // same as after the Bitrix autofill this replaces
+      serverSavedAt = Date.parse(data.updatedAt) || null;
+      logClientEvent({
+        event: 'client.draft.loaded_by_deal',
+        message: `Server-Entwurf fuer Auftrag ${dealId} fortgesetzt (Stand ${data.updatedAt}).`,
+      });
+      return { ...data, loadedByDeal: true };
+    } catch (err) {
+      console.warn('[draft-by-deal] load failed', err);
+      return null;
+    }
+  }
+
 
   // ── Local auto-save (IndexedDB) ────────────────────────
   // iOS often reloads the tab after camera use, which would lose everything
@@ -3553,6 +3808,8 @@ function syncDevSidebarVisibility() {
       shareToken,
       dirty: hasUnsavedChanges,
       serverSavedAt,
+      submitId,
+      outboxQueuedAt,
       savedAt: Date.now(),
     };
 
@@ -3611,7 +3868,7 @@ function syncDevSidebarVisibility() {
       const db = await openLocalDb();
       record = await idbRequest(db.transaction('forms').objectStore('forms').get(key));
       if (!record) return null;
-      if (serverData && record.savedAt <= (Date.parse(serverData.updatedAt) || 0)) {
+      if (serverData && !record.outboxQueuedAt && record.savedAt <= (Date.parse(serverData.updatedAt) || 0)) {
         await deleteLocalSnapshot(key);
         return null;
       }
@@ -3630,6 +3887,8 @@ function syncDevSidebarVisibility() {
     shareToken = record.shareToken || null;
     activeDraftId = formId;
     serverSavedAt = record.serverSavedAt || null;
+    submitId = record.submitId || null;
+    outboxQueuedAt = record.outboxQueuedAt || null;
 
     let restoredFiles = 0;
     let missingFiles = 0;
@@ -3670,8 +3929,13 @@ function syncDevSidebarVisibility() {
     let tone = '';
     if (currentStep === 0) {
       text = '';
+    } else if (saveAction === 'submit') {
+      text = '⏳ Wird gesendet … bitte Seite offen lassen';
+    } else if (outboxQueuedAt) {
+      text = '📤 Kein Netz – wird automatisch gesendet, sobald Empfang da ist. Bitte Seite offen lassen.';
+      tone = 'warn';
     } else if (saveAction) {
-      text = saveAction === 'submit' ? '⏳ Wird gesendet … bitte Seite offen lassen' : '⏳ Wird gespeichert …';
+      text = '⏳ Wird gespeichert …';
     } else if (localSaveFailed) {
       text = '⚠ Sicherung auf dem Handy nicht möglich – bitte „Zwischenspeichern“ nutzen';
       tone = 'warn';
@@ -3689,11 +3953,20 @@ function syncDevSidebarVisibility() {
   }
 
   function bindLocalAutoSave() {
-    window.addEventListener('online', renderSaveStatus);
+    window.addEventListener('online', () => {
+      renderSaveStatus();
+      flushOutbox();
+      scheduleServerSave(0);
+    });
     window.addEventListener('offline', renderSaveStatus);
     // iOS may kill a backgrounded tab without further events: flush now.
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'hidden' && localSaveTimer) writeLocalSnapshot();
+      if (document.visibilityState === 'hidden') {
+        if (localSaveTimer) writeLocalSnapshot();
+        if (canAutosave()) saveForm('autosave');
+      } else {
+        flushOutbox();
+      }
     });
     renderSaveStatus();
   }
@@ -3705,6 +3978,9 @@ function syncDevSidebarVisibility() {
     pendingFileRefs = {};
     existingFileStore = {};
     signaturePadDataUrls = {};
+    submitId = null;
+    outboxQueuedAt = null;
+    formSubmitted = false;
     currentFormularTyp = FORMULAR_TYPE_DEFAULT;
     applyFormTypeUI();
     clearDirtyState();
@@ -3892,6 +4168,7 @@ function syncDevSidebarVisibility() {
 
     if (files.length) {
       markFormDirty();
+      scheduleServerSave(3000);
     }
 
     files.forEach(file => {

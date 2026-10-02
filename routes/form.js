@@ -16,7 +16,7 @@ const { postTimelineComment, updateDealFields, postChatMessage, chatDialogId } =
 const { buildAbnahmeCheckPayload, postAbnahmeCheck } = require('../services/n8nAbnahmeCheck');
 const { buildStepDocumentAttachments, buildBitrixUploadAttachment, buildSelectedPdfAttachments, buildProduktverkaufSummaryText, buildCustomerName, ADMIN_PDF_SPECS, compressUploadedFiles } = require('../services/stepDocuments');
 const { getUploadsDir } = require('../services/uploadsPath');
-const { cleanupOrphanUploads, getDraftFileReferences } = require('../services/orphanUploads');
+const { cleanupOrphanUploads, getDraftFileReferences, deleteExpiredDrafts } = require('../services/orphanUploads');
 const { addOperationLog, listOperationLogs } = require('../services/operationLogs');
 
 const router = express.Router();
@@ -342,6 +342,11 @@ async function persistSubmitRecoveryDraft({ formId, payload, session = null }) {
   assertDocumentSizeFitsMongo(draftPayload, 'Entwurf');
   const draft = await createDocument(Entwurf, draftPayload, session);
   return { draft, source: 'new' };
+}
+
+async function findAbnahmeBySubmitId(submitId) {
+  if (typeof submitId !== 'string' || !submitId) return null;
+  return Abnahme.findOne({ submitId });
 }
 
 function bitrixPendingFields() {
@@ -1136,9 +1141,29 @@ async function retryPendingBitrixPushes() {
   }
 }
 
-function startBitrixRetryLoop() {
+// Nur Entwuerfe ab Einfuehrung des Auto-Speicherns (A2); aeltere Entwuerfe bleiben unangetastet.
+const DRAFT_CLEANUP_CREATED_SINCE = new Date('2026-10-02T00:00:00Z');
+const DRAFT_CLEANUP_AFTER_DAYS = 30;
+
+async function cleanupExpiredDrafts() {
+  try {
+    const result = await deleteExpiredDrafts({ createdSince: DRAFT_CLEANUP_CREATED_SINCE, olderThanDays: DRAFT_CLEANUP_AFTER_DAYS });
+    if (!result.deletedDrafts.length) return;
+    await addOperationLog({
+      event: 'draft.cleanup.deleted',
+      message: `${result.deletedDrafts.length} Entwurf/Entwuerfe nach ${DRAFT_CLEANUP_AFTER_DAYS} Tagen ohne Aenderung geloescht (${result.deletedFiles.length} Dateien).`,
+      context: result,
+    });
+  } catch (error) {
+    await addOperationLog({ level: 'error', event: 'draft.cleanup.failed', message: error.message }).catch(() => {});
+  }
+}
+
+function startBackgroundJobs() {
   setTimeout(retryPendingBitrixPushes, 30 * 1000).unref();
   setInterval(retryPendingBitrixPushes, BITRIX_RETRY_AFTER_MS).unref();
+  setTimeout(cleanupExpiredDrafts, 60 * 1000).unref();
+  setInterval(cleanupExpiredDrafts, 24 * 60 * 60 * 1000).unref();
 }
 
 function buildDraftSearchQuery(search = '') {
@@ -1346,6 +1371,20 @@ router.get('/submitted/:id/export', async (req, res) => {
       return res.status(400).json({ success: false, error: error.message });
     }
     res.end();
+  }
+});
+
+// Der Bitrix-Link (?dealId=) ist der einzige Einstieg der Monteure: so setzt ein zweites
+// Handy (oder ein verlorener lokaler Stand) denselben Entwurf fort statt einen neuen anzulegen.
+router.get('/drafts/by-deal/:dealId', async (req, res) => {
+  try {
+    const dealId = String(req.params.dealId || '').trim();
+    if (!/^\d+$/.test(dealId)) return res.status(400).json({ success: false, error: 'Ungueltige Auftrag-ID' });
+    const draft = await Entwurf.findOne({ bitrixAuftragId: dealId, formularTyp: 'baustellenabnahme' }).sort({ updatedAt: -1 });
+    if (!draft) return res.status(404).json({ success: false, error: 'Kein Entwurf fuer diesen Auftrag' });
+    return res.json({ success: true, data: draft });
+  } catch (error) {
+    return sendRouteError(res, error, 'Entwurf konnte nicht geladen werden');
   }
 });
 
@@ -2015,6 +2054,12 @@ router.post('/client-log', async (req, res) => {
       'client.save.adopt_skipped',
       'client.local.restored',
       'client.local.failed',
+      'client.autosave.failed',
+      'client.draft.loaded_by_deal',
+      'client.outbox.queued',
+      'client.outbox.sent',
+      'client.outbox.retry_failed',
+      'client.outbox.rejected',
     ]);
 
     if (!allowedEvents.has(event)) {
@@ -2178,7 +2223,17 @@ router.post('/submit', uploadAny, async (req, res) => {
 
   try {
     const parsed = parsePayload(req);
-    logContext = buildRequestLogContext(parsed, req.files);
+    logContext = buildRequestLogContext(parsed, req.files, { submitId: parsed.submitId });
+    const alreadySubmitted = await findAbnahmeBySubmitId(parsed.submitId);
+    if (alreadySubmitted) {
+      await deleteUploadedRequestFiles(req.files);
+      await addOperationLog({
+        event: 'submit.duplicate_ignored',
+        message: 'Absenden mit bekannter submitId wiederholt (z. B. Antwort ging verloren). Bestehende Abnahme wird zurueckgegeben.',
+        context: { ...logContext, submittedId: alreadySubmitted._id },
+      });
+      return res.status(200).json({ ...buildSuccessResponse(alreadySubmitted), bitrixStatus: alreadySubmitted.bitrixStatus, duplicate: true });
+    }
     await addOperationLog({
       event: 'submit.received',
       message: 'Absenden empfangen. Zuerst wird ein Recovery-Entwurf gespeichert.',
@@ -2312,6 +2367,16 @@ router.post('/submit', uploadAny, async (req, res) => {
     req.bitrixPush = pushAbnahmeToBitrix(submitResult.submittedId, bitrixPayload, logContext);
     return undefined;
   } catch (error) {
+    // Zwei Versuche mit derselben submitId gleichzeitig: der zweite scheitert am Unique-Index.
+    const raceWinner = error?.code === 11000 ? await findAbnahmeBySubmitId(parsePayload(req).submitId).catch(() => null) : null;
+    if (raceWinner) {
+      await addOperationLog({
+        event: 'submit.duplicate_ignored',
+        message: 'Paralleles Absenden mit derselben submitId; bestehende Abnahme wird zurueckgegeben.',
+        context: { ...logContext, submittedId: raceWinner._id },
+      });
+      return res.status(200).json({ ...buildSuccessResponse(raceWinner), bitrixStatus: raceWinner.bitrixStatus, duplicate: true });
+    }
     if (!uploadedFilesProtectedByDraft) {
       await deleteUploadedRequestFiles(req.files);
     }
@@ -2356,4 +2421,5 @@ router.post('/submit', uploadAny, async (req, res) => {
 module.exports = router;
 module.exports.pushAbnahmeToBitrix = pushAbnahmeToBitrix;
 module.exports.retryPendingBitrixPushes = retryPendingBitrixPushes;
-module.exports.startBitrixRetryLoop = startBitrixRetryLoop;
+module.exports.startBackgroundJobs = startBackgroundJobs;
+module.exports.cleanupExpiredDrafts = cleanupExpiredDrafts;

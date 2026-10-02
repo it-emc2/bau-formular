@@ -57,7 +57,10 @@ Tests use Jest (node environment, no supertest). Test files live in `__tests__/`
 
 ## Data Flow
 
-- **Save (draft):** Form data → `POST /api/form/save` (multipart via multer) → `Entwurf` collection (status: `draft`)
+- **Save (draft):** Form data → `POST /api/form/save` (multipart via multer) → `Entwurf` collection (status: `draft`). The client also saves silently (`saveForm('autosave')`) on step change, 3 s after a photo/video, when back online and when the tab is hidden; `adoptSavedFiles(saved, sent)` adopts only the files that request sent.
+- **Draft by deal:** `GET /api/form/drafts/by-deal/:dealId` → newest Baustellenabnahme draft; the `?dealId=` link continues it when the phone has no newer local copy.
+- **Draft cleanup:** drafts created since 2026-10-02 and untouched for 30 days are deleted daily with their files (`deleteExpiredDrafts`, `startBackgroundJobs`).
+- **Outbox:** a submit that fails on the network is kept in IndexedDB (`outboxQueuedAt`, `submitId`) and resent by `flushOutbox` from any page. `submitId` is unique on `Abnahme`; a repeat returns the existing Abnahme (`duplicate: true`).
 - **Submit:** Form data → `POST /api/form/submit` → creates `Abnahme` document (status: `submitted`), deletes the `Entwurf` if one existed, then sends to Bitrix timeline
 - **Share token:** Both drafts and submitted forms get a unique `shareToken` (32-char hex). `GET /api/form/token/:token` checks `Entwurf` first, then `Abnahme`
 - **Uploads:** Physical media files are stored in `UPLOADS_DIR` (`./uploads` locally, `/data/uploads` on Fly). The upload route recreates the directory before writing files.

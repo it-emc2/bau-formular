@@ -860,6 +860,72 @@ describe('form routes', () => {
     expect(postChatMessage).toHaveBeenCalledWith(expect.stringContaining('endgültig fehlgeschlagen'));
   });
 
+  it('returns the existing Abnahme when a submit with a known submitId is repeated', async () => {
+    const handlers = findRouteHandlers('/submit', 'post');
+    Abnahme.findOne.mockResolvedValue({ _id: 'abn-1', shareToken: 'tok', bitrixStatus: 'sent' });
+
+    const req = { body: { formData: JSON.stringify({ terminId: 'UT-1', submitId: 'sub-1', bitrixAuftragId: '55' }) } };
+    const res = await runHandlers(handlers, req);
+
+    expect(Abnahme.findOne).toHaveBeenCalledWith({ submitId: 'sub-1' });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual(expect.objectContaining({ success: true, id: 'abn-1', duplicate: true, bitrixStatus: 'sent' }));
+    expect(Entwurf.create).not.toHaveBeenCalled();
+    expect(Abnahme.create).not.toHaveBeenCalled();
+    expect(req.bitrixPush).toBeUndefined();
+  });
+
+  it('stores the submitId on the new Abnahme', async () => {
+    const handlers = findRouteHandlers('/submit', 'post');
+    Abnahme.findOne.mockResolvedValue(null);
+    Entwurf.create.mockImplementation(async payload => createDraftMock({ _id: 'draft-1', ...firstCreatePayload(payload) }));
+    Abnahme.create.mockImplementation(async payload => ({ _id: 'abn-2', ...firstCreatePayload(payload) }));
+
+    const req = { body: { formData: JSON.stringify({ terminId: 'UT-1', submitId: 'sub-2' }) } };
+    const res = await runHandlers(handlers, req);
+
+    expect(res.statusCode).toBe(201);
+    expect(Abnahme.create).toHaveBeenCalledWith(
+      [expect.objectContaining({ submitId: 'sub-2', status: 'submitted' })],
+      expect.objectContaining({ session: expect.any(Object) })
+    );
+  });
+
+  it('returns the race winner when a parallel submit with the same submitId hits the unique index', async () => {
+    const handlers = findRouteHandlers('/submit', 'post');
+    Abnahme.findOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ _id: 'abn-winner', shareToken: 'tok', bitrixStatus: 'pending' });
+    Entwurf.create.mockImplementation(async payload => createDraftMock({ _id: 'draft-1', ...firstCreatePayload(payload) }));
+    Abnahme.create.mockRejectedValue(Object.assign(new Error('E11000 duplicate key'), { code: 11000 }));
+
+    const req = { body: { formData: JSON.stringify({ terminId: 'UT-1', submitId: 'sub-3' }) } };
+    const res = await runHandlers(handlers, req);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual(expect.objectContaining({ success: true, id: 'abn-winner', duplicate: true }));
+  });
+
+  it('loads the newest Baustellenabnahme draft for a deal', async () => {
+    const handlers = findRouteHandlers('/drafts/by-deal/:dealId', 'get');
+    const sort = jest.fn().mockResolvedValue({ _id: 'draft-9', bitrixAuftragId: '65278' });
+    Entwurf.findOne.mockReturnValue({ sort });
+
+    const res = await runHandlers(handlers, { params: { dealId: '65278' } });
+
+    expect(Entwurf.findOne).toHaveBeenCalledWith({ bitrixAuftragId: '65278', formularTyp: 'baustellenabnahme' });
+    expect(sort).toHaveBeenCalledWith({ updatedAt: -1 });
+    expect(res.body).toEqual({ success: true, data: expect.objectContaining({ _id: 'draft-9' }) });
+  });
+
+  it('returns 404 when a deal has no draft and 400 for a non-numeric deal id', async () => {
+    const handlers = findRouteHandlers('/drafts/by-deal/:dealId', 'get');
+    Entwurf.findOne.mockReturnValue({ sort: jest.fn().mockResolvedValue(null) });
+
+    expect((await runHandlers(handlers, { params: { dealId: '1' } })).statusCode).toBe(404);
+    expect((await runHandlers(handlers, { params: { dealId: 'abc' } })).statusCode).toBe(400);
+  });
+
   describe('POST /admin/resend-full', () => {
     function mockAbnahmeLookup(doc) {
       Abnahme.find.mockReturnValue({ sort: () => ({ limit: () => ({ lean: async () => (doc ? [doc] : []) }) }) });

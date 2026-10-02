@@ -143,6 +143,9 @@ const schemaDefinition = {
   bitrixSentAt:        { type: Date },
   bitrixAttempts:      { type: Number },
   bitrixLastAttemptAt: { type: Date },
+
+  /* ── Vom Handy erzeugte ID pro Absenden: macht Wiederholungen idempotent ── */
+  submitId: { type: String },
 };
 
 function createAbnahmeSchema(collectionName, options = {}) {
@@ -161,6 +164,8 @@ function createAbnahmeSchema(collectionName, options = {}) {
 }
 
 const schema = createAbnahmeSchema('Abnahmen');
+// Nur auf Abnahmen: der Recovery-Entwurf eines wiederholten Absendens traegt dieselbe ID.
+schema.index({ submitId: 1 }, { unique: true, sparse: true });
 
 module.exports = mongoose.models.Abnahme || mongoose.model('Abnahme', schema);
 module.exports.createAbnahmeSchema = createAbnahmeSchema;
