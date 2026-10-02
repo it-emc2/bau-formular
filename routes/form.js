@@ -1022,7 +1022,9 @@ async function pushAbnahmeToBitrix(abnahmeId, data, logContext = {}, { trigger =
 
     await addOperationLog({
       event: 'submit.bitrix.started',
-      message: `Bitrix-Sendung im Hintergrund gestartet (Versuch ${attempt}/${BITRIX_MAX_ATTEMPTS}).`,
+      message: trigger === 'admin'
+        ? `Bitrix-Sendung manuell gestartet (Komplett neu senden, Versuch ${attempt}).`
+        : `Bitrix-Sendung im Hintergrund gestartet (Versuch ${attempt}/${BITRIX_MAX_ATTEMPTS}).`,
       context: { ...context, attempt },
     });
     const bitrixSync = await trySendDocumentToBitrix(data, {

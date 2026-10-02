@@ -20,7 +20,7 @@ A professional web app for **non-technical workers on iPhones**:
 | A1 | Auto-save on the phone (IndexedDB) | ✅ done, verified locally (Chromium); **iPhone test open**; not deployed | `plan/reliability-roadmap` (`b6306dd`) |
 | B2 | Permanent status line | ✅ done (with A1); not deployed | same (`b6306dd`) |
 | — | No 🟡 chat message on draft save (only 🟢 submit / 🔴 failure remain) | ✅ done; not deployed | same (`b6306dd`) |
-| B1 | Fast green: Bitrix push in background + automatic retry + „Komplett neu senden“ | ✅ done. Background push live via manual `fly deploy` (owner, 2026-10-02); e2e on deal 65278 OK: green in 0.4 s, Bitrix `sent` 10 s later, 🟢 chat + n8n OK. „Komplett neu senden“ deployed; live-checked: *Laden* shows status, button refuses an already `sent` Abnahme. Retry path, final alert and an actual full resend only unit-tested | `plan/reliability-roadmap` |
+| B1 | Fast green: Bitrix push in background + automatic retry + „Komplett neu senden“ | ✅ done. Background push live via manual `fly deploy` (owner, 2026-10-02); e2e on deal 65278 OK: green in 0.4 s, Bitrix `sent` 10 s later, 🟢 chat + n8n OK. „Komplett neu senden“ deployed; live-checked: *Laden* shows status, button refuses an already `sent` Abnahme; full resend of a `failed` Abnahme OK (6 attachments, 10 s, status → `sent`, timeline + Hinweis + n8n OK). Automatic retry path and final 🔴 alert only unit-tested | `plan/reliability-roadmap` |
 | C2 | Real errors + failed pushes → Bitrix chat (with direct links) | 🟡 links + final-push-failure alert done with B1; client-error part after C1 | same |
 | A2 | Background sync to server after each step/photo | ⬜ | |
 | A3 | Outbox: submit queued while offline | ⬜ | |
