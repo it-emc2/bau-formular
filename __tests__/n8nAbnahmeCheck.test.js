@@ -1,4 +1,4 @@
-const { buildAbnahmeCheckPayload } = require('../services/n8nAbnahmeCheck');
+const { buildAbnahmeCheckPayload, postAbnahmeCheck } = require('../services/n8nAbnahmeCheck');
 
 const doc = {
   bitrixAuftragId: '65046',
@@ -34,4 +34,14 @@ test('leere Uploads bleiben ein leeres Array', () => {
 test('submitted_at traegt den echten Offset des Datums (Winterzeit)', () => {
   const winter = buildAbnahmeCheckPayload(doc, { chatId: 'chat42', submittedAt: new Date('2026-01-15T09:20:00Z') });
   expect(winter.submitted_at).toBe('2026-01-15T10:20:00+01:00');
+});
+
+test('ohne Deal-ID wird n8n nicht aufgerufen', async () => {
+  process.env.N8N_ABNAHME_URL = 'https://n8n.test/hook';
+  process.env.N8N_ABNAHME_TOKEN = 't';
+  global.fetch = jest.fn();
+  const log = jest.fn();
+  expect(await postAbnahmeCheck({ deal_id: null }, { log })).toBeNull();
+  expect(global.fetch).not.toHaveBeenCalled();
+  expect(log).toHaveBeenCalledWith(expect.objectContaining({ event: 'n8n.abnahme_check.skipped' }));
 });

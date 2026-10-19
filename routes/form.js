@@ -130,15 +130,16 @@ function createShareToken() {
 }
 
 function parsePayload(req) {
-  if (typeof req.body?.formData === 'string') {
-    return JSON.parse(req.body.formData);
-  }
+  const payload = typeof req.body?.formData === 'string'
+    ? JSON.parse(req.body.formData)
+    : { ...(req.body?.formData && typeof req.body.formData === 'object' ? req.body.formData : req.body) };
 
-  if (req.body?.formData && typeof req.body.formData === 'object') {
-    return { ...req.body.formData };
+  // Die Pflicht-"Auftrags-ID" (terminId) ist die Deal-ID; bitrixAuftragId fuellt nur "Lead laden".
+  const terminId = String(payload.terminId || '').trim();
+  if (!String(payload.bitrixAuftragId || '').trim() && /^\d+$/.test(terminId)) {
+    payload.bitrixAuftragId = terminId;
   }
-
-  return { ...req.body };
+  return payload;
 }
 
 function createMailtoUrl({ to, subject, text }) {
