@@ -3457,6 +3457,12 @@ function syncDevSidebarVisibility() {
   }
 
   async function saveForm(action) {
+    // Already queued (A3): send the queued copy instead of a second, parallel
+    // request — two in flight let a late failure re-queue an already sent form.
+    if (action === 'submit' && outboxQueuedAt) {
+      await writeLocalSnapshot();
+      return flushOutbox();
+    }
     if (saveInProgress) {
       if (action === 'autosave') { autosaveQueued = true; return; }
       if (saveAction === 'autosave') await currentSave;
@@ -3474,13 +3480,14 @@ function syncDevSidebarVisibility() {
     const silent = action === 'autosave';
     const submitClickedAt = isSubmit ? Date.now() : null;
     if (isSubmit && !submitId) submitId = newSubmitId();
+    const requestSubmitId = submitId;
     const seqAtStart = changeSeq;
     saveInProgress = true;
     saveAction = action;
     renderSaveStatus();
 
     const data = collectFormData();
-    if (isSubmit) data.submitId = submitId;
+    if (isSubmit) data.submitId = requestSubmitId;
     const fd = new FormData();
     fd.append('formData', JSON.stringify(data));
     const sent = {};
@@ -3525,6 +3532,8 @@ function syncDevSidebarVisibility() {
       }
     } catch (err) {
       console.error(`[form-${action}] failed`, err);
+      // Sent meanwhile by another path (queued copy): nothing to report or re-queue.
+      if (formSubmitted) return;
       if (silent) {
         if (!autosaveFailedLogged) {
           autosaveFailedLogged = true;
@@ -3536,7 +3545,7 @@ function syncDevSidebarVisibility() {
           });
         }
       } else if (isSubmit && err.isNetwork) {
-        await queueSubmit(err);
+        await queueSubmit(err, requestSubmitId);
       } else {
         showError(isSubmit ? 'Absenden hat nicht geklappt.' : 'Speichern hat nicht geklappt.', err, { dataSafe: true, retry: () => saveForm(action) });
       }
@@ -3672,7 +3681,8 @@ function syncDevSidebarVisibility() {
   let outboxRetryIndex = 0;
   const outboxFailureLogged = new Set();
 
-  async function queueSubmit(err) {
+  async function queueSubmit(err, requestSubmitId) {
+    submitId = requestSubmitId || submitId;
     outboxQueuedAt = Date.now();
     await writeLocalSnapshot();
     if (localSaveFailed) {
@@ -3907,7 +3917,7 @@ function syncDevSidebarVisibility() {
   function scheduleLocalSave() {
     // Untouched forms are not worth a snapshot (and must not block the
     // ?dealId autofill on the next load).
-    if (currentStep === 0 || (!hasUnsavedChanges && !formId)) return;
+    if (currentStep === 0 || formSubmitted || (!hasUnsavedChanges && !formId)) return;
     clearTimeout(localSaveTimer);
     localSaveTimer = setTimeout(writeLocalSnapshot, LOCAL_SAVE_DELAY_MS);
   }
@@ -3915,7 +3925,7 @@ function syncDevSidebarVisibility() {
   async function writeLocalSnapshot() {
     clearTimeout(localSaveTimer);
     localSaveTimer = null;
-    if (currentStep === 0) return;
+    if (currentStep === 0 || formSubmitted) return;
 
     const key = getLocalFormKey();
     const files = {};
