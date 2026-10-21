@@ -39,6 +39,10 @@ async function postAbnahmeCheck(payload, { log = async () => {} } = {}) {
     await log({ level: 'warn', event: 'n8n.abnahme_check.skipped', message: 'N8N_ABNAHME_URL oder N8N_ABNAHME_TOKEN ist nicht konfiguriert.' });
     return null;
   }
+  if (!payload.deal_id) {
+    await log({ level: 'warn', event: 'n8n.abnahme_check.skipped', message: 'Keine Bitrix-Deal-ID, n8n-Abnahme-Check uebersprungen.' });
+    return null;
+  }
 
   for (let attempt = 1; attempt <= RETRY_DELAYS_MS.length + 1; attempt++) {
     try {

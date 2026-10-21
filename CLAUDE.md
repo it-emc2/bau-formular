@@ -6,12 +6,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **bau-formular** is a digital construction site inspection form application for emc2. It's a Node.js/Express backend with a vanilla JavaScript SPA frontend for managing multi-step inspection forms, document generation, and Bitrix24 CRM integration. All UI text is in German.
 
+## Active Work — read first
+
+A reliability roadmap is in progress: **`docs/10-reliability-plan.md`**. It holds the goal, the research findings (production usage data, code gaps, iOS limits), the task list with status, and working notes (local dev against production `.env`, test deal `65278`, deploy/rollback). Read it before starting any task, and update its status table when a task lands.
+
+⚠️ Production runs the branch `plan/reliability-roadmap` via manual `fly deploy`; `main` is behind, so a deploy from `main` would roll production back. See the plan's "Deployment — read first".
+
 ## Commands
 
 ```bash
 npm run dev          # Start dev server with file watching (node --watch)
 npm start            # Production server
-npm test             # Run Jest tests (--runInBand --watchman=false)
+npm test             # Run Jest tests (--runInBand --watchman=false); also runs inside every fly deploy
 npm run test:watch   # Run tests in watch mode
 ```
 
@@ -37,7 +43,7 @@ Tests use Jest (node environment, no supertest). Test files live in `__tests__/`
 - `models/Entwurf.js` — Draft model, reuses the same schema via `createAbnahmeSchema` but writes to a separate `Entwürfe` collection; drafts do not require `terminId`
 - `services/bitrix.js` — Bitrix webhook REST client (all calls use GET, including writes — this is how Bitrix webhooks work). GET timeout 30s, POST timeout 60s (on the HTTP call only — compression happens before the timer starts).
 - `services/documentLetter.js` — HTML/Word document generation from form data
-- `services/stepDocuments.js` — PDF generation using pdf-lib. Exports `buildBitrixUploadAttachment` (compresses images via sharp at 1600px/q68 and video via ffmpeg at 1280×720 CRF30 `fast` preset), `buildStepDocumentAttachments`, `buildSelectedPdfAttachments`, `buildCustomerName`, `ADMIN_PDF_SPECS`, `compressUploadedFiles`. Images are compressed at upload time (in `uploadAny` middleware) and skipped during Bitrix attachment building if already compressed in the current server process (`uploadTimeCompressed` Set). Videos are compressed at Bitrix push time.
+- `services/stepDocuments.js` — PDF generation using pdf-lib. Exports `buildBitrixUploadAttachment` (compresses images via sharp at 1600px/q68 and video via ffmpeg at 1280×720 CRF30 `fast` preset), `buildStepDocumentAttachments`, `buildSelectedPdfAttachments`, `buildCustomerName`, `ADMIN_PDF_SPECS`, `compressUploadedFiles`. Images are compressed at upload time (in `uploadAny`, replacing the original); videos are compressed **right after the response** to `<name>-720p.mp4` (`compressVideosAfterResponse`, references switched with `timestamps: false`, original removed later by the daily orphan cleanup; `preferCompressedVideos` swaps old URLs on later saves) and skipped during Bitrix attachment building if already compressed in the current server process (`uploadTimeCompressed` Set). Videos uploaded before C7 (or after a restart) are still compressed at Bitrix push time.
 - `services/orphanUploads.js` — finds upload files on disk with no matching Abnahme or Entwurf in MongoDB
 
 **Frontend (vanilla JS SPA in `public/`):**
@@ -51,7 +57,10 @@ Tests use Jest (node environment, no supertest). Test files live in `__tests__/`
 
 ## Data Flow
 
-- **Save (draft):** Form data → `POST /api/form/save` (multipart via multer) → `Entwurf` collection (status: `draft`)
+- **Save (draft):** Form data → `POST /api/form/save` (multipart via multer) → `Entwurf` collection (status: `draft`). The client also saves silently (`saveForm('autosave')`) on step change, 3 s after a photo/video, when back online and when the tab is hidden; `adoptSavedFiles(saved, sent)` adopts only the files that request sent.
+- **Draft by deal:** `GET /api/form/drafts/by-deal/:dealId` → newest Baustellenabnahme draft; the `?dealId=` link continues it when the phone has no newer local copy.
+- **Daily maintenance** (`runDailyMaintenance`, started by `startBackgroundJobs`): drafts created since 2026-10-02 and untouched for 30 days are deleted with their files; orphan files older than 24 h are deleted; volume ≥ 80 % → 🔴 chat alarm.
+- **Outbox:** a submit that fails on the network is kept in IndexedDB (`outboxQueuedAt`, `submitId`) and resent by `flushOutbox` from any page. `submitId` is unique on `Abnahme`; a repeat returns the existing Abnahme (`duplicate: true`).
 - **Submit:** Form data → `POST /api/form/submit` → creates `Abnahme` document (status: `submitted`), deletes the `Entwurf` if one existed, then sends to Bitrix timeline
 - **Share token:** Both drafts and submitted forms get a unique `shareToken` (32-char hex). `GET /api/form/token/:token` checks `Entwurf` first, then `Abnahme`
 - **Uploads:** Physical media files are stored in `UPLOADS_DIR` (`./uploads` locally, `/data/uploads` on Fly). The upload route recreates the directory before writing files.
@@ -76,7 +85,7 @@ All admin UI is hidden behind the dev-mode password toggle (Testmodus). When act
 - Dry-run and delete buttons → `POST /api/form/admin/orphan-uploads`
 - Finds upload files on disk with no matching Abnahme or Entwurf in MongoDB
 
-**2. Logs aktualisieren** (`adminLogPanel`)
+**2. Logs aktualisieren** (`adminLogPanel`) — retention per entry (`expireAt`): audit events (`submit.*`, `admin.*`, `storage.*`, `n8n.*`, `client.submit.success`, `client.outbox.*`, …) 2 years, everything else 30 days. "Logs löschen" needs the word `LÖSCHEN` and deletes only the everyday entries.
 - `POST /api/form/admin/logs` → renders operation log table (submit events, Bitrix timeline attempts, compression stats)
 - Validation errors logged by workers include the exact step name and field label
 
@@ -92,8 +101,12 @@ All admin UI is hidden behind the dev-mode password toggle (Testmodus). When act
 - Click **Zu Bitrix senden** → `POST /api/form/admin/push` → compresses selected files, generates selected PDFs, posts to Bitrix using the same single-comment → batch-fallback logic as normal submit
 - `POST /api/form/admin/submitted/:id/bitrix/video` — re-push `videoDesAblaufs` from a specific Abnahme (by MongoDB `_id`) to Bitrix as a separate timeline comment; useful when video was skipped during original submit
 
+- **Komplett neu senden** (same panel, after **Laden**) → `POST /api/form/admin/resend-full` → reruns the full submit push (`pushAbnahmeToBitrix`) for a submitted Abnahme that is not yet `sent`. **Laden** shows `bitrixStatus`, attempts and last error.
+
+**Background push (B1):** `/submit` saves the Abnahme with `bitrixStatus: 'pending'` and answers immediately; `pushAbnahmeToBitrix` then runs the flow below, sets `sent`/`failed`/`skipped`, and sends the 🟢 chat + n8n check. `retryPendingBitrixPushes` (every 10 min + 30 s after start) retries `failed` and stuck `pending` Abnahmen up to 4 attempts in total, then posts a 🔴 chat alert with deal + form links. Details: `docs/10-reliability-plan.md` (B1).
+
 **Bitrix submit flow (normal + admin push):**
-1. All media compressed first (`sharp` for images at upload time; `ffmpeg` for video at push time) — no timeout applies here
+1. All media compressed first (images at upload, videos right after the upload response; anything not yet compressed at push time) — no timeout applies here
 2. Single `postTimelineComment` with all attachments → 60s HTTP timeout
 3. If that fails: wait 10s, retry up to 2 more times (3 attempts total), each with its own 60s window
 4. If all 3 attempts fail: split into ≤8 MB base64 batches, each with its own 60s window
@@ -104,13 +117,13 @@ All admin UI is hidden behind the dev-mode password toggle (Testmodus). When act
 ## Deployment
 
 - Hosted on Fly.io (Frankfurt region, app name: `bau-formular`)
-- GitHub Actions CI/CD deploys on push to main (`.github/workflows/fly-deploy.yml`)
+- Deploys are **manual** (`fly deploy`, by the owner). `npm test` runs in the Docker build stage and aborts a deploy on failure. GitHub Actions (`.github/workflows/tests.yml`) only runs tests and never deploys.
 - Docker container using Node.js 24.11.1-slim base image
-- Auto-stop/auto-start machines enabled, min 0 running
+- Machine always on: `auto_stop_machines = 'off'`, `min_machines_running = 1` (needed for background work after a response)
 
 ## Frontend State
 
-State is managed via module-scope JS variables in `app.js`: `currentStep`, `formId`, `shareToken`, `fileStore`, `signaturePads`, `devMode`, `bitrixDeals`, `drafts`. Testmodus requires a server-side password and persists across page navigations via `sessionStorage` (cleared on tab close or explicit "Testmodus: Aus" click). localStorage persists demo presets.
+State is managed via module-scope JS variables in `app.js`: `currentStep`, `formId`, `shareToken`, `fileStore`, `existingFileStore`, `pendingFileRefs`, `signaturePads`, `devMode`, `bitrixDeals`, `drafts`. Files go up once per draft: after a successful save, `adoptSavedFiles` moves fresh `File`s from `fileStore` into `existingFileStore` (server URLs), guarded by a count check that falls back to re-uploading and logs `client.save.adopt_skipped`. Testmodus requires a server-side password and persists across page navigations via `sessionStorage` (cleared on tab close or explicit "Testmodus: Aus" click). localStorage persists demo presets.
 
 ## Client-Side Routes
 

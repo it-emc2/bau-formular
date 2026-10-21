@@ -11,6 +11,7 @@
 
   const form          = $('#abnahmeForm');
   const stepIndicator = $('#stepIndicator');
+  const saveStatus = $('#saveStatus');
   const stepCounter   = $('#stepCounter');
   const appSubtitle   = $('.subtitle');
   const btnBackToHome = $('#btnBackToHome');
@@ -47,6 +48,7 @@
   const adminPushCategories = $('#adminPushCategories');
   const adminPushActions = $('#adminPushActions');
   const btnAdminPushSend = $('#btnAdminPushSend');
+  const btnAdminResendFull = $('#btnAdminResendFull');
   const adminPushOutput = $('#adminPushOutput');
   const draftSearch = $('#draftSearch');
   const btnDraftRefresh = $('#btnDraftRefresh');
@@ -127,6 +129,9 @@
   let shareToken    = null;
   let fileStore     = {};       // { fieldName: File[] }
   let existingFileStore = {};    // { fieldName: "/uploads/..."[] }
+  // Thumbnails of not-yet-saved files. Each ref keeps its File until a save
+  // returns the persisted URL; the remove button follows the ref either way.
+  let pendingFileRefs = {};     // { fieldName: { file, url }[] }
   let signaturePads = {};       // { fieldName: SignaturePad }
   let signaturePadDataUrls = {}; // cached data URLs for pads whose canvas may have been 0-sized when loaded
   let copiedSignatureDataUrl = null;
@@ -258,6 +263,8 @@
   function markFormDirty() {
     if (suppressDirtyTracking || currentStep === 0) return;
     hasUnsavedChanges = true;
+    changeSeq++;
+    scheduleLocalSave();
   }
 
   function clearDirtyState() {
@@ -268,7 +275,7 @@
     if (!hasUnsavedChanges) return true;
 
     return window.confirm(
-      'Wenn du zum Hauptmenü zurückgehst, werden nicht gespeicherte oder nicht abgesendete Eingaben zurückgesetzt. Möchtest du das Formular wirklich verlassen?'
+      'Wenn Sie zum Hauptmenü zurückgehen, werden nicht gespeicherte oder nicht abgesendete Eingaben zurückgesetzt. Möchten Sie das Formular wirklich verlassen?'
     );
   }
 
@@ -300,13 +307,13 @@
 
     if (step1Intro) {
       if (currentFormularTyp === 'zusaetzliche_leistungen') {
-        step1Intro.innerHTML = 'Erfasse hier die Kundendaten und die beauftragten Zusatzleistungen. Danach kannst du den Vorgang direkt intern ergänzen und absenden.';
+        step1Intro.innerHTML = 'Erfassen Sie hier die Kundendaten und die beauftragten Zusatzleistungen. Danach können Sie den Vorgang direkt intern ergänzen und absenden.';
       } else if (currentFormularTyp === 'nachbesserung') {
-        step1Intro.innerHTML = 'Erfasse hier die Grunddaten für die Nachbesserung. Anschließend dokumentierst du die ausgeführten Restarbeiten und lässt den Vorgang bestätigen.';
+        step1Intro.innerHTML = 'Erfassen Sie hier die Grunddaten für die Nachbesserung. Anschließend dokumentieren Sie die ausgeführten Restarbeiten und lassen den Vorgang bestätigen.';
       } else if (currentFormularTyp === 'schadensmeldung') {
-        step1Intro.innerHTML = 'Erfasse hier die Grunddaten zur Schadensmeldung. Danach dokumentierst du den Schaden mit Fotos und internen Hinweisen.';
+        step1Intro.innerHTML = 'Erfassen Sie hier die Grunddaten zur Schadensmeldung. Danach dokumentieren Sie den Schaden mit Fotos und internen Hinweisen.';
       } else {
-        step1Intro.innerHTML = 'Auf den folgenden Seiten wirst du Schritt für Schritt durch den Abschluss der Baustelle geführt. Bitte beachte, dass dieser <strong>vor Ort mit dem Kunden</strong> gemeinsam vorgenommen werden muss.';
+        step1Intro.innerHTML = 'Auf den folgenden Seiten werden Sie Schritt für Schritt durch den Abschluss der Baustelle geführt. Bitte beachten Sie, dass dieser <strong>vor Ort mit dem Kunden</strong> gemeinsam vorgenommen werden muss.';
       }
     }
 
@@ -415,9 +422,15 @@
     initDevModeToggle();
     injectDevStepPdfButtons();
     bindDemoPresetSelection();
-    const draftLoaded = await loadDraftIfNeeded();
-    if (draftLoaded) {
+    const draftLoaded = await loadDraftIfNeeded() || await loadDraftForDeal();
+    const restoredAt = await restoreLocalSnapshot(draftLoaded);
+    if (restoredAt) {
+      showToast(`Ihr Stand von ${formatClock(restoredAt)} wurde wiederhergestellt.`, 'success', 'big');
+    } else if (draftLoaded) {
       showStep(getNextVisibleStep(0));
+      if (draftLoaded.loadedByDeal) {
+        showToast(`Gespeicherter Stand von ${formatClock(serverSavedAt)} geladen.`, 'success', 'big');
+      }
     } else {
       const routeFormularTyp = getRouteFormularTyp();
       if (routeFormularTyp) {
@@ -431,7 +444,33 @@
     }
     fetchDrafts();
     renderArbeitsberichtResults([], 'Noch keine externen Treffer geladen.');
-    await autofillFromDealIdParam();
+    bindLocalAutoSave();
+    if (!restoredAt && !draftLoaded) await autofillFromDealIdParam();
+    flushOutbox();
+    requestPersistentStorage();
+  }
+
+  // Asks the browser not to evict our IndexedDB (photos/videos) when the phone
+  // runs low on space. iOS decides by itself; we only log the outcome once per
+  // tab session to learn how many phones grant it and which browser they use.
+  async function requestPersistentStorage() {
+    let persisted = 'unsupported';
+    try {
+      if (navigator.storage?.persist) {
+        persisted = (await navigator.storage.persisted()) || (await navigator.storage.persist()) ? 'granted' : 'denied';
+      }
+      if (sessionStorage.getItem('storagePersistLogged')) return;
+      sessionStorage.setItem('storagePersistLogged', '1');
+      const { usage, quota } = navigator.storage?.estimate ? await navigator.storage.estimate() : {};
+      const mb = bytes => (typeof bytes === 'number' ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : '?');
+      logClientEvent({
+        level: 'info',
+        event: 'client.storage.persist',
+        message: `Speicher dauerhaft: ${persisted} · belegt ${mb(usage)} von ${mb(quota)} · Home-Bildschirm-App: ${navigator.standalone ? 'ja' : 'nein'}`,
+      });
+    } catch (err) {
+      console.warn('[storage] persist failed', err);
+    }
   }
 
   async function autofillFromDealIdParam() {
@@ -591,6 +630,9 @@
       sec.classList.toggle('active', Number(sec.dataset.step) === targetStep);
     });
     updateStepDots();
+    scheduleLocalSave();
+    scheduleServerSave(0);
+    renderSaveStatus();
 
     // Signature canvases inside a newly-visible step need resizing (they had
     // width=0 while hidden). This also re-applies any cached data URL.
@@ -767,7 +809,7 @@
       URL.revokeObjectURL(url);
       showToast('PDF heruntergeladen.', 'success');
     } catch (error) {
-      showToast(`PDF-Download fehlgeschlagen: ${error.message}`, 'error');
+      showError('PDF-Download fehlgeschlagen.', error);
     } finally {
       btn.disabled = false;
       btn.textContent = originalLabel;
@@ -852,9 +894,11 @@
     });
 
     if (btnBackToHome) {
-      btnBackToHome.addEventListener('click', () => {
+      btnBackToHome.addEventListener('click', async () => {
         if (!confirmLeaveToHome()) return;
         clearDirtyState();
+        // A queued submit must survive: the home page keeps sending it.
+        if (!outboxQueuedAt) await deleteLocalSnapshot();
         window.location.href = '/home';
       });
     }
@@ -862,6 +906,9 @@
 
   function initClientErrorLogging() {
     window.addEventListener('error', event => {
+      // Only errors from our own scripts. Browser extensions and injected scripts
+      // (Brave's __firefox__, wallets, "Script error." from other origins) are noise.
+      if (!event.filename || !event.filename.startsWith(window.location.origin)) return;
       logClientEvent({
         level: 'error',
         event: 'client.error',
@@ -1221,8 +1268,13 @@ function syncDevSidebarVisibility() {
 
     if (btnAdminLogsClear) {
       btnAdminLogsClear.addEventListener('click', async () => {
-        const confirmed = window.confirm('Alle Logs wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.');
-        if (!confirmed) return;
+        // A typed word, not a yes/no click: the logs are the audit trail.
+        const confirmWord = window.prompt('Alltags-Logs (Speichern, Uploads, Hinweise) werden endgültig gelöscht.\nAudit-Einträge (Absenden, Bitrix, Admin) bleiben 2 Jahre erhalten.\nZum Bestätigen LÖSCHEN eingeben:');
+        if (confirmWord === null) return;
+        if (confirmWord.trim() !== 'LÖSCHEN') {
+          showToast('Nicht gelöscht: Bestätigungswort stimmt nicht.', 'error');
+          return;
+        }
 
         btnAdminLogsClear.disabled = true;
         adminLogOutput.classList.remove('hidden');
@@ -1232,13 +1284,13 @@ function syncDevSidebarVisibility() {
           const res = await fetch('/api/form/admin/logs/clear', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ password: devModePassword }),
+            body: JSON.stringify({ password: devModePassword, confirm: 'LÖSCHEN' }),
           });
 
           const json = await parseJsonResponse(res);
           const deleted = json?.deletedCount || 0;
-          adminLogOutput.textContent = `${deleted} Log-Einträge wurden gelöscht.`;
-          showToast(`${deleted} Log-Einträge gelöscht.`, 'success');
+          adminLogOutput.textContent = `${deleted} Alltags-Log-Einträge wurden gelöscht. Audit-Einträge bleiben erhalten.`;
+          showToast(`${deleted} Alltags-Log-Einträge gelöscht.`, 'success');
         } catch (error) {
           adminLogOutput.textContent = `Fehler beim Löschen: ${error.message}`;
           showToast('Logs konnten nicht gelöscht werden: ' + error.message, 'error');
@@ -1476,6 +1528,10 @@ function syncDevSidebarVisibility() {
         if (!json.success) throw new Error(json.error || 'Laden fehlgeschlagen');
         adminPushInspectResult = json;
         renderAdminPushCategories(json);
+        if (json.form.bitrixStatus) {
+          adminPushOutput.classList.remove('hidden');
+          adminPushOutput.textContent = `Bitrix-Status: ${json.form.bitrixStatus} (${json.form.bitrixAttempts} Versuch(e))${json.form.bitrixError ? `\nLetzter Fehler: ${json.form.bitrixError}` : ''}`;
+        }
         const multipleHint = json.multipleCount > 1 ? ` (${json.multipleCount} Formulare gefunden, neuestes verwendet)` : '';
         showToast(`${json.form.customerName} geladen (${json.source})${multipleHint}.`, json.multipleCount > 1 ? 'warn' : 'success');
       } catch (error) {
@@ -1486,6 +1542,38 @@ function syncDevSidebarVisibility() {
         showToast('Laden fehlgeschlagen: ' + error.message, 'error');
       } finally {
         btnAdminPushLoad.disabled = false;
+      }
+    });
+
+    btnAdminResendFull?.addEventListener('click', async () => {
+      if (!adminPushInspectResult) return;
+      if (adminPushInspectResult.source !== 'abnahme') {
+        showToast('Komplett neu senden geht nur für abgesendete Abnahmen, nicht für Entwürfe.', 'error');
+        return;
+      }
+      if (!window.confirm('Alles wie beim Absenden erneut an Bitrix senden?')) return;
+
+      btnAdminResendFull.disabled = true;
+      btnAdminPushSend.disabled = true;
+      adminPushOutput.classList.remove('hidden');
+      adminPushOutput.textContent = 'Sende komplett an Bitrix … (kann einige Minuten dauern)';
+
+      try {
+        const response = await fetch('/api/form/admin/resend-full', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: devModePassword, entityId: adminPushEntityId?.value.trim() }),
+        });
+        const json = await parseJsonResponse(response);
+        if (!json.success) throw new Error(json.error || 'Senden fehlgeschlagen');
+        adminPushOutput.textContent = `Komplett gesendet. Anhänge: ${json.attachmentCount}, Dauer: ${Math.round((json.durationMs || 0) / 1000)} s.`;
+        showToast('Komplett an Bitrix gesendet.', 'success');
+      } catch (error) {
+        adminPushOutput.textContent = `Fehler: ${error.message}`;
+        showToast('Senden fehlgeschlagen: ' + error.message, 'error');
+      } finally {
+        btnAdminResendFull.disabled = false;
+        btnAdminPushSend.disabled = false;
       }
     });
 
@@ -1580,7 +1668,7 @@ function syncDevSidebarVisibility() {
         renderHomeDrafts(items, query ? 'Keine passenden Entwürfe gefunden.' : 'Noch keine Entwürfe gespeichert.');
       } catch (error) {
         homeDraftList.innerHTML = '<p class="bitrix-empty">Fehler beim Laden der Entwürfe.</p>';
-        showToast('Fehler: ' + error.message, 'error');
+        showError('Suche fehlgeschlagen.', error);
       } finally {
         if (btnHomeDraftSearch) btnHomeDraftSearch.disabled = false;
       }
@@ -1613,7 +1701,7 @@ function syncDevSidebarVisibility() {
         renderHomeSubmitted(items, query ? 'Keine passenden Abnahmen gefunden.' : 'Noch keine gesendeten Abnahmen.');
       } catch (error) {
         homeSubmittedList.innerHTML = '<p class="bitrix-empty">Fehler beim Laden der Abnahmen.</p>';
-        showToast('Fehler: ' + error.message, 'error');
+        showError('Suche fehlgeschlagen.', error);
       } finally {
         if (btnHomeSubmittedSearch) btnHomeSubmittedSearch.disabled = false;
       }
@@ -1827,7 +1915,7 @@ function syncDevSidebarVisibility() {
       arbeitsberichtResults = [];
       renderArbeitsberichtResults([], 'Fehler bei der externen Suche.');
       setArbeitsberichtStatus(`Fehler bei der externen Suche: ${error.message}`, 'error');
-      showToast('Fehler bei der externen Suche: ' + error.message, 'error');
+      showError('Suche fehlgeschlagen.', error);
     } finally {
       if (btnArbeitsberichtSearch) btnArbeitsberichtSearch.disabled = false;
     }
@@ -1962,7 +2050,7 @@ function syncDevSidebarVisibility() {
     } catch (error) {
       drafts = [];
       renderDrafts([], 'Fehler beim Laden der Entwürfe.');
-      showToast('Fehler beim Laden der Entwürfe: ' + error.message, 'error');
+      showError('Entwürfe konnten nicht geladen werden.', error, { sticky: false });
     } finally {
       if (btnDraftRefresh) btnDraftRefresh.disabled = false;
     }
@@ -2034,11 +2122,12 @@ function syncDevSidebarVisibility() {
 
       resetFormState();
       populateForm(data);
+      serverSavedAt = Date.parse(data.updatedAt) || null;
       renderDrafts(drafts);
       showStep(getNextVisibleStep(0));
       showToast('Entwurf geladen.', 'success');
     } catch (error) {
-      showToast('Fehler beim Laden des Entwurfs: ' + error.message, 'error');
+      showError('Entwurf konnte nicht geladen werden.', error, { retry: () => loadDraftById(id) });
     }
   }
 
@@ -2480,7 +2569,7 @@ function syncDevSidebarVisibility() {
         setFormLocked(true);
       }
     } catch (error) {
-      showToast('Fehler beim Abrufen des Deals: ' + error.message, 'error');
+      showError('Auftrag konnte nicht aus Bitrix geladen werden.', error, { retry: fetchBitrixDealById });
     } finally {
       if (btnFetchBitrixLead) btnFetchBitrixLead.disabled = false;
     }
@@ -2634,6 +2723,7 @@ function syncDevSidebarVisibility() {
       terminId: $('[name="terminId"]', form)?.value || '',
       bitrixAuftragId: $('[name="bitrixAuftragId"]', form)?.value || '',
       auftragsNummer: $('[name="auftragsNummer"]', form)?.value || '',
+      customerName: [$('[name="vorname"]', form)?.value, $('[name="nachname"]', form)?.value].filter(Boolean).join(' '),
       formId,
       draftId: formId,
     };
@@ -2896,8 +2986,11 @@ function syncDevSidebarVisibility() {
 
     // Signatures → write base64 to data + timestamp
     for (const [name, pad] of Object.entries(signaturePads)) {
-      if (!pad.isEmpty()) {
-        data[name] = compactSignaturePadDataUrl(pad);
+      // The cache holds loaded/pasted signatures whose canvas is hidden
+      // (0-sized) or still painting; strokes clear it (see initSignaturePads).
+      const dataUrl = signaturePadDataUrls[name] || (pad.isEmpty() ? null : compactSignaturePadDataUrl(pad));
+      if (dataUrl) {
+        data[name] = dataUrl;
         // set corresponding timestamp
         // map the names properly
         const tsMap = {
@@ -2958,7 +3051,7 @@ function syncDevSidebarVisibility() {
     } catch (error) {
       clearDocumentPreview();
       setDocumentStatus(`Fehler bei der Vorschau: ${error.message}`, 'error');
-      showToast('Fehler bei der Vorschau: ' + error.message, 'error');
+      showError('Vorschau fehlgeschlagen.', error);
     }
   }
 
@@ -3027,7 +3120,7 @@ function syncDevSidebarVisibility() {
       showToast('Dokument heruntergeladen.', 'success');
     } catch (error) {
       setDocumentStatus(`Fehler beim Download: ${error.message}`, 'error');
-      showToast('Fehler beim Download: ' + error.message, 'error');
+      showError('Download fehlgeschlagen.', error);
     }
   }
 
@@ -3092,7 +3185,7 @@ function syncDevSidebarVisibility() {
     } catch (error) {
       setArbeitsberichtStatus(`Fehler beim Arbeitsbericht PDF: ${error.message}`, 'error');
       setDocumentStatus(`Fehler beim Arbeitsbericht PDF: ${error.message}`, 'error');
-      showToast('Fehler beim Arbeitsbericht PDF: ' + error.message, 'error');
+      showError('Arbeitsbericht-PDF fehlgeschlagen.', error);
     } finally {
       setArbeitsberichtLoading(false);
     }
@@ -3171,7 +3264,7 @@ function syncDevSidebarVisibility() {
       showToast('Dokument wurde per E-Mail versendet.', 'success');
     } catch (error) {
       setDocumentStatus(`Fehler beim E-Mail-Versand: ${error.message}`, 'error');
-      showToast('Fehler beim E-Mail-Versand: ' + error.message, 'error');
+      showError('E-Mail konnte nicht gesendet werden.', error);
     }
   }
 
@@ -3186,7 +3279,7 @@ function syncDevSidebarVisibility() {
       showToast('Dokument an Bitrix gesendet.', 'success');
     } catch (error) {
       setDocumentStatus(`Fehler beim Bitrix-Versand: ${error.message}`, 'error');
-      showToast('Fehler beim Bitrix-Versand: ' + error.message, 'error');
+      showError('Senden an Bitrix fehlgeschlagen.', error);
     }
   }
 
@@ -3269,28 +3362,139 @@ function syncDevSidebarVisibility() {
   }
 
   // ── Save / Submit ──────────────────────────────────────
+  // After a successful save the server has the files on disk and the document
+  // references them. Adopt those URLs so the next save/submit uploads only what
+  // is new instead of re-sending everything (which also orphaned the old copies).
+  // The count guard is deliberate: if the response does not match what we sent,
+  // we keep the files in fileStore and fall back to the old re-upload behaviour
+  // rather than dropping the only remaining copy of a camera-captured photo.
+  function adoptSavedFiles(saved, sent) {
+    if (!saved || typeof saved !== 'object') return;
+
+    Object.entries(sent).forEach(([fieldName, { existing, files }]) => {
+      if (!files.length) return;
+
+      const raw = saved[fieldName];
+      const urls = (Array.isArray(raw) ? raw : (raw ? [raw] : [])).filter(Boolean);
+      const single = SINGLE_FILE_UPLOAD_FIELDS.has(fieldName);
+      const expected = single ? 1 : existing.length + files.length;
+
+      if (urls.length !== expected) {
+        logClientEvent({
+          level: 'warn',
+          event: 'client.save.adopt_skipped',
+          message: `Upload-Referenzen fuer ${fieldName} passen nicht (erwartet ${expected}, erhalten ${urls.length}). Dateien bleiben lokal und werden erneut hochgeladen.`,
+          fileField: fieldName,
+          expectedCount: expected,
+          receivedCount: urls.length,
+        });
+        return;
+      }
+
+      // Only the files this request sent. A file removed or replaced while it was
+      // uploading is not adopted; the next save drops it from the server draft.
+      const newUrls = single ? urls : urls.slice(existing.length);
+      files.forEach((file, index) => {
+        const idx = (fileStore[fieldName] || []).indexOf(file);
+        if (idx === -1) return;
+        fileStore[fieldName].splice(idx, 1);
+        existingFileStore[fieldName] = [...(existingFileStore[fieldName] || []), newUrls[index]];
+        const refs = pendingFileRefs[fieldName] || [];
+        const refIdx = refs.findIndex(ref => ref.file === file);
+        if (refIdx > -1) {
+          refs[refIdx].url = newUrls[index];
+          refs.splice(refIdx, 1);
+        }
+      });
+    });
+  }
+
+  // Generous on purpose: assumes ~1 Mbit/s upload on bad LTE plus a minute of slack.
+  async function fetchWithTimeout(url, body, bytes) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 60000 + Math.round(bytes / 125));
+    try {
+      const res = await fetch(url, { method: 'POST', body, signal: controller.signal });
+      if ([502, 503, 504].includes(res.status)) {
+        throw Object.assign(new Error(`Server nicht erreichbar (HTTP ${res.status})`), { isNetwork: true });
+      }
+      return res;
+    } catch (err) {
+      if (err.isNetwork) throw err;
+      // fetch only rejects on network failure / abort, never on HTTP status.
+      throw Object.assign(new Error(err.name === 'AbortError' ? 'Zeitüberschreitung' : (err.message || 'Netzwerkfehler')), { isNetwork: true });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  function newSubmitId() {
+    if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+    return `${Date.now()}-${Math.random().toString(16).slice(2)}-${Math.random().toString(16).slice(2)}`;
+  }
+
+  // ── Auto-save to the server (A2) ───────────────────────
+  // Silent /save on step change, after a photo/video, when back online and when
+  // the tab is hidden. One save at a time; a change during a save queues one more.
+  let changeSeq = 0;
+  let autosaveTimer = null;
+  let autosaveQueued = false;
+  let autosaveFailedLogged = false;
+  let currentSave = null;
+  let formSubmitted = false;
+
+  function canAutosave() {
+    return currentStep !== 0 && hasUnsavedChanges && !formSubmitted && !outboxQueuedAt && navigator.onLine;
+  }
+
+  function scheduleServerSave(delayMs = 0) {
+    if (!canAutosave()) return;
+    clearTimeout(autosaveTimer);
+    autosaveTimer = setTimeout(() => {
+      autosaveTimer = null;
+      if (canAutosave()) saveForm('autosave');
+    }, delayMs);
+  }
+
   async function saveForm(action) {
     if (saveInProgress) {
-      showToast('Speichern läuft bereits. Bitte kurz warten.', 'error');
-      return;
+      if (action === 'autosave') { autosaveQueued = true; return; }
+      if (saveAction === 'autosave') await currentSave;
+      if (saveInProgress) {
+        showToast('Wird gerade gespeichert – bitte einen Moment warten.', '');
+        return;
+      }
     }
+    currentSave = performSave(action);
+    return currentSave;
+  }
 
-    const submitClickedAt = action === 'submit' ? Date.now() : null;
+  async function performSave(action) {
+    const isSubmit = action === 'submit';
+    const silent = action === 'autosave';
+    const submitClickedAt = isSubmit ? Date.now() : null;
+    if (isSubmit && !submitId) submitId = newSubmitId();
+    const seqAtStart = changeSeq;
     saveInProgress = true;
+    saveAction = action;
+    renderSaveStatus();
+
     const data = collectFormData();
-    const fd   = new FormData();
+    if (isSubmit) data.submitId = submitId;
+    const fd = new FormData();
     fd.append('formData', JSON.stringify(data));
+    const sent = {};
+    let bytes = 0;
+    FILE_UPLOAD_FIELDS.forEach(fieldName => {
+      const files = [...(fileStore[fieldName] || [])];
+      sent[fieldName] = { existing: [...(existingFileStore[fieldName] || [])], files };
+      files.forEach(f => { fd.append(fieldName, f); bytes += f.size || 0; });
+    });
 
-    // Append files
-    for (const [fieldName, files] of Object.entries(fileStore)) {
-      files.forEach(f => fd.append(fieldName, f));
-    }
-
-    // Disable buttons while saving
-    [btnDraft, btnSubmit, btnNext].forEach(b => b.disabled = true);
+    if (!silent) [btnDraft, btnSubmit, btnNext].forEach(b => b.disabled = true);
 
     try {
-      const res  = await fetch(`/api/form/${action}`, { method: 'POST', body: fd });
+      const res  = await fetchWithTimeout(`/api/form/${isSubmit ? 'submit' : 'save'}`, fd, bytes);
       const json = await parseJsonResponse(res);
 
       if (!json.success) throw new Error(json.error);
@@ -3298,63 +3502,301 @@ function syncDevSidebarVisibility() {
       formId     = json.id;
       shareToken = json.shareToken;
       activeDraftId = json.id;
-      clearDirtyState();
 
-      if (action === 'save') {
+      if (isSubmit) {
+        clearDirtyState();
+        await handleSubmitSuccess(json, Date.now() - submitClickedAt);
+        return;
+      }
+
+      adoptSavedFiles(json.data, sent);
+      serverSavedAt = Date.parse(json.data?.updatedAt) || Date.now();
+      if (changeSeq === seqAtStart) clearDirtyState();
+      else autosaveQueued = true;
+      autosaveFailedLogged = false;
+      scheduleLocalSave();
+
+      if (!silent) {
         // Show draft link modal
         $('#draftLink').value = json.shareLink;
         $('#draftModal').classList.add('open');
         fetchDrafts();
         showToast('Entwurf gespeichert.', 'success');
-      } else {
-        fetchDrafts();
-        const elapsedMs = Date.now() - submitClickedAt;
-        logClientEvent({
-          event: 'client.submit.success',
-          message: `Formular übermittelt in ${(elapsedMs / 1000).toFixed(1)} s (Klick → Benachrichtigung).`,
-          elapsedMs,
-          bitrixSynced: !!(json.bitrixSync?.attempted && json.bitrixSync?.sent),
-          fileSummary: getFileSummary(),
-        });
-        if (json.bitrixSync?.attempted && json.bitrixSync?.sent) {
-          setDocumentStatus(`Dokumenttext wurde automatisch an Bitrix-Auftrag ${json.bitrixSync.entityId} gesendet.`, 'success');
-          console.log('[bitrix-submit] sync result', json.bitrixSync);
-          showToast('Erfolgreich übermittelt und an Bitrix gesendet! ✓', 'success', 'big');
-        } else if (json.bitrixSync?.attempted && !json.bitrixSync?.sent) {
-          setDocumentStatus(`Formular übermittelt, Bitrix-Sendung fehlgeschlagen: ${json.bitrixSync.error}`, 'error');
-          console.warn('[bitrix-submit] sync failed', json.bitrixSync);
-          showToast('Formular übermittelt, aber Bitrix konnte nicht aktualisiert werden.', 'error');
-        } else {
-          showToast('Erfolgreich übermittelt! ✓', 'success', 'big');
-        }
-        // Clear file store after successful submit
-        fileStore = {};
-        const stayOnPage = $('#stayOnPage')?.checked;
-        if (!stayOnPage) {
-          setTimeout(() => {
-            window.location.href = '/';
-          }, 2000);
-        }
       }
     } catch (err) {
       console.error(`[form-${action}] failed`, err);
-      showToast(`Fehler beim ${action === 'save' ? 'Speichern' : 'Absenden'}:\n${err.message}`, 'error', 'big validation');
+      if (silent) {
+        if (!autosaveFailedLogged) {
+          autosaveFailedLogged = true;
+          logClientEvent({
+            level: 'warn',
+            event: 'client.autosave.failed',
+            message: `Automatisches Speichern fehlgeschlagen: ${err.message}`.slice(0, 500),
+            fileSummary: getFileSummary(),
+          });
+        }
+      } else if (isSubmit && err.isNetwork) {
+        await queueSubmit(err);
+      } else {
+        showError(isSubmit ? 'Absenden hat nicht geklappt.' : 'Speichern hat nicht geklappt.', err, { dataSafe: true, retry: () => saveForm(action) });
+      }
     } finally {
       saveInProgress = false;
-      [btnDraft, btnSubmit, btnNext].forEach(b => b.disabled = false);
+      saveAction = null;
+      renderSaveStatus();
+      if (!silent) [btnDraft, btnSubmit, btnNext].forEach(b => b.disabled = false);
+      if (autosaveQueued) {
+        autosaveQueued = false;
+        scheduleServerSave(3000);
+      }
     }
+  }
+
+  // ── Receipt after submit (B5) ──────────────────────────
+  const FORMULAR_TYPE_TITLES = {
+    baustellenabnahme: 'Abschluss der Baustelle',
+    zusaetzliche_leistungen: 'Zusätzliche Leistungen',
+    nachbesserung: 'Nachbesserung',
+    schadensmeldung: 'Schadensmeldung',
+  };
+  const RECEIPT_POLL_MS = 5000;
+  const RECEIPT_POLL_MAX_MS = 120000;
+  let receiptPollTimer = null;
+
+  function countLabel(n, singular, plural) {
+    return `${n} ${n === 1 ? singular : plural}`;
+  }
+
+  function showReceipt(data = {}, { goHomeOnDone = true } = {}) {
+    const name = buildFullName(data) || data.name || '';
+    const address = [data.adresse?.strasse, [data.adresse?.plz, data.adresse?.stadt].filter(Boolean).join(' ')]
+      .filter(Boolean).join(', ');
+    const photos = FILE_UPLOAD_FIELDS
+      .filter(field => !SINGLE_FILE_UPLOAD_FIELDS.has(field))
+      .reduce((n, field) => n + (Array.isArray(data[field]) ? data[field].filter(Boolean).length : 0), 0);
+    const videos = data.videoDesAblaufs ? 1 : 0;
+    const signatures = Object.keys(data)
+      .filter(key => /^unterschrift/.test(key) && typeof data[key] === 'string' && data[key].startsWith('data:image')).length;
+    const submittedAt = Date.parse(data.updatedAt || data.createdAt) || Date.now();
+
+    const rows = [
+      ['Kunde', [name, address].filter(Boolean).join(', ') || '–'],
+      ['Auftrag', [data.bitrixAuftragId, data.auftragsNummer].filter(Boolean).join(' · ') || '–'],
+      ['Formular', FORMULAR_TYPE_TITLES[data.formularTyp] || 'Formular'],
+      ['Übermittelt', new Date(submittedAt).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' })],
+      ['Umfang', [countLabel(photos, 'Foto', 'Fotos'), countLabel(videos, 'Video', 'Videos'), countLabel(signatures, 'Unterschrift', 'Unterschriften')].join(' · ')],
+    ];
+    const list = $('#receiptList');
+    list.innerHTML = '';
+    rows.forEach(([label, value]) => {
+      const dt = document.createElement('dt');
+      dt.textContent = label;
+      const dd = document.createElement('dd');
+      dd.textContent = value;
+      list.append(dt, dd);
+    });
+
+    const status = data.bitrixStatus || 'pending';
+    renderReceiptBitrix(status, data.bitrixSentAt);
+    clearTimeout(receiptPollTimer);
+    if (status === 'pending' && data.shareToken) pollReceiptBitrix(data.shareToken, Date.now());
+
+    $('#btnReceiptDone').onclick = () => {
+      clearTimeout(receiptPollTimer);
+      $('#receiptModal').classList.remove('open');
+      if (goHomeOnDone && !$('#stayOnPage')?.checked) window.location.href = '/';
+    };
+    hideToast();
+    $('#receiptModal').classList.add('open');
+  }
+
+  // Calm by design: a failed push is retried by the server (B1) and the office is
+  // alerted (C2), so the worker never gets a red error here.
+  function renderReceiptBitrix(status, sentAt, expired = false) {
+    const el = $('#receiptBitrix');
+    let text = '⏳ Wird an Bitrix übertragen …';
+    if (status === 'sent') text = `✓ In Bitrix angekommen (${formatClock(Date.parse(sentAt) || Date.now())})`;
+    else if (status === 'skipped') text = 'Ohne Bitrix-Auftrag gespeichert.';
+    else if (status === 'failed' || expired) text = 'Übertragung läuft im Hintergrund weiter – bei Problemen wird das Büro automatisch informiert.';
+    el.textContent = text;
+    el.className = ['receipt-bitrix', status === 'sent' ? 'ok' : ''].filter(Boolean).join(' ');
+  }
+
+  function pollReceiptBitrix(token, startedAt) {
+    receiptPollTimer = setTimeout(async () => {
+      let status = 'pending';
+      let sentAt = null;
+      try {
+        const res = await fetch(`/api/form/token/${encodeURIComponent(token)}`);
+        const json = await res.json();
+        status = json.data?.bitrixStatus || 'pending';
+        sentAt = json.data?.bitrixSentAt;
+      } catch (_) { /* no signal: keep waiting */ }
+      const expired = Date.now() - startedAt >= RECEIPT_POLL_MAX_MS;
+      renderReceiptBitrix(status, sentAt, expired);
+      if (status === 'pending' && !expired) pollReceiptBitrix(token, startedAt);
+    }, RECEIPT_POLL_MS);
+  }
+
+  async function handleSubmitSuccess(json, elapsedMs) {
+    formSubmitted = true;
+    submitId = null;
+    outboxQueuedAt = null;
+    clearTimeout(autosaveTimer);
+    fetchDrafts();
+    logClientEvent({
+      event: 'client.submit.success',
+      message: `Formular übermittelt in ${(elapsedMs / 1000).toFixed(1)} s (Klick → Benachrichtigung).`,
+      elapsedMs,
+      fileSummary: getFileSummary(),
+    });
+    // Bitrix laeuft jetzt im Hintergrund auf dem Server (B1); das Ergebnis kennt der Client nicht.
+    setDocumentStatus('Formular gespeichert. Die Übertragung an Bitrix läuft im Hintergrund.', 'success');
+    // Clear file store after successful submit
+    fileStore = {};
+    pendingFileRefs = {};
+    await deleteLocalSnapshot();
+    renderSaveStatus();
+    // The receipt stays until "Fertig" (B5); no automatic jump to the home page.
+    showReceipt(json.data || {});
+  }
+
+  // ── Outbox for submit (A3) ─────────────────────────────
+  // No Background Sync on iOS: a queued submit is sent while the app is open
+  // (any page), on the next open, when back online or when the tab is visible.
+  const OUTBOX_RETRY_DELAYS_MS = [30000, 60000, 120000, 300000];
+  let submitId = null;
+  let outboxQueuedAt = null;
+  let outboxBusy = false;
+  let outboxTimer = null;
+  let outboxRetryIndex = 0;
+  const outboxFailureLogged = new Set();
+
+  async function queueSubmit(err) {
+    outboxQueuedAt = Date.now();
+    await writeLocalSnapshot();
+    if (localSaveFailed) {
+      outboxQueuedAt = null;
+      showError('Absenden hat nicht geklappt. Bitte bei Empfang erneut „Absenden“ drücken.', err, { retry: () => saveForm('submit') });
+      return;
+    }
+    logClientEvent({
+      level: 'warn',
+      event: 'client.outbox.queued',
+      message: `Absenden ohne Netz, in Warteschlange: ${err.message}`.slice(0, 500),
+      fileSummary: getFileSummary(),
+    });
+    showToast('Kein Netz – das Formular wird automatisch gesendet, sobald Empfang da ist.\nBitte Seite offen lassen.', 'warn', 'big');
+    outboxRetryIndex = 0;
+    clearTimeout(outboxTimer);
+    outboxTimer = setTimeout(flushOutbox, OUTBOX_RETRY_DELAYS_MS[0]);
+  }
+
+  async function flushOutbox() {
+    if (outboxBusy || !window.indexedDB) return;
+    outboxBusy = true;
+    clearTimeout(outboxTimer);
+    let waiting = 0;
+    try {
+      if (outboxQueuedAt && localSaveTimer) await writeLocalSnapshot();
+      const db = await openLocalDb();
+      const keys = await idbRequest(db.transaction('forms').objectStore('forms').getAllKeys());
+      for (const key of keys) {
+        const record = await idbRequest(db.transaction('forms').objectStore('forms').get(key));
+        if (!record?.outboxQueuedAt) continue;
+        if (key === getLocalFormKey() && saveInProgress) { waiting++; continue; }
+        if (await sendOutboxRecord(db, key, record) === 'retry') waiting++;
+      }
+    } catch (err) {
+      console.warn('[outbox] flush failed', err);
+      if (outboxQueuedAt) waiting++;
+    } finally {
+      outboxBusy = false;
+    }
+    if (waiting) {
+      outboxTimer = setTimeout(flushOutbox, OUTBOX_RETRY_DELAYS_MS[Math.min(outboxRetryIndex++, OUTBOX_RETRY_DELAYS_MS.length - 1)]);
+    } else {
+      outboxRetryIndex = 0;
+    }
+    renderSaveStatus();
+  }
+
+  async function sendOutboxRecord(db, key, record) {
+    const isCurrentPage = key === getLocalFormKey();
+    const store = db.transaction('files').objectStore('files');
+    const entries = Object.entries(record.files || {});
+    const stored = await Promise.all(entries.map(([, ids]) => Promise.all(ids.map(id => idbRequest(store.get(id))))));
+    const fd = new FormData();
+    fd.append('formData', JSON.stringify({ ...record.data, submitId: record.submitId }));
+    let bytes = 0;
+    entries.forEach(([fieldName], i) => {
+      stored[i].filter(Boolean).forEach(item => {
+        fd.append(fieldName, new File([item.blob], item.name, { type: item.type, lastModified: item.lastModified }));
+        bytes += item.blob.size || 0;
+      });
+    });
+
+    let json;
+    try {
+      const res = await fetchWithTimeout('/api/form/submit', fd, bytes);
+      json = await parseJsonResponse(res);
+      if (!json.success) throw new Error(json.error);
+    } catch (err) {
+      if (err.isNetwork) {
+        if (!outboxFailureLogged.has(key)) {
+          outboxFailureLogged.add(key);
+          logClientEvent({ level: 'warn', event: 'client.outbox.retry_failed', message: `Wartendes Absenden noch nicht moeglich: ${err.message}`.slice(0, 500) });
+        }
+        return 'retry';
+      }
+      // The server rejected the form (e.g. validation): stop retrying, show it.
+      await idbRequest(db.transaction('forms', 'readwrite').objectStore('forms').put({ ...record, outboxQueuedAt: null }, key));
+      logClientEvent({
+        level: 'error',
+        event: 'client.outbox.rejected',
+        message: `Wartendes Absenden abgelehnt: ${err.message}`.slice(0, 500),
+        terminId: record.data?.terminId,
+        bitrixAuftragId: record.data?.bitrixAuftragId,
+        auftragsNummer: record.data?.auftragsNummer,
+        customerName: [record.data?.vorname, record.data?.nachname].filter(Boolean).join(' '),
+        formId: record.formId,
+        draftId: record.formId,
+      });
+      if (isCurrentPage) {
+        outboxQueuedAt = null;
+        showError('Das wartende Formular wurde vom Server abgelehnt.', err);
+      } else {
+        showToast('Ein wartendes Formular wurde vom Server abgelehnt. Bitte das Formular über den Auftrags-Link erneut öffnen und prüfen.', 'error', 'big validation');
+      }
+      return 'rejected';
+    }
+
+    logClientEvent({
+      event: 'client.outbox.sent',
+      message: `Wartendes Absenden gesendet (${Math.round((Date.now() - record.outboxQueuedAt) / 1000)} s nach dem Klick)${json.duplicate ? ', war bereits angekommen' : ''}.`,
+    });
+    if (isCurrentPage && outboxQueuedAt) {
+      formId = json.id;
+      shareToken = json.shareToken;
+      clearDirtyState();
+      await handleSubmitSuccess(json, Date.now() - record.outboxQueuedAt);
+    } else {
+      await deleteLocalSnapshot(key);
+      showReceipt(json.data || {}, { goHomeOnDone: false });
+    }
+    return 'sent';
   }
 
   // ── Load Draft ─────────────────────────────────────────
   async function loadDraftIfNeeded() {
     // Check URL for /form/:token
     const match = window.location.pathname.match(/^\/form\/(.+)/);
-    if (!match) return false;
+    if (!match) return null;
 
     try {
       const res  = await fetch(`/api/form/token/${match[1]}`);
       const json = await res.json();
-      if (!json.success) return false;
+      if (!json.success) return null;
 
       const data = json.data;
       formId     = data._id;
@@ -3363,21 +3805,313 @@ function syncDevSidebarVisibility() {
 
       resetFormState();
       populateForm(data);
+      serverSavedAt = Date.parse(data.updatedAt) || null;
       fetchDrafts();
       showToast('Entwurf geladen', 'success');
-      return true;
+      return data;
     } catch (err) {
       console.error('Load draft error:', err);
-      return false;
+      return null;
     }
+  }
+  // Workers always open the job via the Bitrix link (?dealId=). Continue the
+  // server draft of that deal so a second phone does not start a second draft.
+  async function loadDraftForDeal() {
+    const dealId = new URLSearchParams(window.location.search).get('dealId');
+    if (!dealId || getRouteFormularTyp() !== 'baustellenabnahme') return null;
+
+    try {
+      const res = await fetch(`/api/form/drafts/by-deal/${encodeURIComponent(dealId)}`);
+      if (!res.ok) return null;
+      const json = await res.json();
+      if (!json.success) return null;
+
+      const data = json.data;
+      formId     = data._id;
+      shareToken = data.shareToken;
+      activeDraftId = data._id;
+
+      resetFormState();
+      populateForm(data);
+      setFormLocked(true); // same as after the Bitrix autofill this replaces
+      serverSavedAt = Date.parse(data.updatedAt) || null;
+      logClientEvent({
+        event: 'client.draft.loaded_by_deal',
+        message: `Server-Entwurf fuer Auftrag ${dealId} fortgesetzt (Stand ${data.updatedAt}).`,
+      });
+      return { ...data, loadedByDeal: true };
+    } catch (err) {
+      console.warn('[draft-by-deal] load failed', err);
+      return null;
+    }
+  }
+
+
+  // ── Local auto-save (IndexedDB) ────────────────────────
+  // iOS often reloads the tab after camera use, which would lose everything
+  // typed, signed or picked since the last server save. Keep a copy on the
+  // phone, keyed by the page URL (a reload keeps it: path + ?dealId=…).
+  // Form state lives in "forms"; picked files in "files", written once each.
+  const LOCAL_SAVE_DELAY_MS = 500;
+  let localDbPromise = null;
+  let localSaveTimer = null;
+  let localSavedAt = null;
+  let localSaveFailed = false;
+  let serverSavedAt = null;
+  let saveAction = null;               // 'save' | 'submit' while a request runs
+  const localFileIds = new WeakMap();  // File → key in the "files" store
+  let localFileSeq = 0;
+
+  function getLocalFormKey() {
+    return window.location.pathname + window.location.search;
+  }
+
+  function localFileRange(key) {
+    return IDBKeyRange.bound(`${key}|`, `${key}|\uffff`);
+  }
+
+  function idbRequest(req) {
+    return new Promise((resolve, reject) => {
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  function idbDone(tx) {
+    return new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = tx.onabort = () => reject(tx.error);
+    });
+  }
+
+  const LOCAL_DB_OPEN_TIMEOUT_MS = 3000;
+
+  function openLocalDb() {
+    if (!localDbPromise) {
+      const req = indexedDB.open('bauFormular', 1);
+      req.onupgradeneeded = () => {
+        req.result.createObjectStore('forms');
+        req.result.createObjectStore('files');
+      };
+      // open() can stay pending forever (another tab blocks it, WebKit glitches).
+      // Never let that block loading the form: give up after 3 s, run without local backup.
+      localDbPromise = Promise.race([
+        idbRequest(req),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('IndexedDB open timeout')), LOCAL_DB_OPEN_TIMEOUT_MS)),
+      ]);
+      localDbPromise.catch(() => { localDbPromise = null; });
+    }
+    return localDbPromise;
+  }
+
+  function scheduleLocalSave() {
+    // Untouched forms are not worth a snapshot (and must not block the
+    // ?dealId autofill on the next load).
+    if (currentStep === 0 || (!hasUnsavedChanges && !formId)) return;
+    clearTimeout(localSaveTimer);
+    localSaveTimer = setTimeout(writeLocalSnapshot, LOCAL_SAVE_DELAY_MS);
+  }
+
+  async function writeLocalSnapshot() {
+    clearTimeout(localSaveTimer);
+    localSaveTimer = null;
+    if (currentStep === 0) return;
+
+    const key = getLocalFormKey();
+    const files = {};
+    const newFiles = [];
+    FILE_UPLOAD_FIELDS.forEach(fieldName => {
+      files[fieldName] = (fileStore[fieldName] || []).map(file => {
+        let id = localFileIds.get(file);
+        if (!id) {
+          id = `${key}|${Date.now()}-${localFileSeq++}`;
+          localFileIds.set(file, id);
+          newFiles.push([id, file]);
+        }
+        return id;
+      });
+    });
+    const record = {
+      data: collectFormData(),
+      files,
+      step: currentStep,
+      formId,
+      shareToken,
+      dirty: hasUnsavedChanges,
+      serverSavedAt,
+      submitId,
+      outboxQueuedAt,
+      savedAt: Date.now(),
+    };
+
+    try {
+      const db = await openLocalDb();
+      const tx = db.transaction(['forms', 'files'], 'readwrite');
+      const blobs = tx.objectStore('files');
+      tx.objectStore('forms').put(record, key);
+      newFiles.forEach(([id, file]) => {
+        blobs.put({ blob: file, name: file.name, type: file.type, lastModified: file.lastModified }, id);
+      });
+      // Drop blobs of thumbnails removed or uploaded since the last snapshot.
+      const keep = new Set(Object.values(files).flat());
+      const keysReq = blobs.getAllKeys(localFileRange(key));
+      keysReq.onsuccess = () => keysReq.result.forEach(id => { if (!keep.has(id)) blobs.delete(id); });
+      await idbDone(tx);
+      localSavedAt = record.savedAt;
+      localSaveFailed = false;
+    } catch (err) {
+      newFiles.forEach(([, file]) => localFileIds.delete(file));
+      if (!localSaveFailed) {
+        logClientEvent({
+          level: 'warn',
+          event: 'client.local.failed',
+          message: `Lokale Sicherung fehlgeschlagen: ${err?.name || ''} ${err?.message || err}`.slice(0, 500),
+          fileSummary: getFileSummary(),
+        });
+      }
+      localSaveFailed = true;
+    }
+    renderSaveStatus();
+  }
+
+  async function deleteLocalSnapshot(key = getLocalFormKey()) {
+    clearTimeout(localSaveTimer);
+    localSaveTimer = null;
+    localSavedAt = null;
+    try {
+      const db = await openLocalDb();
+      const tx = db.transaction(['forms', 'files'], 'readwrite');
+      tx.objectStore('forms').delete(key);
+      tx.objectStore('files').delete(localFileRange(key));
+      await idbDone(tx);
+    } catch (err) {
+      console.warn('[local-save] delete failed', err);
+    }
+  }
+
+  // Returns the snapshot time when one was restored, otherwise null.
+  // A server draft newer than the snapshot wins (e.g. edited on another device).
+  async function restoreLocalSnapshot(serverData) {
+    const key = getLocalFormKey();
+    let record;
+    let blobs;
+    try {
+      const db = await openLocalDb();
+      record = await idbRequest(db.transaction('forms').objectStore('forms').get(key));
+      if (!record) return null;
+      if (serverData && !record.outboxQueuedAt && record.savedAt <= (Date.parse(serverData.updatedAt) || 0)) {
+        await deleteLocalSnapshot(key);
+        return null;
+      }
+      // Separate transaction: Safari may auto-commit across awaited promises.
+      const store = db.transaction('files').objectStore('files');
+      const ids = Object.values(record.files || {}).flat();
+      blobs = new Map(await Promise.all(ids.map(id => idbRequest(store.get(id)).then(value => [id, value]))));
+    } catch (err) {
+      console.warn('[local-save] restore failed', err);
+      return null;
+    }
+
+    resetFormState();
+    populateForm(record.data);
+    formId = record.formId || null;
+    shareToken = record.shareToken || null;
+    activeDraftId = formId;
+    serverSavedAt = record.serverSavedAt || null;
+    submitId = record.submitId || null;
+    outboxQueuedAt = record.outboxQueuedAt || null;
+
+    let restoredFiles = 0;
+    let missingFiles = 0;
+    Object.entries(record.files || {}).forEach(([fieldName, ids]) => {
+      const preview = $(`.file-upload[data-name="${fieldName}"] .file-preview`);
+      if (!preview) return;
+      const restored = ids.map(id => {
+        const stored = blobs.get(id);
+        if (!stored) { missingFiles++; return null; }
+        const file = new File([stored.blob], stored.name, { type: stored.type, lastModified: stored.lastModified });
+        localFileIds.set(file, id);
+        return file;
+      }).filter(Boolean);
+      restoredFiles += restored.length;
+      // multi=true: the snapshot already reflects single-field replacement.
+      if (restored.length) addFiles(fieldName, restored, preview, true);
+    });
+
+    hasUnsavedChanges = !!record.dirty;
+    localSavedAt = record.savedAt;
+    showStep(record.step);
+    logClientEvent({
+      level: missingFiles ? 'warn' : 'info',
+      event: 'client.local.restored',
+      message: `Lokaler Stand wiederhergestellt (${restoredFiles} Dateien${missingFiles ? `, ${missingFiles} fehlen` : ''}).`,
+      fileSummary: getFileSummary(),
+    });
+    return record.savedAt;
+  }
+
+  function formatClock(ts) {
+    return new Date(ts).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function renderSaveStatus() {
+    if (!saveStatus) return;
+    let text = '';
+    let tone = '';
+    if (currentStep === 0) {
+      text = '';
+    } else if (saveAction === 'submit') {
+      text = '⏳ Wird gesendet … bitte Seite offen lassen';
+    } else if (outboxQueuedAt) {
+      text = '📤 Kein Netz – wird automatisch gesendet, sobald Empfang da ist. Bitte Seite offen lassen.';
+      tone = 'warn';
+    } else if (saveAction) {
+      text = '⏳ Wird gespeichert …';
+    } else if (localSaveFailed) {
+      text = '⚠ Sicherung auf dem Handy nicht möglich – bei Empfang wird automatisch auf dem Server gespeichert';
+      tone = 'warn';
+    } else if (!navigator.onLine) {
+      text = '⚠ Kein Netz – Eingaben bleiben auf dem Handy gesichert';
+      tone = 'warn';
+    } else if (!hasUnsavedChanges && serverSavedAt) {
+      text = `✓ Alles gespeichert · ${formatClock(serverSavedAt)}`;
+      tone = 'ok';
+    } else if (localSavedAt) {
+      text = `💾 Auf dem Handy gesichert · ${formatClock(localSavedAt)}`;
+    }
+    saveStatus.textContent = text;
+    saveStatus.className = ['save-status', tone, text ? '' : 'hidden'].filter(Boolean).join(' ');
+  }
+
+  function bindLocalAutoSave() {
+    window.addEventListener('online', () => {
+      renderSaveStatus();
+      flushOutbox();
+      scheduleServerSave(0);
+    });
+    window.addEventListener('offline', renderSaveStatus);
+    // iOS may kill a backgrounded tab without further events: flush now.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') {
+        if (localSaveTimer) writeLocalSnapshot();
+        if (canAutosave()) saveForm('autosave');
+      } else {
+        flushOutbox();
+      }
+    });
+    renderSaveStatus();
   }
 
   function resetFormState() {
     suppressDirtyTracking = true;
     form.reset();
     fileStore = {};
+    pendingFileRefs = {};
     existingFileStore = {};
     signaturePadDataUrls = {};
+    submitId = null;
+    outboxQueuedAt = null;
+    formSubmitted = false;
     currentFormularTyp = FORMULAR_TYPE_DEFAULT;
     applyFormTypeUI();
     clearDirtyState();
@@ -3460,6 +4194,7 @@ function syncDevSidebarVisibility() {
     FILE_UPLOAD_FIELDS.forEach(fieldName => {
       const urls = Array.isArray(data[fieldName]) ? data[fieldName] : (data[fieldName] ? [data[fieldName]] : []);
       existingFileStore[fieldName] = urls.filter(Boolean);
+      pendingFileRefs[fieldName] = [];
       if (!existingFileStore[fieldName].length) return;
       const wrapper = $(`.file-upload[data-name="${fieldName}"]`);
       if (!wrapper) return;
@@ -3510,6 +4245,7 @@ function syncDevSidebarVisibility() {
 
       if (!fileStore[fieldName]) fileStore[fieldName] = [];
       if (!existingFileStore[fieldName]) existingFileStore[fieldName] = [];
+      if (!pendingFileRefs[fieldName]) pendingFileRefs[fieldName] = [];
 
       // Click on drop zone or upload button → open file picker
       const openPicker = () => fileInput.click();
@@ -3552,19 +4288,24 @@ function syncDevSidebarVisibility() {
   function addFiles(fieldName, files, previewEl, multi) {
     if (!fileStore[fieldName]) fileStore[fieldName] = [];
     if (!existingFileStore[fieldName]) existingFileStore[fieldName] = [];
+    if (!pendingFileRefs[fieldName]) pendingFileRefs[fieldName] = [];
 
     if (!multi) {
       fileStore[fieldName] = [];
       existingFileStore[fieldName] = [];
+      pendingFileRefs[fieldName] = [];
       previewEl.innerHTML = '';
     }
 
     if (files.length) {
       markFormDirty();
+      scheduleServerSave(3000);
     }
 
     files.forEach(file => {
       fileStore[fieldName].push(file);
+      const ref = { file, url: null };
+      pendingFileRefs[fieldName].push(ref);
 
       const thumb = document.createElement('div');
       thumb.className = 'file-thumb';
@@ -3587,8 +4328,15 @@ function syncDevSidebarVisibility() {
       removeBtn.className = 'remove-file';
       removeBtn.textContent = '✕';
       removeBtn.addEventListener('click', () => {
-        const idx = fileStore[fieldName].indexOf(file);
-        if (idx > -1) fileStore[fieldName].splice(idx, 1);
+        if (ref.url) {
+          // Already saved: drop the server URL, not the (discarded) File.
+          existingFileStore[fieldName] = (existingFileStore[fieldName] || []).filter(item => item !== ref.url);
+        } else {
+          const idx = fileStore[fieldName].indexOf(file);
+          if (idx > -1) fileStore[fieldName].splice(idx, 1);
+        }
+        const refIdx = (pendingFileRefs[fieldName] || []).indexOf(ref);
+        if (refIdx > -1) pendingFileRefs[fieldName].splice(refIdx, 1);
         thumb.remove();
         markFormDirty();
       });
@@ -3624,7 +4372,7 @@ function syncDevSidebarVisibility() {
         modal.classList.add('open');
       })
       .catch(err => {
-        showToast('Kamera-Zugriff nicht möglich: ' + err.message, 'error');
+        showError('Kamera konnte nicht geöffnet werden.', err);
       });
 
     let recording = false;
@@ -3800,6 +4548,7 @@ function syncDevSidebarVisibility() {
         wrapper.style.borderColor = '';
         markFormDirty();
       });
+      pad.addEventListener('endStroke', () => scheduleLocalSave());
     });
     resizeAllSignatureCanvases();
     window.addEventListener('resize', () => resizeAllSignatureCanvases());
@@ -4014,11 +4763,80 @@ function syncDevSidebarVisibility() {
   }
 
   // ── Toast Notifications ────────────────────────────────
-  function showToast(msg, type = '', size = '') {
-    toast.textContent = msg;
-    toast.className = ['toast', 'visible', type, size].filter(Boolean).join(' ');
+  // Errors stay until tapped (B4); everything else hides after 3.5 s.
+  function showToast(msg, type = '', size = '', { action = null, sticky = type === 'error' } = {}) {
     clearTimeout(toast._timer);
-    toast._timer = setTimeout(() => { toast.className = 'toast'; }, 3500);
+    toast.textContent = '';
+    const text = document.createElement('div');
+    text.className = 'toast-text';
+    text.textContent = msg;
+    toast.appendChild(text);
+    if (action) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'toast-action';
+      btn.textContent = action.label;
+      btn.addEventListener('click', event => {
+        event.stopPropagation();
+        hideToast();
+        action.onClick();
+      });
+      toast.appendChild(btn);
+    }
+    if (sticky) {
+      const close = document.createElement('span');
+      close.className = 'toast-close';
+      close.textContent = '✕';
+      close.setAttribute('aria-hidden', 'true');
+      toast.appendChild(close);
+    }
+    toast.className = ['toast', 'visible', type, size, sticky ? 'sticky' : ''].filter(Boolean).join(' ');
+    if (!sticky) toast._timer = setTimeout(hideToast, 3500);
+  }
+
+  toast.addEventListener('click', () => {
+    if (toast.classList.contains('sticky')) hideToast();
+  });
+
+  function hideToast() {
+    clearTimeout(toast._timer);
+    toast.className = 'toast';
+  }
+
+  // Plain German for technical failures. German messages from our own server
+  // (validation, size limit, …) are specific already and pass through unchanged.
+  function friendlyError(err, { dataSafe = false } = {}) {
+    const raw = String(err?.message || err || '');
+    const safe = dataSafe && !localSaveFailed ? ' Ihre Eingaben sind auf dem Handy gesichert.' : '';
+    if (err?.name === 'NotAllowedError' || /NotAllowedError|Permission denied/i.test(raw)) {
+      return 'Kamera-Zugriff ist nicht erlaubt. Bitte in den iPhone-Einstellungen (Safari → Kamera) erlauben oder „Foto hochladen“ nutzen.';
+    }
+    if (err?.name === 'NotFoundError' || /NotFoundError|Requested device not found/i.test(raw)) {
+      return 'Keine Kamera gefunden. Bitte „Foto hochladen“ nutzen.';
+    }
+    if (/Zeitüberschreitung|AbortError|timed? ?out/i.test(raw)) {
+      return `Der Server hat zu lange nicht geantwortet.${safe} Bitte erneut versuchen.`;
+    }
+    if (/HTTP 5\d\d|Unerwartete Server-Antwort|Leere Server-Antwort/i.test(raw)) {
+      return `Der Server hat gerade ein Problem.${safe} Bitte in einer Minute erneut versuchen.`;
+    }
+    if (err?.isNetwork || /Load failed|Failed to fetch|NetworkError|Netzwerkfehler|network connection was lost/i.test(raw)) {
+      return `Keine Verbindung zum Server.${safe} Bitte bei Empfang erneut versuchen.`;
+    }
+    return raw || 'Unbekannter Fehler. Bitte erneut versuchen.';
+  }
+
+  // Worker-facing failure: friendly text on screen, the raw text in the log.
+  function showError(prefix, err, { dataSafe = false, retry = null, sticky = true } = {}) {
+    logClientEvent({
+      level: 'warn',
+      event: 'client.action.failed',
+      message: `${prefix.replace(/[.:]\s*$/, '')} – ${err?.name && err.name !== 'Error' ? `${err.name}: ` : ''}${err?.message || err}`.slice(0, 500),
+    });
+    showToast(`${prefix}\n${friendlyError(err, { dataSafe })}`, 'error', sticky ? 'big validation' : '', {
+      sticky,
+      action: retry ? { label: 'Erneut versuchen', onClick: retry } : null,
+    });
   }
 
   // ── Boot ───────────────────────────────────────────────

@@ -862,6 +862,21 @@ async function optimizeImageBuffer(fileBuffer) {
   return { buffer: output, extension: '.jpg', optimized: true };
 }
 
+function videoFfmpegArgs(inputPath, outputPath) {
+  return [
+    '-y',
+    '-i', inputPath,
+    '-vf', `scale='min(1280,iw)':'min(${VIDEO_MAX_HEIGHT},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2`,
+    '-c:v', 'libx264',
+    '-preset', 'fast',
+    '-crf', '30',
+    '-c:a', 'aac',
+    '-b:a', '96k',
+    '-movflags', '+faststart',
+    outputPath,
+  ];
+}
+
 async function optimizeVideoBuffer(fullPath, basename, fileBuffer, uploadsDir) {
   if (!isFfmpegAvailable()) {
     return {
@@ -876,18 +891,7 @@ async function optimizeVideoBuffer(fullPath, basename, fileBuffer, uploadsDir) {
   const outputPath = path.join(uploadsDir, outputName);
 
   try {
-    await runFfmpeg([
-      '-y',
-      '-i', fullPath,
-      '-vf', `scale='min(1280,iw)':'min(${VIDEO_MAX_HEIGHT},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2`,
-      '-c:v', 'libx264',
-      '-preset', 'fast',
-      '-crf', '30',
-      '-c:a', 'aac',
-      '-b:a', '96k',
-      '-movflags', '+faststart',
-      outputPath,
-    ]);
+    await runFfmpeg(videoFfmpegArgs(fullPath, outputPath));
 
     const output = fs.readFileSync(outputPath);
     if (output.length >= fileBuffer.length) {
@@ -944,6 +948,8 @@ async function buildBitrixUploadAttachment(filePath, fieldName, fileIndex = 1, o
         };
       }
     }
+  } else if (VIDEO_EXTENSIONS.has(ext) && (uploadTimeCompressed.has(basename) || basename.endsWith(COMPRESSED_VIDEO_SUFFIX))) {
+    // already compressed at upload time, nothing to do
   } else if (VIDEO_EXTENSIONS.has(ext)) {
     let optimizedVideo;
     try {
@@ -1353,6 +1359,44 @@ async function buildConfirmationLetterPdf(data = {}) {
   };
 }
 
+// Compressed copy of an uploaded video, next to the original: <name>-720p.mp4.
+// The fixed name lets the server find it again after a restart (no state needed).
+const COMPRESSED_VIDEO_SUFFIX = '-720p.mp4';
+
+function compressedVideoName(filename) {
+  return filename.replace(/\.[^.]+$/, '') + COMPRESSED_VIDEO_SUFFIX;
+}
+
+// Runs after the upload was answered. Keeps the original (the daily orphan cleanup
+// removes it once nothing references it); returns null if ffmpeg fails or the
+// result is not smaller, so callers keep using the original.
+async function compressStoredVideo(filename, uploadsDir) {
+  if (!isFfmpegAvailable() || filename.endsWith(COMPRESSED_VIDEO_SUFFIX)) return null;
+
+  const fullPath = path.join(uploadsDir, filename);
+  const newBasename = compressedVideoName(filename);
+  const tempPath = path.join(uploadsDir, `.upload-${Date.now()}-${process.pid}-${newBasename}`);
+
+  try {
+    const originalSize = fs.statSync(fullPath).size;
+    await runFfmpeg(videoFfmpegArgs(fullPath, tempPath));
+    const compressedSize = fs.statSync(tempPath).size;
+    if (compressedSize >= originalSize) return null;
+    fs.renameSync(tempPath, path.join(uploadsDir, newBasename));
+    uploadTimeCompressed.add(newBasename);
+    return {
+      kind: 'video',
+      filename: newBasename,
+      originalSizeKB: Math.round(originalSize / 1024),
+      compressedSizeKB: Math.round(compressedSize / 1024),
+    };
+  } catch {
+    return null;
+  } finally {
+    fs.rmSync(tempPath, { force: true });
+  }
+}
+
 async function compressUploadedFile(file, uploadsDir) {
   const ext = path.extname(file.filename).toLowerCase();
   if (!IMAGE_EXTENSIONS.has(ext)) return null;
@@ -1408,4 +1452,8 @@ module.exports = {
   buildCustomerName,
   ADMIN_PDF_SPECS,
   compressUploadedFiles,
+  compressStoredVideo,
+  compressedVideoName,
+  COMPRESSED_VIDEO_SUFFIX,
+  VIDEO_EXTENSIONS,
 };

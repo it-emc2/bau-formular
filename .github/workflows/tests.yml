@@ -1,0 +1,17 @@
+# Tests only. Deploys are done by hand with `fly deploy`, which runs the same
+# tests inside the Docker build (see Dockerfile) and aborts on a failure.
+name: Tests
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.11.1
+          cache: npm
+      - run: npm ci
+      - run: npm test

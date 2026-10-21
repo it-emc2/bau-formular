@@ -14,10 +14,10 @@ const OperationLog = require('../models/OperationLog');
 const { buildDocumentPackage } = require('../services/documentLetter');
 const { postTimelineComment, updateDealFields, postChatMessage, chatDialogId } = require('../services/bitrix');
 const { buildAbnahmeCheckPayload, postAbnahmeCheck } = require('../services/n8nAbnahmeCheck');
-const { buildStepDocumentAttachments, buildBitrixUploadAttachment, buildSelectedPdfAttachments, buildProduktverkaufSummaryText, buildCustomerName, ADMIN_PDF_SPECS, compressUploadedFiles } = require('../services/stepDocuments');
+const { buildStepDocumentAttachments, buildBitrixUploadAttachment, buildSelectedPdfAttachments, buildProduktverkaufSummaryText, buildCustomerName, ADMIN_PDF_SPECS, compressUploadedFiles, compressStoredVideo, compressedVideoName, COMPRESSED_VIDEO_SUFFIX, VIDEO_EXTENSIONS } = require('../services/stepDocuments');
 const { getUploadsDir } = require('../services/uploadsPath');
-const { cleanupOrphanUploads, getDraftFileReferences } = require('../services/orphanUploads');
-const { addOperationLog, listOperationLogs } = require('../services/operationLogs');
+const { cleanupOrphanUploads, getDraftFileReferences, deleteExpiredDrafts, getVolumeUsage } = require('../services/orphanUploads');
+const { addOperationLog, listOperationLogs, migrateLogRetention, AUDIT_EVENT_PATTERN } = require('../services/operationLogs');
 
 const router = express.Router();
 const uploadsDir = getUploadsDir();
@@ -49,10 +49,18 @@ function uploadAny(req, res, next) {
     if (!error) {
       if (req.files && req.files.length > 0) {
         const compressed = await compressUploadedFiles(req.files, uploadsDir).catch(() => []);
+        // Videos take ~30 s: answer the phone first, compress afterwards (C7b).
+        const videos = req.files.filter(file => SINGLE_UPLOAD_FIELDS.has(file.fieldname)
+          && VIDEO_EXTENSIONS.has(path.extname(file.filename).toLowerCase()));
+        if (videos.length) {
+          res.on('finish', () => {
+            if (res.statusCode < 400) compressVideosAfterResponse(videos).catch(() => {});
+          });
+        }
         if (compressed.length > 0) {
           addOperationLog({
             event: 'upload.compressed',
-            message: `${compressed.length} Bild(er) bei Upload komprimiert.`,
+            message: `${compressed.length} Datei(en) bei Upload komprimiert (${compressed.map(c => `${c.kind} ${c.originalSizeKB} KB -> ${c.compressedSizeKB} KB`).join(', ')}).`,
             context: { files: compressed },
           }).catch(() => {});
         }
@@ -84,20 +92,54 @@ function uploadAny(req, res, next) {
   });
 }
 
+async function compressVideosAfterResponse(files) {
+  for (const file of files) {
+    const result = await compressStoredVideo(file.filename, uploadsDir);
+    if (!result) continue;
+    const oldUrl = `/uploads/${file.filename}`;
+    const newUrl = `/uploads/${result.filename}`;
+    const filter = { [file.fieldname]: oldUrl };
+    const update = { $set: { [file.fieldname]: newUrl } };
+    // timestamps: false — a newer updatedAt would make the phone drop local edits (A1).
+    const [drafts, abnahmen] = await Promise.all([
+      Entwurf.updateMany(filter, update, { timestamps: false }),
+      Abnahme.updateMany(filter, update, { timestamps: false }),
+    ]);
+    await addOperationLog({
+      event: 'upload.compressed',
+      message: `Video nach der Antwort komprimiert (${result.originalSizeKB} KB -> ${result.compressedSizeKB} KB), ${drafts.modifiedCount + abnahmen.modifiedCount} Formular(e) umgestellt.`,
+      context: { files: [{ ...result, fieldName: file.fieldname, original: file.filename }] },
+    });
+  }
+}
+
+// A phone may still send the original video URL (it got it before the compression
+// finished). Use the compressed sibling whenever it exists; works after restarts too.
+function preferCompressedVideos(payload) {
+  SINGLE_UPLOAD_FIELDS.forEach(field => {
+    const url = payload[field];
+    if (typeof url !== 'string' || !url.startsWith('/uploads/') || url.endsWith(COMPRESSED_VIDEO_SUFFIX)) return;
+    const candidate = compressedVideoName(path.basename(url));
+    if (fs.existsSync(path.join(uploadsDir, candidate))) payload[field] = `/uploads/${candidate}`;
+  });
+  return payload;
+}
+
 function createShareToken() {
   return crypto.randomBytes(16).toString('hex');
 }
 
 function parsePayload(req) {
-  if (typeof req.body?.formData === 'string') {
-    return JSON.parse(req.body.formData);
-  }
+  const payload = typeof req.body?.formData === 'string'
+    ? JSON.parse(req.body.formData)
+    : { ...(req.body?.formData && typeof req.body.formData === 'object' ? req.body.formData : req.body) };
 
-  if (req.body?.formData && typeof req.body.formData === 'object') {
-    return { ...req.body.formData };
+  // Die Pflicht-"Auftrags-ID" (terminId) ist die Deal-ID; bitrixAuftragId fuellt nur "Lead laden".
+  const terminId = String(payload.terminId || '').trim();
+  if (!String(payload.bitrixAuftragId || '').trim() && /^\d+$/.test(terminId)) {
+    payload.bitrixAuftragId = terminId;
   }
-
-  return { ...req.body };
+  return payload;
 }
 
 function createMailtoUrl({ to, subject, text }) {
@@ -308,15 +350,6 @@ async function findByIdWithSession(Model, id, session = null) {
   return query.session && session ? query.session(session) : query;
 }
 
-function assertBitrixSubmitSucceeded(bitrixSync) {
-  if (!bitrixSync?.attempted || bitrixSync?.sent) return;
-
-  const error = new Error(`Bitrix-Sendung fehlgeschlagen: ${bitrixSync.error || 'Unbekannter Fehler'}`);
-  error.status = 502;
-  error.bitrixSync = bitrixSync;
-  throw error;
-}
-
 async function persistSubmitRecoveryDraft({ formId, payload, session = null }) {
   if (formId) {
     const existingDraft = await findByIdWithSession(Entwurf, formId, session);
@@ -353,6 +386,15 @@ async function persistSubmitRecoveryDraft({ formId, payload, session = null }) {
   return { draft, source: 'new' };
 }
 
+async function findAbnahmeBySubmitId(submitId) {
+  if (typeof submitId !== 'string' || !submitId) return null;
+  return Abnahme.findOne({ submitId });
+}
+
+function bitrixPendingFields() {
+  return { bitrixStatus: 'pending', bitrixError: '', bitrixAttempts: 0, bitrixLastAttemptAt: new Date() };
+}
+
 function buildSuccessResponse(form) {
   return {
     success: true,
@@ -372,28 +414,46 @@ function buildDealLink(bitrixAuftragId) {
   }
 }
 
+function buildFormLink(shareToken) {
+  if (!shareToken) return null;
+  return `${(process.env.APP_BASE_URL || 'https://bau-formular.fly.dev').replace(/\/$/, '')}/form/${shareToken}`;
+}
+
 const BAUSTELLENABNAHME_CHAT_STATUS = {
-  draft: { emoji: '🟡', label: 'Entwurf gespeichert' },
   submitted: { emoji: '🟢', label: 'Abnahme abgeschlossen' },
   failed: { emoji: '🔴', label: 'Fehler beim Absenden' },
+  bitrix_failed: { emoji: '🔴', label: 'Bitrix-Übertragung endgültig fehlgeschlagen' },
+};
+
+const FORM_TYPE_LABELS = {
+  baustellenabnahme: 'BAUSTELLENABNAHME',
+  zusaetzliche_leistungen: 'ZUSÄTZLICHE LEISTUNGEN',
+  nachbesserung: 'NACHBESSERUNG',
+  schadensmeldung: 'SCHADENSMELDUNG',
 };
 
 async function notifyBaustellenabnahmeChat(kind, doc = {}) {
-  if (doc.formularTyp !== 'baustellenabnahme') return null;
+  // Endgueltig fehlgeschlagene Bitrix-Pushes melden wir fuer jeden Formulartyp,
+  // sonst bliebe der Fehler unsichtbar (der Monteur hat schon Gruen gesehen).
+  const formularTyp = doc.formularTyp || 'baustellenabnahme';
+  if (kind !== 'bitrix_failed' && formularTyp !== 'baustellenabnahme') return null;
 
   const { emoji, label } = BAUSTELLENABNAHME_CHAT_STATUS[kind];
   const dealId = doc.bitrixAuftragId;
   const customer = buildCustomerName(doc) || doc.name || 'Kunde';
   const dealLink = buildDealLink(dealId);
+  const formLink = buildFormLink(doc.shareToken);
   const sep = '━'.repeat(45);
 
   const lines = [
-    '📋 BAUSTELLENABNAHME',
+    `📋 ${FORM_TYPE_LABELS[formularTyp] || 'FORMULAR'}`,
     sep,
     `☐ ${emoji} ${dealId ? `[${dealId}] ` : ''}${customer} — ${label}`,
   ];
-  if (dealLink) lines.push(`     🔗 ${dealLink}`);
-  if (kind === 'failed' && doc.errorMessage) lines.push(`     Fehler: ${doc.errorMessage}`);
+  if (dealLink) lines.push(`     🔗 Auftrag: ${dealLink}`);
+  if (formLink) lines.push(`     📝 Formular: ${formLink}`);
+  if (kind !== 'submitted' && doc.errorMessage) lines.push(`     Fehler: ${doc.errorMessage}`);
+  if (kind === 'bitrix_failed') lines.push('     👉 Testmodus → Bitrix Neu-Push → Auftrag-ID laden → „Komplett neu senden“.');
   lines.push(sep, '🤖 Automatisch generiert | Quelle: bau-formular');
 
   try {
@@ -986,6 +1046,216 @@ async function trySendDocumentToBitrix(data = {}, options = {}) {
   }
 }
 
+const BITRIX_MAX_ATTEMPTS = 4; // 1 beim Absenden + 3 automatische Wiederholungen
+const BITRIX_RETRY_AFTER_MS = 10 * 60 * 1000;
+// ponytail: In-Memory-Sperre, reicht fuer genau eine Fly-Maschine. Bei mehreren Maschinen DB-Lock noetig.
+const bitrixPushesInFlight = new Set();
+
+// Laeuft nach der Antwort an den Monteur. Die Abnahme ist dann schon in MongoDB gespeichert.
+async function pushAbnahmeToBitrix(abnahmeId, data, logContext = {}, { trigger = 'submit' } = {}) {
+  const id = String(abnahmeId);
+  if (bitrixPushesInFlight.has(id)) return null;
+  bitrixPushesInFlight.add(id);
+  const context = { ...logContext, submittedId: id, trigger };
+
+  try {
+    const claimed = await Abnahme.findOneAndUpdate(
+      { _id: abnahmeId, bitrixStatus: { $ne: 'sent' } },
+      { $inc: { bitrixAttempts: 1 }, $set: { bitrixLastAttemptAt: new Date() } },
+      { new: true },
+    );
+    if (!claimed) return null;
+    const attempt = claimed.bitrixAttempts || 1;
+
+    await addOperationLog({
+      event: 'submit.bitrix.started',
+      message: trigger === 'admin'
+        ? `Bitrix-Sendung manuell gestartet (Komplett neu senden, Versuch ${attempt}).`
+        : `Bitrix-Sendung im Hintergrund gestartet (Versuch ${attempt}/${BITRIX_MAX_ATTEMPTS}).`,
+      context: { ...context, attempt },
+    });
+    const bitrixSync = await trySendDocumentToBitrix(data, {
+      onProgress: progress => addOperationLog({
+        level: progress.level || 'info',
+        event: progress.event,
+        message: progress.message,
+        context: { ...context, attempt, ...(progress.context || {}) },
+      }),
+    });
+
+    const bitrixStatus = !bitrixSync.attempted ? 'skipped' : (bitrixSync.sent ? 'sent' : 'failed');
+    await Abnahme.updateOne({ _id: abnahmeId }, {
+      $set: {
+        bitrixStatus,
+        bitrixError: bitrixStatus === 'failed' ? (bitrixSync.error || 'Unbekannter Fehler') : '',
+        ...(bitrixStatus === 'sent' ? { bitrixSentAt: new Date() } : {}),
+      },
+    });
+
+    if (bitrixStatus === 'failed') {
+      const final = attempt >= BITRIX_MAX_ATTEMPTS && trigger !== 'admin';
+      await addOperationLog({
+        level: 'error',
+        event: final ? 'submit.bitrix.failed_final' : 'submit.bitrix.failed',
+        message: final
+          ? `Bitrix-Sendung endgueltig fehlgeschlagen nach ${attempt} Versuchen: ${bitrixSync.error}`
+          : `Bitrix-Sendung fehlgeschlagen (Versuch ${attempt}/${BITRIX_MAX_ATTEMPTS}), automatischer neuer Versuch in ca. 10 Min.: ${bitrixSync.error}`,
+        context: { ...context, attempt, bitrixSync },
+      });
+      if (final) {
+        await notifyBaustellenabnahmeChat('bitrix_failed', { ...toPlainDocument(claimed), errorMessage: bitrixSync.error });
+      }
+      return bitrixSync;
+    }
+
+    await addOperationLog({
+      event: 'submit.bitrix.succeeded',
+      message: bitrixStatus === 'sent'
+        ? `Bitrix hat die Dokumente akzeptiert (Versuch ${attempt}).`
+        : 'Keine gueltige Bitrix-Auftrag-ID, Bitrix-Sendung uebersprungen.',
+      context: { ...context, attempt, bitrixStatus, bitrixAttempted: bitrixSync.attempted, bitrixSent: bitrixSync.sent },
+    });
+
+    const chatId = await notifyBaustellenabnahmeChat('submitted', { ...data, shareToken: claimed.shareToken });
+    if (chatId) {
+      const checkPayload = buildAbnahmeCheckPayload(data, {
+        chatId,
+        customerName: buildCustomerName(data) || data.name,
+        documents: bitrixSync.attachmentSummary || [],
+      });
+      // fire-and-forget: ein Fehler hier darf die Abnahme nie zuruecknehmen
+      postAbnahmeCheck(checkPayload, { log: entry => addOperationLog({ ...entry, context: { ...context, ...(entry.context || {}) } }) })
+        .catch(() => {});
+    }
+    return bitrixSync;
+  } catch (error) {
+    await addOperationLog({
+      level: 'error',
+      event: 'submit.bitrix.background_error',
+      message: error.message,
+      context,
+    }).catch(() => {});
+    return null;
+  } finally {
+    bitrixPushesInFlight.delete(id);
+  }
+}
+
+let bitrixRetrySweepRunning = false;
+
+// Sucht Abnahmen, deren Bitrix-Push fehlgeschlagen ist oder durch einen Neustart verloren ging.
+async function retryPendingBitrixPushes() {
+  if (bitrixRetrySweepRunning) return;
+  bitrixRetrySweepRunning = true;
+  try {
+    const due = await Abnahme.find({
+      bitrixLastAttemptAt: { $lt: new Date(Date.now() - BITRIX_RETRY_AFTER_MS) },
+      $or: [
+        { bitrixStatus: 'pending' },
+        { bitrixStatus: 'failed', bitrixAttempts: { $lt: BITRIX_MAX_ATTEMPTS } },
+      ],
+    }).lean();
+
+    for (const doc of due) {
+      if (bitrixPushesInFlight.has(String(doc._id))) continue;
+      const context = { bitrixAuftragId: doc.bitrixAuftragId, terminId: doc.terminId, submittedId: doc._id };
+
+      // 'pending' ohne laufenden Push und ohne Versuche uebrig: der Prozess ist dabei mehrfach gestorben.
+      if ((doc.bitrixAttempts || 0) >= BITRIX_MAX_ATTEMPTS) {
+        const errorMessage = 'Server wurde waehrend der Bitrix-Uebertragung mehrfach neu gestartet.';
+        await Abnahme.updateOne({ _id: doc._id }, { $set: { bitrixStatus: 'failed', bitrixError: errorMessage } });
+        await addOperationLog({ level: 'error', event: 'submit.bitrix.failed_final', message: errorMessage, context });
+        await notifyBaustellenabnahmeChat('bitrix_failed', { ...doc, errorMessage });
+        continue;
+      }
+
+      await addOperationLog({
+        event: 'submit.bitrix.auto_retry.started',
+        message: `Automatischer Bitrix-Wiederholungsversuch (bisher ${doc.bitrixAttempts || 0} Versuche, Status ${doc.bitrixStatus}).`,
+        context,
+      });
+      await pushAbnahmeToBitrix(doc._id, doc, context, { trigger: 'auto_retry' });
+    }
+  } catch (error) {
+    await addOperationLog({ level: 'error', event: 'submit.bitrix.auto_retry.failed', message: error.message }).catch(() => {});
+  } finally {
+    bitrixRetrySweepRunning = false;
+  }
+}
+
+// Nur Entwuerfe ab Einfuehrung des Auto-Speicherns (A2); aeltere Entwuerfe bleiben unangetastet.
+const DRAFT_CLEANUP_CREATED_SINCE = new Date('2026-10-02T00:00:00Z');
+const DRAFT_CLEANUP_AFTER_DAYS = 30;
+
+async function cleanupExpiredDrafts() {
+  try {
+    const result = await deleteExpiredDrafts({ createdSince: DRAFT_CLEANUP_CREATED_SINCE, olderThanDays: DRAFT_CLEANUP_AFTER_DAYS });
+    if (!result.deletedDrafts.length) return;
+    await addOperationLog({
+      event: 'draft.cleanup.deleted',
+      message: `${result.deletedDrafts.length} Entwurf/Entwuerfe nach ${DRAFT_CLEANUP_AFTER_DAYS} Tagen ohne Aenderung geloescht (${result.deletedFiles.length} Dateien).`,
+      context: result,
+    });
+  } catch (error) {
+    await addOperationLog({ level: 'error', event: 'draft.cleanup.failed', message: error.message }).catch(() => {});
+  }
+}
+
+const ORPHAN_MIN_AGE_MS = 24 * 60 * 60 * 1000;
+const VOLUME_ALARM_PERCENT = 80;
+
+// Files nothing references any more. The minimum age protects uploads whose
+// draft is still being saved (multer writes the file before the draft exists).
+async function cleanupOrphanFiles() {
+  try {
+    const result = await cleanupOrphanUploads({ deleteFiles: true, uploadsDir, minAgeMs: ORPHAN_MIN_AGE_MS });
+    if (!result.deletedCount) return;
+    await addOperationLog({
+      event: 'storage.orphans.deleted',
+      message: `${result.deletedCount} verwaiste Datei(en) geloescht (${result.deletedBytesLabel}).`,
+      context: { files: result.orphanFiles.map(file => file.relativePath) },
+    });
+  } catch (error) {
+    await addOperationLog({ level: 'error', event: 'storage.orphans.failed', message: error.message }).catch(() => {});
+  }
+}
+
+async function checkVolumeUsage({ statfs } = {}) {
+  try {
+    const usage = await getVolumeUsage({ uploadsDir, ...(statfs ? { statfs } : {}) });
+    if (usage.usedPercent < VOLUME_ALARM_PERCENT) return usage;
+    const message = `Volume ${usage.usedPercent} % voll (${usage.usedLabel} von ${usage.totalLabel}).`;
+    await addOperationLog({ level: 'error', event: 'storage.volume.alarm', message, context: usage });
+    const sep = '━'.repeat(45);
+    await postChatMessage([
+      '💾 SPEICHER BAU-FORMULAR',
+      sep,
+      `☐ 🔴 ${message}`,
+      '     👉 Testmodus → Volume-Speicher prüfen; ggf. „Alte Dateien löschen“ oder Volume vergrößern.',
+      sep,
+      '🤖 Automatisch generiert | Quelle: bau-formular',
+    ].join('\n')).catch(error => addOperationLog({ level: 'error', event: 'chat.notify.failed', message: error.message, context: { kind: 'volume_alarm' } }));
+    return usage;
+  } catch (error) {
+    await addOperationLog({ level: 'error', event: 'storage.volume.check_failed', message: error.message }).catch(() => {});
+    return null;
+  }
+}
+
+async function runDailyMaintenance() {
+  await cleanupExpiredDrafts();
+  await cleanupOrphanFiles();
+  await checkVolumeUsage();
+}
+
+function startBackgroundJobs() {
+  migrateLogRetention().catch(error => addOperationLog({ level: 'error', event: 'admin.logs.retention_migration_failed', message: error.message }).catch(() => {}));
+  setTimeout(retryPendingBitrixPushes, 30 * 1000).unref();
+  setInterval(retryPendingBitrixPushes, BITRIX_RETRY_AFTER_MS).unref();
+  setTimeout(runDailyMaintenance, 60 * 1000).unref();
+  setInterval(runDailyMaintenance, 24 * 60 * 60 * 1000).unref();
+}
+
 function buildDraftSearchQuery(search = '') {
   const value = String(search || '').trim();
   if (!value) return { status: 'draft' };
@@ -1194,6 +1464,20 @@ router.get('/submitted/:id/export', async (req, res) => {
   }
 });
 
+// Der Bitrix-Link (?dealId=) ist der einzige Einstieg der Monteure: so setzt ein zweites
+// Handy (oder ein verlorener lokaler Stand) denselben Entwurf fort statt einen neuen anzulegen.
+router.get('/drafts/by-deal/:dealId', async (req, res) => {
+  try {
+    const dealId = String(req.params.dealId || '').trim();
+    if (!/^\d+$/.test(dealId)) return res.status(400).json({ success: false, error: 'Ungueltige Auftrag-ID' });
+    const draft = await Entwurf.findOne({ bitrixAuftragId: dealId, formularTyp: 'baustellenabnahme' }).sort({ updatedAt: -1 });
+    if (!draft) return res.status(404).json({ success: false, error: 'Kein Entwurf fuer diesen Auftrag' });
+    return res.json({ success: true, data: draft });
+  } catch (error) {
+    return sendRouteError(res, error, 'Entwurf konnte nicht geladen werden');
+  }
+});
+
 router.get('/drafts/:id', async (req, res) => {
   try {
     const draft = await Entwurf.findById(req.params.id);
@@ -1213,19 +1497,9 @@ router.post('/save', uploadAny, async (req, res) => {
   try {
     const parsed = parsePayload(req);
     logContext = buildRequestLogContext(parsed, req.files);
-    await addOperationLog({
-      event: 'draft.save.received',
-      message: 'Entwurf-Speicherung empfangen.',
-      context: logContext,
-    });
-
-    const payload = mergeUploadedFiles(pickPayload(parsed), req.files);
+    // One entry per save (C4): auto-save (A2) runs often; failures keep the full context.
+    const payload = preferCompressedVideos(mergeUploadedFiles(pickPayload(parsed), req.files));
     const formId = parsed._id || parsed.id;
-    await addOperationLog({
-      event: 'draft.save.uploads_merged',
-      message: 'Upload-Referenzen fuer Entwurf vorbereitet.',
-      context: buildRequestLogContext(parsed, req.files, { formId }),
-    });
 
     if (formId) {
       const existing = await Entwurf.findById(formId);
@@ -1243,7 +1517,6 @@ router.post('/save', uploadAny, async (req, res) => {
             shareToken: existing.shareToken,
           }),
         });
-        await notifyBaustellenabnahmeChat('draft', existing);
         return res.json(buildSuccessResponse(existing));
       }
 
@@ -1277,7 +1550,6 @@ router.post('/save', uploadAny, async (req, res) => {
           shareToken: draft.shareToken,
         }),
       });
-      await notifyBaustellenabnahmeChat('draft', draft);
       return res.status(201).json(buildSuccessResponse(draft));
     }
 
@@ -1297,7 +1569,6 @@ router.post('/save', uploadAny, async (req, res) => {
         shareToken: form.shareToken,
       }),
     });
-    await notifyBaustellenabnahmeChat('draft', form);
     return res.status(201).json(buildSuccessResponse(form));
   } catch (error) {
     await deleteUploadedRequestFiles(req.files);
@@ -1374,7 +1645,18 @@ router.post('/admin/logs/clear', async (req, res) => {
       return res.status(403).json({ success: false, error: 'Passwort ungueltig' });
     }
 
-    const result = await OperationLog.deleteMany({});
+    if (String(req.body?.confirm || '').trim() !== 'LÖSCHEN') {
+      return res.status(400).json({ success: false, error: 'Bestätigungswort fehlt: LÖSCHEN eingeben.' });
+    }
+
+    // Only everyday entries: the audit trail (submit, Bitrix, admin, …) only expires (C4).
+    const result = await OperationLog.deleteMany({ event: { $not: AUDIT_EVENT_PATTERN } });
+    await addOperationLog({
+      level: 'warn',
+      event: 'admin.logs.cleared',
+      message: `Alltags-Logs im Testmodus geloescht (${result.deletedCount || 0} Eintraege); Audit-Eintraege bleiben erhalten.`,
+      context: { deletedCount: result.deletedCount || 0 },
+    });
 
     return res.json({
       success: true,
@@ -1694,10 +1976,54 @@ router.post('/admin/inspect', async (req, res) => {
         bitrixAuftragId: storedEntityId,
         auftragsNummer: form.auftragsNummer || '',
         terminId: form.terminId || '',
+        bitrixStatus: form.bitrixStatus || '',
+        bitrixAttempts: form.bitrixAttempts || 0,
+        bitrixError: form.bitrixError || '',
       },
       categories: { bilder, video, pdfs: ADMIN_PDF_SPECS },
     });
   } catch (error) {
+    return res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Komplett neu senden: exakt derselbe Push wie nach dem Absenden (Text, Dateien, PDFs, Auftragsfelder, Hinweis, Chat, n8n).
+router.post('/admin/resend-full', async (req, res) => {
+  try {
+    if (!isDevModePasswordValid(req.body?.password)) {
+      return res.status(403).json({ success: false, error: 'Passwort ungueltig' });
+    }
+    const entityId = Number(req.body?.entityId);
+    if (!Number.isFinite(entityId) || entityId <= 0) {
+      return res.status(400).json({ success: false, error: 'Bitrix-Auftrag-ID fehlt oder ungültig' });
+    }
+
+    const { form, source } = await findAdminFormByBitrixId(entityId);
+    if (!form || source !== 'abnahme') {
+      return res.status(404).json({ success: false, error: `Keine abgesendete Abnahme mit Bitrix-Auftrag-ID ${entityId} gefunden` });
+    }
+    if (bitrixPushesInFlight.has(String(form._id))) {
+      return res.status(409).json({ success: false, error: 'Für diesen Auftrag läuft gerade eine Bitrix-Übertragung. Bitte in ein paar Minuten erneut versuchen.' });
+    }
+    if (form.bitrixStatus === 'sent') {
+      return res.status(409).json({ success: false, error: 'Diese Abnahme ist bereits vollständig in Bitrix. Für einzelne Dateien „Zu Bitrix senden“ nutzen.' });
+    }
+
+    const context = { bitrixAuftragId: form.bitrixAuftragId, terminId: form.terminId, submittedId: form._id };
+    await addOperationLog({ event: 'admin.bitrix.resend_full.started', message: 'Komplett neu senden gestartet.', context });
+    const bitrixSync = await pushAbnahmeToBitrix(form._id, form, context, { trigger: 'admin' });
+    if (!bitrixSync) {
+      return res.status(500).json({ success: false, error: 'Übertragung konnte nicht gestartet werden (Details in den Logs).' });
+    }
+    const sent = !bitrixSync.attempted || bitrixSync.sent;
+    return res.status(sent ? 200 : 502).json({
+      success: sent,
+      error: sent ? undefined : `Bitrix-Sendung fehlgeschlagen: ${bitrixSync.error || 'Unbekannter Fehler'}`,
+      attachmentCount: bitrixSync.attachmentSummary?.length || 0,
+      durationMs: bitrixSync.durationMs,
+    });
+  } catch (error) {
+    await addOperationLog({ level: 'error', event: 'admin.bitrix.resend_full.failed', message: error.message, context: { entityId: req.body?.entityId } });
     return res.status(500).json({ success: false, error: error.message });
   }
 });
@@ -1723,6 +2049,9 @@ router.post('/admin/push', async (req, res) => {
 
     const { form, source } = await findAdminFormByBitrixId(entityId);
     if (!form) return res.status(404).json({ success: false, error: `Kein Formular mit Bitrix-Auftrag-ID ${entityId} gefunden` });
+    if (source === 'abnahme' && bitrixPushesInFlight.has(String(form._id))) {
+      return res.status(409).json({ success: false, error: 'Für diesen Auftrag läuft gerade eine automatische Bitrix-Übertragung. Bitte in ein paar Minuten erneut versuchen.' });
+    }
 
     const context = { source, entityId };
     await addOperationLog({ event: 'admin.bitrix.push.started', message: `Admin-Push gestartet (${selectedFiles.length} Dateien, ${selectedPdfKeys.length} PDFs).`, context });
@@ -1787,6 +2116,10 @@ router.post('/admin/push', async (req, res) => {
     }
 
     const allOk = timelineResults.length > 0 && timelineResults.every(r => r.ok);
+    if (allOk && source === 'abnahme') {
+      // Buero hat von Hand nachgesendet: automatische Wiederholungen stoppen.
+      await Abnahme.updateOne({ _id: form._id }, { $set: { bitrixStatus: 'sent', bitrixError: '', bitrixSentAt: new Date() } });
+    }
     await addOperationLog({
       event: allOk ? 'admin.bitrix.push.succeeded' : 'admin.bitrix.push.partial',
       message: `Admin-Push ${allOk ? 'erfolgreich' : 'teilweise fehlgeschlagen'} (${attachments.length} Anhänge, ${timelineResults.length} Kommentar(e)).`,
@@ -1800,6 +2133,73 @@ router.post('/admin/push', async (req, res) => {
   }
 });
 
+// Errors injected by browsers/extensions, not by our code (seen in production:
+// Brave on iOS, crypto wallets, cross-origin "Script error.", embedded browsers).
+const CLIENT_NOISE_PATTERNS = [/^Script error\.?$/i, /__firefox__/, /window\.ethereum/, /prompt\(\) is not supported/i];
+
+function isClientNoise(event, message = '') {
+  if (event !== 'client.error' && event !== 'client.unhandled_rejection') return false;
+  return CLIENT_NOISE_PATTERNS.some(pattern => pattern.test(String(message).trim()));
+}
+
+const CLIENT_CHAT_EVENTS = {
+  'client.error': 'Programmfehler im Formular',
+  'client.unhandled_rejection': 'Programmfehler im Formular',
+  'client.outbox.rejected': 'Wartendes Absenden vom Server abgelehnt',
+};
+const CLIENT_CHAT_INTERVAL_MS = 60 * 60 * 1000;
+// ponytail: in-memory rate limit, resets on restart; fine for one machine.
+const clientChatLastSent = new Map();
+
+function describeDevice(userAgent = '') {
+  const os = /iPhone|iPad/.test(userAgent) ? 'iPhone' : (/Android/.test(userAgent) ? 'Android' : 'Computer');
+  const browser = /Brave/.test(userAgent) ? 'Brave'
+    : /CriOS|Chrome/.test(userAgent) ? 'Chrome'
+      : /FxiOS|Firefox/.test(userAgent) ? 'Firefox'
+        : /Safari/.test(userAgent) ? 'Safari' : 'Browser';
+  return `${os} ${browser}`;
+}
+
+async function findFormForChat(formId) {
+  if (!formId || !mongoose.isValidObjectId?.(formId)) return null;
+  return (await Entwurf.findById(formId).lean()) || (await Abnahme.findById(formId).lean());
+}
+
+async function notifyClientErrorChat(event, payload = {}) {
+  const message = String(payload.message || '').slice(0, 300);
+  const key = `${event}|${message.slice(0, 120)}`;
+  const now = Date.now();
+  if (now - (clientChatLastSent.get(key) || 0) < CLIENT_CHAT_INTERVAL_MS) return false;
+  clientChatLastSent.set(key, now);
+
+  const form = await findFormForChat(payload.formId).catch(() => null);
+  const dealId = form?.bitrixAuftragId || payload.bitrixAuftragId;
+  const customer = (form && (buildCustomerName(form) || form.name)) || String(payload.customerName || '').slice(0, 80) || 'Kunde unbekannt';
+  const dealLink = buildDealLink(dealId);
+  const formLink = buildFormLink(form?.shareToken);
+  const sep = '━'.repeat(45);
+  const lines = [
+    '⚠️ FEHLER IM FORMULAR',
+    sep,
+    `☐ 🔴 ${dealId ? `[${dealId}] ` : ''}${customer} — ${CLIENT_CHAT_EVENTS[event]}`,
+    `     Fehler: ${message || 'ohne Text'}`,
+  ];
+  if (payload.stepTitle) lines.push(`     Schritt: ${payload.stepTitle}`);
+  lines.push(`     Gerät: ${describeDevice(payload.browser)}`);
+  if (dealLink) lines.push(`     🔗 Auftrag: ${dealLink}`);
+  if (formLink) lines.push(`     📝 Formular: ${formLink}`);
+  lines.push('     ℹ️ Gleicher Fehler wird höchstens 1× pro Stunde gemeldet. Details: Testmodus → Logs.');
+  lines.push(sep, '🤖 Automatisch generiert | Quelle: bau-formular');
+
+  try {
+    await postChatMessage(lines.join('\n'));
+    return true;
+  } catch (error) {
+    await addOperationLog({ level: 'error', event: 'chat.notify.failed', message: error.message, context: { kind: event } });
+    return false;
+  }
+}
+
 router.post('/client-log', async (req, res) => {
   try {
     const payload = req.body || {};
@@ -1809,10 +2209,24 @@ router.post('/client-log', async (req, res) => {
       'client.error',
       'client.unhandled_rejection',
       'client.submit.success',
+      'client.save.adopt_skipped',
+      'client.local.restored',
+      'client.local.failed',
+      'client.autosave.failed',
+      'client.draft.loaded_by_deal',
+      'client.outbox.queued',
+      'client.outbox.sent',
+      'client.outbox.retry_failed',
+      'client.outbox.rejected',
+      'client.storage.persist',
+      'client.action.failed',
     ]);
 
     if (!allowedEvents.has(event)) {
       return res.status(400).json({ success: false, error: 'Log event not allowed' });
+    }
+    if (isClientNoise(event, payload.message)) {
+      return res.json({ success: true, ignored: true });
     }
 
     await addOperationLog({
@@ -1834,9 +2248,15 @@ router.post('/client-log', async (req, res) => {
         fileSummary: payload.fileSummary,
         elapsedMs: typeof payload.elapsedMs === 'number' ? payload.elapsedMs : undefined,
         bitrixSynced: typeof payload.bitrixSynced === 'boolean' ? payload.bitrixSynced : undefined,
+        fileField: payload.fileField,
+        expectedCount: typeof payload.expectedCount === 'number' ? payload.expectedCount : undefined,
+        receivedCount: typeof payload.receivedCount === 'number' ? payload.receivedCount : undefined,
       },
     });
 
+    if (CLIENT_CHAT_EVENTS[event]) {
+      notifyClientErrorChat(event, payload).catch(() => {});
+    }
     return res.json({ success: true });
   } catch (error) {
     return res.status(400).json({ success: false, error: error.message });
@@ -1969,14 +2389,24 @@ router.post('/submit', uploadAny, async (req, res) => {
 
   try {
     const parsed = parsePayload(req);
-    logContext = buildRequestLogContext(parsed, req.files);
+    logContext = buildRequestLogContext(parsed, req.files, { submitId: parsed.submitId });
+    const alreadySubmitted = await findAbnahmeBySubmitId(parsed.submitId);
+    if (alreadySubmitted) {
+      await deleteUploadedRequestFiles(req.files);
+      await addOperationLog({
+        event: 'submit.duplicate_ignored',
+        message: 'Absenden mit bekannter submitId wiederholt (z. B. Antwort ging verloren). Bestehende Abnahme wird zurueckgegeben.',
+        context: { ...logContext, submittedId: alreadySubmitted._id },
+      });
+      return res.status(200).json({ ...buildSuccessResponse(alreadySubmitted), bitrixStatus: alreadySubmitted.bitrixStatus, duplicate: true });
+    }
     await addOperationLog({
       event: 'submit.received',
       message: 'Absenden empfangen. Zuerst wird ein Recovery-Entwurf gespeichert.',
       context: logContext,
     });
 
-    const payload = mergeUploadedFiles(pickPayload(parsed), req.files);
+    const payload = preferCompressedVideos(mergeUploadedFiles(pickPayload(parsed), req.files));
     const formId = parsed._id || parsed.id;
     const recovery = await runMongoTransaction(session => persistSubmitRecoveryDraft({ formId, payload, session }));
     recoveryDraft = recovery.draft;
@@ -2000,52 +2430,6 @@ router.post('/submit', uploadAny, async (req, res) => {
       ...payload,
     };
 
-    await addOperationLog({
-      event: 'submit.bitrix.started',
-      message: 'Bitrix-Sendung gestartet. MongoDB-Transaktion ist dabei nicht offen.',
-      context: logContext,
-    });
-    const bitrixSync = await trySendDocumentToBitrix(bitrixPayload, {
-      onProgress: progress => addOperationLog({
-        level: progress.level || 'info',
-        event: progress.event,
-        message: progress.message,
-        context: {
-          ...logContext,
-          ...(progress.context || {}),
-        },
-      }),
-    });
-    try {
-      assertBitrixSubmitSucceeded(bitrixSync);
-    } catch (error) {
-      await addOperationLog({
-        level: 'error',
-        event: 'submit.bitrix.failed',
-        message: error.message,
-        context: {
-          ...logContext,
-          bitrixSync,
-        },
-      });
-      throw error;
-    }
-    await addOperationLog({
-      event: 'submit.bitrix.succeeded',
-      message: 'Bitrix hat die Dokumente akzeptiert. Danach startet die kurze MongoDB-Transaktion.',
-      context: {
-        ...logContext,
-        bitrixAttempted: bitrixSync.attempted,
-        bitrixSent: bitrixSync.sent,
-      },
-    });
-    await addOperationLog({
-      level: 'warn',
-      event: 'submit.edge.bitrix_sent_before_mongo_commit',
-      message: 'Bitrix ist erfolgreich, die finale MongoDB-Transaktion ist noch nicht abgeschlossen. Falls der Server genau jetzt stoppt, bleibt der Entwurf bestehen und Bitrix kann beim erneuten Versuch doppelte Dokumente erhalten.',
-      context: logContext,
-    });
-
     const submitResult = await runMongoTransaction(async session => {
       await addOperationLog({
         event: 'submit.transaction.started',
@@ -2065,6 +2449,7 @@ router.post('/submit', uploadAny, async (req, res) => {
         const existingShareToken = submitted.shareToken || createShareToken();
         Object.assign(submitted, {
           ...draftData,
+          ...bitrixPendingFields(),
           shareToken: existingShareToken,
           status: 'submitted',
         });
@@ -2092,7 +2477,7 @@ router.post('/submit', uploadAny, async (req, res) => {
           statusCode: 200,
           response: {
             ...response,
-            bitrixSync,
+            bitrixStatus: 'pending',
           },
           submittedId: submitted._id,
         };
@@ -2100,6 +2485,7 @@ router.post('/submit', uploadAny, async (req, res) => {
 
       const submitPayload = {
         ...draftData,
+        ...bitrixPendingFields(),
         shareToken: recoveryDraft.shareToken || createShareToken(),
         status: 'submitted',
       };
@@ -2127,7 +2513,7 @@ router.post('/submit', uploadAny, async (req, res) => {
         statusCode: recovery.source === 'new' ? 201 : 200,
         response: {
           ...response,
-          bitrixSync,
+          bitrixStatus: 'pending',
         },
         submittedId: submitted._id,
       };
@@ -2141,19 +2527,22 @@ router.post('/submit', uploadAny, async (req, res) => {
         submittedId: submitResult.submittedId,
       },
     });
-    const chatId = await notifyBaustellenabnahmeChat('submitted', bitrixPayload);
-    if (chatId) {
-      const checkPayload = buildAbnahmeCheckPayload(bitrixPayload, {
-        chatId,
-        customerName: buildCustomerName(bitrixPayload) || bitrixPayload.name,
-        documents: bitrixSync.attachmentSummary || [],
-      });
-      // fire-and-forget: ein Fehler hier darf die Abnahme nie zuruecknehmen
-      postAbnahmeCheck(checkPayload, { log: entry => addOperationLog({ ...entry, context: { ...logContext, ...(entry.context || {}) } }) })
-        .catch(() => {});
-    }
-    return res.status(submitResult.statusCode).json(submitResult.response);
+    res.status(submitResult.statusCode).json(submitResult.response);
+    // Bitrix, Chat und n8n laufen nach der Antwort. Die Abnahme ist schon gespeichert.
+    // ponytail: Neustart waehrend des Pushs verliert ihn; retryPendingBitrixPushes holt ihn nach 10 Min. nach.
+    req.bitrixPush = pushAbnahmeToBitrix(submitResult.submittedId, bitrixPayload, logContext);
+    return undefined;
   } catch (error) {
+    // Zwei Versuche mit derselben submitId gleichzeitig: der zweite scheitert am Unique-Index.
+    const raceWinner = error?.code === 11000 ? await findAbnahmeBySubmitId(parsePayload(req).submitId).catch(() => null) : null;
+    if (raceWinner) {
+      await addOperationLog({
+        event: 'submit.duplicate_ignored',
+        message: 'Paralleles Absenden mit derselben submitId; bestehende Abnahme wird zurueckgegeben.',
+        context: { ...logContext, submittedId: raceWinner._id },
+      });
+      return res.status(200).json({ ...buildSuccessResponse(raceWinner), bitrixStatus: raceWinner.bitrixStatus, duplicate: true });
+    }
     if (!uploadedFilesProtectedByDraft) {
       await deleteUploadedRequestFiles(req.files);
     }
@@ -2172,7 +2561,6 @@ router.post('/submit', uploadAny, async (req, res) => {
 
     const details = formatErrorDetails(error);
     if (details.length) response.details = details;
-    if (error?.bitrixSync) response.bitrixSync = error.bitrixSync;
 
     await addOperationLog({
       level: 'error',
@@ -2187,7 +2575,6 @@ router.post('/submit', uploadAny, async (req, res) => {
         draftSaved: Boolean(recoveryDraft),
         uploadedFilesDeleted: !uploadedFilesProtectedByDraft,
         details,
-        bitrixSync: error?.bitrixSync,
       },
     });
     if (recoveryDraft) {
@@ -2198,3 +2585,12 @@ router.post('/submit', uploadAny, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.pushAbnahmeToBitrix = pushAbnahmeToBitrix;
+module.exports.retryPendingBitrixPushes = retryPendingBitrixPushes;
+module.exports.startBackgroundJobs = startBackgroundJobs;
+module.exports.cleanupExpiredDrafts = cleanupExpiredDrafts;
+module.exports.cleanupOrphanFiles = cleanupOrphanFiles;
+module.exports.checkVolumeUsage = checkVolumeUsage;
+module.exports.notifyClientErrorChat = notifyClientErrorChat;
+module.exports.compressVideosAfterResponse = compressVideosAfterResponse;
+module.exports.preferCompressedVideos = preferCompressedVideos;

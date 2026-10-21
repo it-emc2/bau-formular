@@ -105,7 +105,8 @@ async function listStoredFiles(rootDir, currentDir = rootDir) {
   return files;
 }
 
-async function buildOrphanUploadsReport({ uploadsDir = getUploadsDir() } = {}) {
+// minAgeMs: skip files younger than this, e.g. uploads whose draft is not saved yet.
+async function buildOrphanUploadsReport({ uploadsDir = getUploadsDir(), minAgeMs = 0 } = {}) {
   const references = new Set();
   const abnahmeCount = await collectReferencesFromModel(Abnahme, references);
   const entwurfCount = await collectReferencesFromModel(Entwurf, references);
@@ -119,6 +120,7 @@ async function buildOrphanUploadsReport({ uploadsDir = getUploadsDir() } = {}) {
 
   const orphanFiles = storedFiles
     .filter(file => !references.has(file.relativePath))
+    .filter(file => Date.now() - file.modifiedAt.getTime() >= minAgeMs)
     .sort((a, b) => a.relativePath.localeCompare(b.relativePath));
 
   const totalBytes = orphanFiles.reduce((sum, file) => sum + file.size, 0);
@@ -139,8 +141,8 @@ async function buildOrphanUploadsReport({ uploadsDir = getUploadsDir() } = {}) {
   };
 }
 
-async function cleanupOrphanUploads({ deleteFiles = false, uploadsDir = getUploadsDir() } = {}) {
-  const report = await buildOrphanUploadsReport({ uploadsDir });
+async function cleanupOrphanUploads({ deleteFiles = false, uploadsDir = getUploadsDir(), minAgeMs = 0 } = {}) {
+  const report = await buildOrphanUploadsReport({ uploadsDir, minAgeMs });
 
   if (deleteFiles) {
     for (const file of report.orphanFiles) {
@@ -157,6 +159,47 @@ async function cleanupOrphanUploads({ deleteFiles = false, uploadsDir = getUploa
   };
 }
 
+// Loescht Entwuerfe, die seit `olderThanDays` unveraendert sind, samt ihren Dateien.
+// Dateien, die eine Abnahme oder ein anderer Entwurf noch referenziert, bleiben.
+async function deleteExpiredDrafts({ createdSince, olderThanDays = 30, uploadsDir = getUploadsDir() } = {}) {
+  const cutoff = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000);
+  const expired = await Entwurf.find({ createdAt: { $gte: createdSince }, updatedAt: { $lt: cutoff } }).lean();
+  if (!expired.length) return { deletedDrafts: [], deletedFiles: [] };
+
+  await Entwurf.deleteMany({ _id: { $in: expired.map(draft => draft._id) } });
+
+  const expiredReferences = new Set();
+  expired.forEach(draft => collectUploadReferences(draft, expiredReferences));
+  const stillReferenced = new Set();
+  await collectReferencesFromModel(Abnahme, stillReferenced);
+  await collectReferencesFromModel(Entwurf, stillReferenced);
+
+  const deletedFiles = [];
+  for (const relativePath of expiredReferences) {
+    if (stillReferenced.has(relativePath)) continue;
+    await fs.rm(path.join(uploadsDir, relativePath), { force: true });
+    deletedFiles.push(relativePath);
+  }
+
+  return {
+    deletedDrafts: expired.map(draft => ({ id: String(draft._id), bitrixAuftragId: draft.bitrixAuftragId, updatedAt: draft.updatedAt })),
+    deletedFiles,
+  };
+}
+
+async function getVolumeUsage({ uploadsDir = getUploadsDir(), statfs = fs.statfs } = {}) {
+  const stats = await statfs(uploadsDir);
+  const totalBytes = stats.blocks * stats.bsize;
+  const usedBytes = (stats.blocks - stats.bfree) * stats.bsize;
+  return {
+    totalBytes,
+    usedBytes,
+    usedPercent: totalBytes ? Math.round((usedBytes / totalBytes) * 100) : 0,
+    usedLabel: formatBytes(usedBytes),
+    totalLabel: formatBytes(totalBytes),
+  };
+}
+
 async function getDraftFileReferences() {
   const references = new Set();
   await collectReferencesFromModel(Entwurf, references);
@@ -165,6 +208,8 @@ async function getDraftFileReferences() {
 
 module.exports = {
   cleanupOrphanUploads,
+  deleteExpiredDrafts,
+  getVolumeUsage,
   getDraftFileReferences,
   formatBytes,
 };

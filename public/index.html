@@ -35,6 +35,7 @@
 
     <!-- Step Indicator -->
     <div class="step-indicator" id="stepIndicator"></div>
+    <div class="save-status hidden" id="saveStatus" role="status" aria-live="polite"></div>
 
     <form id="abnahmeForm" novalidate>
       <input type="hidden" name="formularTyp" value="" />
@@ -44,7 +45,7 @@
       <section class="form-step active form-start-step" data-step="0">
         <h2>Bitte Formulartyp auswählen</h2>
         <p class="intro">
-          Wähle den passenden Vorgang für deinen Einsatz aus. Anschließend werden dir nur die
+          Wählen Sie den passenden Vorgang für Ihren Einsatz aus. Anschließend werden Ihnen nur die
           Schritte angezeigt, die für die jeweilige Dokumentation erforderlich sind.
         </p>
 
@@ -99,8 +100,8 @@
       <section class="form-step" data-step="1">
         <h2 id="step1Title">Abschluss der Baustelle</h2>
         <p class="intro" id="step1Intro">
-          Auf den folgenden Seiten wirst du Schritt für Schritt durch den Abschluss
-          der Baustelle geführt. Bitte beachte, dass dieser <strong>vor Ort mit dem
+          Auf den folgenden Seiten werden Sie Schritt für Schritt durch den Abschluss
+          der Baustelle geführt. Bitte beachten Sie, dass dieser <strong>vor Ort mit dem
           Kunden</strong> gemeinsam vorgenommen werden muss.
         </p>
 
@@ -324,6 +325,7 @@
                 <div class="admin-push-categories hidden" id="adminPushCategories"></div>
                 <div class="admin-push-actions hidden" id="adminPushActions">
                   <button type="button" class="btn btn-bitrix" id="btnAdminPushSend">Zu Bitrix senden</button>
+                  <button type="button" class="btn btn-bitrix ghost" id="btnAdminResendFull" title="Sendet alles wie beim Absenden: Text, Fotos, Video, PDFs, Auftragsfelder, Hinweis">Komplett neu senden</button>
                 </div>
                 <pre class="admin-push-output hidden" id="adminPushOutput"></pre>
               </div>
@@ -454,7 +456,7 @@
             <input type="checkbox" name="grossesVideoNachgang" />
             Großes Video im Nachgang hochladen
           </label>
-          <p class="hint">Wenn diese Checkbox gewählt wird, erhältst du im Nachgang die Möglichkeit, das Video hochzuladen.</p>
+          <p class="hint">Wenn diese Checkbox gewählt wird, erhalten Sie im Nachgang die Möglichkeit, das Video hochzuladen.</p>
         </div>
 
         <label class="field-label required">Video des Ablaufs</label>
@@ -779,7 +781,7 @@
       <!-- ────────── STEP 10 ─ Arbeitsbericht ────────── -->
       <section class="form-step dev-only-step" data-step="10" data-form-type-only="baustellenabnahme">
         <h2>Arbeitsbericht</h2>
-        <p class="intro">Suche nach einem externen Angebot oder Entwurf und lade daraus den Arbeitsbericht als PDF.</p>
+        <p class="intro">Suchen Sie nach einem externen Angebot oder Entwurf und laden Sie daraus den Arbeitsbericht als PDF.</p>
 
         <div class="arbeitsbericht-panel">
           <div class="document-panel-head">
@@ -835,7 +837,7 @@
           <div class="document-panel-head">
             <div>
               <h3>Bestätigungsschreiben</h3>
-              <p>Am Ende des Formulars kannst du das Schreiben ansehen, herunterladen, per E-Mail vorbereiten oder in Bitrix als Kommentar hinterlegen.</p>
+              <p>Am Ende des Formulars können Sie das Schreiben ansehen, herunterladen, per E-Mail vorbereiten oder in Bitrix als Kommentar hinterlegen.</p>
             </div>
           </div>
 
@@ -1038,6 +1040,20 @@
     <div class="modal-actions">
       <button type="button" class="btn btn-next" id="btnCopyLink">Link kopieren</button>
       <button type="button" class="btn btn-back" id="btnCloseDraft">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ RECEIPT (B5) ══════════ -->
+<div class="modal-overlay" id="receiptModal">
+  <div class="modal-content modal-sm receipt" role="dialog" aria-labelledby="receiptTitle">
+    <div class="receipt-check" aria-hidden="true">✓</div>
+    <h3 id="receiptTitle">Formular übermittelt</h3>
+    <p class="receipt-lead">Sie können das Handy jetzt weglegen.</p>
+    <dl class="receipt-list" id="receiptList"></dl>
+    <p class="receipt-bitrix" id="receiptBitrix"></p>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-next" id="btnReceiptDone">Fertig</button>
     </div>
   </div>
 </div>

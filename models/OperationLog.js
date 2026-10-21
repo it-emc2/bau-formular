@@ -12,11 +12,14 @@ const schema = new mongoose.Schema({
   formId: { type: String, default: null, index: true },
   shareToken: { type: String, default: null },
   context: { type: mongoose.Schema.Types.Mixed, default: {} },
+  // Set when written (services/operationLogs.js): audit entries 2 years, everyday 30 days.
+  expireAt: { type: Date },
 }, {
   timestamps: true,
   collection: 'OperationLogs',
 });
 
-schema.index({ createdAt: 1 }, { expireAfterSeconds: 60 * 60 * 24 * 30 });
+// Replaces the old 30-day TTL on createdAt (dropped once by migrateLogRetention).
+schema.index({ expireAt: 1 }, { expireAfterSeconds: 0 });
 
 module.exports = mongoose.models.OperationLog || mongoose.model('OperationLog', schema);

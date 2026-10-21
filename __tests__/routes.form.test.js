@@ -3,6 +3,9 @@ jest.mock('../models/Abnahme', () => ({
   find: jest.fn(),
   findById: jest.fn(),
   findOne: jest.fn(),
+  findOneAndUpdate: jest.fn(),
+  updateOne: jest.fn(),
+  updateMany: jest.fn(),
 }));
 
 jest.mock('../models/Entwurf', () => ({
@@ -10,6 +13,7 @@ jest.mock('../models/Entwurf', () => ({
   find: jest.fn(),
   findById: jest.fn(),
   findOne: jest.fn(),
+  updateMany: jest.fn(),
 }));
 
 jest.mock('nodemailer', () => ({
@@ -19,15 +23,24 @@ jest.mock('nodemailer', () => ({
 jest.mock('../services/bitrix', () => ({
   postTimelineComment: jest.fn(),
   updateDealFields: jest.fn(),
+  postChatMessage: jest.fn(),
+}));
+
+jest.mock('../models/OperationLog', () => ({
+  create: jest.fn(),
+  find: jest.fn(),
 }));
 
 jest.mock('../services/orphanUploads', () => ({
   cleanupOrphanUploads: jest.fn(),
+  getVolumeUsage: jest.requireActual('../services/orphanUploads').getVolumeUsage,
 }));
 
 jest.mock('../services/operationLogs', () => ({
   addOperationLog: jest.fn(),
   listOperationLogs: jest.fn(),
+  migrateLogRetention: jest.fn(),
+  AUDIT_EVENT_PATTERN: jest.requireActual('../services/operationLogs').AUDIT_EVENT_PATTERN,
 }));
 
 jest.mock('mongoose', () => ({
@@ -36,9 +49,10 @@ jest.mock('mongoose', () => ({
 
 const Abnahme = require('../models/Abnahme');
 const Entwurf = require('../models/Entwurf');
+const OperationLog = require('../models/OperationLog');
 const nodemailer = require('nodemailer');
 const mongoose = require('mongoose');
-const { postTimelineComment, updateDealFields } = require('../services/bitrix');
+const { postTimelineComment, updateDealFields, postChatMessage } = require('../services/bitrix');
 const { cleanupOrphanUploads } = require('../services/orphanUploads');
 const { addOperationLog, listOperationLogs } = require('../services/operationLogs');
 const router = require('../routes/form');
@@ -120,12 +134,24 @@ describe('form routes', () => {
     delete process.env.SMTP_PASS;
     delete process.env.ARBEITSBERICHT_PDF_URL;
     updateDealFields.mockResolvedValue({ result: { item: {} } });
+    Abnahme.findOneAndUpdate.mockImplementation(async filter => ({ _id: filter._id, bitrixAttempts: 1, shareToken: 'abnahme-token' }));
     sessionMocks = [];
     mongoose.startSession.mockImplementation(async () => {
       const session = createSessionMock();
       sessionMocks.push(session);
       return session;
     });
+    // The Bitrix submit waits 10s between retry attempts. Run that pause
+    // instantly so retry/fallback tests don't exceed Jest's 5s timeout;
+    // every other timer keeps its real behaviour.
+    const realSetTimeout = global.setTimeout;
+    jest.spyOn(global, 'setTimeout').mockImplementation((fn, ms, ...args) => (
+      ms === 10_000 ? realSetTimeout(fn, 0, ...args) : realSetTimeout(fn, ms, ...args)
+    ));
+  });
+
+  afterEach(() => {
+    global.setTimeout.mockRestore?.();
   });
 
   afterAll(() => {
@@ -300,6 +326,13 @@ describe('form routes', () => {
     ]);
     expect(existing.videoDesAblaufs).toBe('/uploads/new-video.webm');
     expect(save).toHaveBeenCalled();
+    // The client adopts these URLs from the response and then stops re-uploading
+    // the local files, so the saved paths must come back with the save result.
+    expect(res.body.data.bilderFertigerUmbau).toEqual([
+      '/uploads/existing-image.webp',
+      '/uploads/new-image.webp',
+    ]);
+    expect(res.body.data.videoDesAblaufs).toBe('/uploads/new-video.webm');
   });
 
   it('returns 404 when updating a missing draft', async () => {
@@ -508,6 +541,80 @@ describe('form routes', () => {
     expect(res.body).toEqual({ success: true });
   });
 
+  it('drops known browser/extension noise without logging it', async () => {
+    const handlers = findRouteHandlers('/client-log', 'post');
+    for (const message of ['Script error.', "ReferenceError: Can't find variable: __firefox__", "TypeError: undefined is not an object (evaluating 'window.ethereum.selectedAddress = undefined')", 'prompt() is not supported.']) {
+      const res = await runHandlers(handlers, { body: { event: 'client.error', level: 'error', message } });
+      expect(res.body).toEqual({ success: true, ignored: true });
+    }
+    expect(addOperationLog).not.toHaveBeenCalled();
+    expect(postChatMessage).not.toHaveBeenCalled();
+  });
+
+  it('logs a real client error and posts it to the chat at most once per hour', async () => {
+    const handlers = findRouteHandlers('/client-log', 'post');
+    postChatMessage.mockResolvedValue({});
+    process.env.BITRIX_WEBHOOK_BASE = 'https://example.bitrix24.de/rest/1/x/';
+    const body = {
+      event: 'client.error', level: 'error', message: 'TypeError: x is undefined (C2 test)', bitrixAuftragId: '65278', customerName: 'Stefan Wolfrum',
+      stepTitle: 'Fotos & Video', browser: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) Version/18.7 Mobile/15E148 Safari/604.1',
+    };
+
+    await runHandlers(handlers, { body });
+    await new Promise(resolve => setImmediate(resolve));
+    await runHandlers(handlers, { body });
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect(addOperationLog).toHaveBeenCalledWith(expect.objectContaining({ event: 'client.error', level: 'error' }));
+    expect(postChatMessage).toHaveBeenCalledTimes(1);
+    const text = postChatMessage.mock.calls[0][0];
+    expect(text).toContain('[65278] Stefan Wolfrum');
+    expect(text).toContain('Programmfehler im Formular');
+    expect(text).toContain('TypeError: x is undefined (C2 test)');
+    expect(text).toContain('Gerät: iPhone Safari');
+    expect(text).toContain('https://example.bitrix24.de/crm/deal/details/65278/');
+  });
+
+  it('posts a rejected queued submit to the chat but not an auto-save failure', async () => {
+    const handlers = findRouteHandlers('/client-log', 'post');
+    postChatMessage.mockResolvedValue({});
+
+    await runHandlers(handlers, { body: { event: 'client.autosave.failed', message: 'Load failed' } });
+    await runHandlers(handlers, { body: { event: 'client.outbox.rejected', level: 'error', message: 'Wartendes Absenden abgelehnt: terminId fehlt (C2 test)' } });
+    await new Promise(resolve => setImmediate(resolve));
+
+    expect(postChatMessage).toHaveBeenCalledTimes(1);
+    expect(postChatMessage.mock.calls[0][0]).toContain('Wartendes Absenden vom Server abgelehnt');
+  });
+
+  describe('POST /admin/logs/clear', () => {
+    beforeEach(() => { process.env.TESTMODUS_PASSWORD = 'pw'; });
+    afterEach(() => { delete process.env.TESTMODUS_PASSWORD; });
+
+    it('refuses without the confirmation word', async () => {
+      const handlers = findRouteHandlers('/admin/logs/clear', 'post');
+      OperationLog.deleteMany = jest.fn();
+
+      const res = await runHandlers(handlers, { body: { password: 'pw' } });
+
+      expect(res.statusCode).toBe(400);
+      expect(OperationLog.deleteMany).not.toHaveBeenCalled();
+    });
+
+    it('deletes and logs the clearing with the confirmation word', async () => {
+      const handlers = findRouteHandlers('/admin/logs/clear', 'post');
+      OperationLog.deleteMany = jest.fn().mockResolvedValue({ deletedCount: 42 });
+
+      const res = await runHandlers(handlers, { body: { password: 'pw', confirm: 'LÖSCHEN' } });
+
+      expect(res.body).toEqual({ success: true, deletedCount: 42 });
+      const filter = OperationLog.deleteMany.mock.calls[0][0];
+      expect(filter.event.$not.test('submit.bitrix.succeeded')).toBe(true);   // audit entry: excluded from deletion
+      expect(filter.event.$not.test('draft.save.updated')).toBe(false);       // everyday entry: deleted
+      expect(addOperationLog).toHaveBeenCalledWith(expect.objectContaining({ event: 'admin.logs.cleared', context: { deletedCount: 42 } }));
+    });
+  });
+
   it('rejects unknown client log events', async () => {
     const handlers = findRouteHandlers('/client-log', 'post');
 
@@ -690,28 +797,33 @@ describe('form routes', () => {
       })],
       expect.objectContaining({ session: expect.any(Object) })
     );
+    expect(Abnahme.create).toHaveBeenCalledWith(
+      [expect.objectContaining({ status: 'submitted', bitrixStatus: 'pending', bitrixAttempts: 0 })],
+      expect.objectContaining({ session: expect.any(Object) })
+    );
+    expect(res.body).toEqual(expect.objectContaining({ success: true, bitrixStatus: 'pending' }));
+
+    const bitrixSync = await req.bitrixPush;
     expect(postTimelineComment).toHaveBeenCalledWith(
       expect.objectContaining({
         entityType: 'deal',
         entityId: 55,
       })
     );
-    expect(res.body).toEqual(
-      expect.objectContaining({
-        success: true,
-        bitrixSync: expect.objectContaining({
-          attempted: true,
-          sent: true,
-          entityId: 55,
-        }),
-      })
+    expect(bitrixSync).toEqual(expect.objectContaining({ attempted: true, sent: true, entityId: 55 }));
+    expect(Abnahme.updateOne).toHaveBeenCalledWith(
+      { _id: 'submitted-22' },
+      { $set: expect.objectContaining({ bitrixStatus: 'sent', bitrixSentAt: expect.any(Date) }) }
     );
   });
 
   it('tries one Bitrix timeline comment first and falls back to batches if it fails', async () => {
     const handlers = findRouteHandlers('/submit', 'post');
 
+    // All 3 single-comment attempts time out, then the batch upload succeeds.
     postTimelineComment
+      .mockRejectedValueOnce(new Error('Bitrix POST Timeout nach 60s'))
+      .mockRejectedValueOnce(new Error('Bitrix POST Timeout nach 60s'))
       .mockRejectedValueOnce(new Error('Bitrix POST Timeout nach 60s'))
       .mockResolvedValue({ result: 999 });
     Entwurf.create.mockImplementation(async payload => createDraftMock({
@@ -739,10 +851,11 @@ describe('form routes', () => {
     const res = await runHandlers(handlers, req);
 
     expect(res.statusCode).toBe(201);
-    expect(postTimelineComment).toHaveBeenCalledTimes(2);
+    const bitrixSync = await req.bitrixPush;
+    expect(postTimelineComment).toHaveBeenCalledTimes(4);
     expect(postTimelineComment.mock.calls[0][0].comment).toContain('Bestaetigung erfolgreicher Umbau');
-    expect(postTimelineComment.mock.calls[1][0].comment).toContain('Bestaetigung erfolgreicher Umbau');
-    expect(res.body.bitrixSync.requests).toEqual(
+    expect(postTimelineComment.mock.calls[3][0].comment).toContain('Bestaetigung erfolgreicher Umbau');
+    expect(bitrixSync.requests).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ mode: 'single', ok: false }),
         expect.objectContaining({ mode: 'fallback_batch', ok: true }),
@@ -750,66 +863,230 @@ describe('form routes', () => {
     );
   });
 
-  it('keeps the recovery draft and does not create a submitted form when Bitrix submit fails', async () => {
+  it('answers green before Bitrix and marks the Abnahme failed for an automatic retry when Bitrix fails', async () => {
     const handlers = findRouteHandlers('/submit', 'post');
-    const draftDeleteOne = jest.fn().mockResolvedValue();
-    const submittedDeleteOne = jest.fn().mockResolvedValue();
 
     postTimelineComment.mockRejectedValue(new Error('Bitrix offline'));
-    Entwurf.create.mockImplementation(async payload => {
-      const draft = createDraftMock({
-        _id: 'draft-before-submit',
-        shareToken: 'draft-token',
-        ...firstCreatePayload(payload),
-      });
-      draft.deleteOne = draftDeleteOne;
-      return draft;
-    });
-    Abnahme.create.mockImplementation(async payload => ({
-      _id: 'submitted-22',
+    Entwurf.create.mockImplementation(async payload => createDraftMock({
+      _id: 'draft-before-submit',
+      shareToken: 'draft-token',
       ...firstCreatePayload(payload),
-      deleteOne: submittedDeleteOne,
-      toObject: () => ({ _id: 'submitted-22', ...firstCreatePayload(payload) }),
     }));
+    Abnahme.create.mockImplementation(async payload => ({ _id: 'submitted-22', ...firstCreatePayload(payload) }));
 
-    const req = {
-      body: {
-        formData: JSON.stringify({
-          terminId: 'UT-1000',
-          bitrixAuftragId: '55',
-        }),
-      },
-    };
-
+    const req = { body: { formData: JSON.stringify({ terminId: 'UT-1000', bitrixAuftragId: '55' }) } };
     const res = await runHandlers(handlers, req);
 
-    expect(res.statusCode).toBe(502);
-    expect(Entwurf.create).toHaveBeenCalledWith(
-      [expect.objectContaining({
-        terminId: 'UT-1000',
-        status: 'draft',
-      })],
+    expect(res.statusCode).toBe(201);
+    expect(res.body).toEqual(expect.objectContaining({ success: true, id: 'submitted-22', bitrixStatus: 'pending' }));
+
+    await req.bitrixPush;
+    expect(Abnahme.updateOne).toHaveBeenCalledWith(
+      { _id: 'submitted-22' },
+      { $set: expect.objectContaining({ bitrixStatus: 'failed', bitrixError: 'Bitrix offline' }) }
+    );
+    expect(addOperationLog).toHaveBeenCalledWith(expect.objectContaining({ event: 'submit.bitrix.failed' }));
+    // Versuch 1 von 4: noch kein Alarm im Chat, der Timer versucht es erneut.
+    expect(postChatMessage).not.toHaveBeenCalled();
+  });
+
+  it('alerts the chat with deal and form links after the last automatic attempt fails', async () => {
+    const { pushAbnahmeToBitrix } = require('../routes/form');
+    postTimelineComment.mockRejectedValue(new Error('Bitrix offline'));
+    Abnahme.findOneAndUpdate.mockResolvedValue({
+      _id: 'submitted-22', bitrixAttempts: 4, shareToken: 'abc', formularTyp: 'nachbesserung', bitrixAuftragId: '55', vorname: 'Max', nachname: 'Muster',
+    });
+    process.env.BITRIX_WEBHOOK_BASE = 'https://example.bitrix24.de/rest/1/x/';
+
+    await pushAbnahmeToBitrix('submitted-22', { terminId: 'UT-1000', bitrixAuftragId: '55' });
+
+    expect(addOperationLog).toHaveBeenCalledWith(expect.objectContaining({ event: 'submit.bitrix.failed_final' }));
+    const message = postChatMessage.mock.calls[0][0];
+    expect(message).toContain('NACHBESSERUNG');
+    expect(message).toContain('https://example.bitrix24.de/crm/deal/details/55/');
+    expect(message).toContain('https://bau-formular.fly.dev/form/abc');
+    expect(message).toContain('Bitrix Neu-Push');
+  });
+
+  it('does not push again when the Abnahme is already sent', async () => {
+    const { pushAbnahmeToBitrix } = require('../routes/form');
+    Abnahme.findOneAndUpdate.mockResolvedValue(null);
+
+    const result = await pushAbnahmeToBitrix('submitted-22', { bitrixAuftragId: '55' });
+
+    expect(result).toBeNull();
+    expect(postTimelineComment).not.toHaveBeenCalled();
+  });
+
+  it('retries failed pushes and gives up on pending ones without attempts left', async () => {
+    const { retryPendingBitrixPushes } = require('../routes/form');
+    postTimelineComment.mockResolvedValue({ result: 1 });
+    Abnahme.find.mockReturnValue({
+      lean: async () => [
+        { _id: 'retry-me', bitrixStatus: 'failed', bitrixAttempts: 1, bitrixAuftragId: '55', terminId: 'UT-1' },
+        { _id: 'dead', bitrixStatus: 'pending', bitrixAttempts: 4, bitrixAuftragId: '56', shareToken: 't' },
+      ],
+    });
+
+    await retryPendingBitrixPushes();
+
+    expect(Abnahme.findOneAndUpdate).toHaveBeenCalledWith(
+      { _id: 'retry-me', bitrixStatus: { $ne: 'sent' } },
+      expect.any(Object),
+      { new: true }
+    );
+    expect(Abnahme.updateOne).toHaveBeenCalledWith({ _id: 'retry-me' }, { $set: expect.objectContaining({ bitrixStatus: 'sent' }) });
+    expect(Abnahme.updateOne).toHaveBeenCalledWith({ _id: 'dead' }, { $set: expect.objectContaining({ bitrixStatus: 'failed' }) });
+    expect(postChatMessage).toHaveBeenCalledWith(expect.stringContaining('endgültig fehlgeschlagen'));
+  });
+
+  it('returns the existing Abnahme when a submit with a known submitId is repeated', async () => {
+    const handlers = findRouteHandlers('/submit', 'post');
+    Abnahme.findOne.mockResolvedValue({ _id: 'abn-1', shareToken: 'tok', bitrixStatus: 'sent' });
+
+    const req = { body: { formData: JSON.stringify({ terminId: 'UT-1', submitId: 'sub-1', bitrixAuftragId: '55' }) } };
+    const res = await runHandlers(handlers, req);
+
+    expect(Abnahme.findOne).toHaveBeenCalledWith({ submitId: 'sub-1' });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual(expect.objectContaining({ success: true, id: 'abn-1', duplicate: true, bitrixStatus: 'sent' }));
+    expect(Entwurf.create).not.toHaveBeenCalled();
+    expect(Abnahme.create).not.toHaveBeenCalled();
+    expect(req.bitrixPush).toBeUndefined();
+  });
+
+  it('stores the submitId on the new Abnahme', async () => {
+    const handlers = findRouteHandlers('/submit', 'post');
+    Abnahme.findOne.mockResolvedValue(null);
+    Entwurf.create.mockImplementation(async payload => createDraftMock({ _id: 'draft-1', ...firstCreatePayload(payload) }));
+    Abnahme.create.mockImplementation(async payload => ({ _id: 'abn-2', ...firstCreatePayload(payload) }));
+
+    const req = { body: { formData: JSON.stringify({ terminId: 'UT-1', submitId: 'sub-2' }) } };
+    const res = await runHandlers(handlers, req);
+
+    expect(res.statusCode).toBe(201);
+    expect(Abnahme.create).toHaveBeenCalledWith(
+      [expect.objectContaining({ submitId: 'sub-2', status: 'submitted' })],
       expect.objectContaining({ session: expect.any(Object) })
     );
-    expect(Abnahme.create).not.toHaveBeenCalled();
-    expect(submittedDeleteOne).not.toHaveBeenCalled();
-    expect(draftDeleteOne).not.toHaveBeenCalled();
-    expect(sessionMocks[0].commitTransaction).toHaveBeenCalled();
-    expect(sessionMocks).toHaveLength(1);
-    expect(res.body).toEqual(
-      expect.objectContaining({
-        success: false,
-        draftSaved: true,
-        draftId: 'draft-before-submit',
-        shareToken: expect.any(String),
-        shareLink: expect.stringMatching(/^\/form\//),
-        bitrixSync: expect.objectContaining({
-          attempted: true,
-          sent: false,
-          error: 'Bitrix offline',
-        }),
-      })
-    );
+  });
+
+  it('returns the race winner when a parallel submit with the same submitId hits the unique index', async () => {
+    const handlers = findRouteHandlers('/submit', 'post');
+    Abnahme.findOne
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ _id: 'abn-winner', shareToken: 'tok', bitrixStatus: 'pending' });
+    Entwurf.create.mockImplementation(async payload => createDraftMock({ _id: 'draft-1', ...firstCreatePayload(payload) }));
+    Abnahme.create.mockRejectedValue(Object.assign(new Error('E11000 duplicate key'), { code: 11000 }));
+
+    const req = { body: { formData: JSON.stringify({ terminId: 'UT-1', submitId: 'sub-3' }) } };
+    const res = await runHandlers(handlers, req);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual(expect.objectContaining({ success: true, id: 'abn-winner', duplicate: true }));
+  });
+
+  it('loads the newest Baustellenabnahme draft for a deal', async () => {
+    const handlers = findRouteHandlers('/drafts/by-deal/:dealId', 'get');
+    const sort = jest.fn().mockResolvedValue({ _id: 'draft-9', bitrixAuftragId: '65278' });
+    Entwurf.findOne.mockReturnValue({ sort });
+
+    const res = await runHandlers(handlers, { params: { dealId: '65278' } });
+
+    expect(Entwurf.findOne).toHaveBeenCalledWith({ bitrixAuftragId: '65278', formularTyp: 'baustellenabnahme' });
+    expect(sort).toHaveBeenCalledWith({ updatedAt: -1 });
+    expect(res.body).toEqual({ success: true, data: expect.objectContaining({ _id: 'draft-9' }) });
+  });
+
+  it('returns 404 when a deal has no draft and 400 for a non-numeric deal id', async () => {
+    const handlers = findRouteHandlers('/drafts/by-deal/:dealId', 'get');
+    Entwurf.findOne.mockReturnValue({ sort: jest.fn().mockResolvedValue(null) });
+
+    expect((await runHandlers(handlers, { params: { dealId: '1' } })).statusCode).toBe(404);
+    expect((await runHandlers(handlers, { params: { dealId: 'abc' } })).statusCode).toBe(400);
+  });
+
+  it('posts a chat alarm only when the volume is at least 80 % full', async () => {
+    const { checkVolumeUsage } = require('../routes/form');
+    postChatMessage.mockResolvedValue({});
+
+    await checkVolumeUsage({ statfs: async () => ({ blocks: 100, bfree: 50, bsize: 1024 }) });
+    expect(postChatMessage).not.toHaveBeenCalled();
+
+    await checkVolumeUsage({ statfs: async () => ({ blocks: 100, bfree: 15, bsize: 1024 }) });
+    expect(postChatMessage).toHaveBeenCalledWith(expect.stringContaining('Volume 85 % voll'));
+    expect(addOperationLog).toHaveBeenCalledWith(expect.objectContaining({ event: 'storage.volume.alarm' }));
+  });
+
+  describe('video compression after the response (C7b)', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const { spawnSync } = require('child_process');
+    const { getUploadsDir } = require('../services/uploadsPath');
+    const dir = getUploadsDir();
+    const hasFfmpeg = spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' }).status === 0;
+    const maybe = hasFfmpeg ? it : it.skip;
+    const names = ['c7b-test-IMG.mov', 'c7b-test-IMG-720p.mp4'];
+    afterEach(() => names.forEach(name => fs.rmSync(path.join(dir, name), { force: true })));
+
+    it('uses the compressed sibling when a phone still sends the original URL', () => {
+      const { preferCompressedVideos } = require('../routes/form');
+      expect(preferCompressedVideos({ videoDesAblaufs: '/uploads/c7b-test-IMG.mov' }).videoDesAblaufs).toBe('/uploads/c7b-test-IMG.mov');
+      fs.writeFileSync(path.join(dir, 'c7b-test-IMG-720p.mp4'), 'x');
+      expect(preferCompressedVideos({ videoDesAblaufs: '/uploads/c7b-test-IMG.mov' }).videoDesAblaufs).toBe('/uploads/c7b-test-IMG-720p.mp4');
+    });
+
+    maybe('compresses, then switches drafts and Abnahmen to the mp4 without touching updatedAt', async () => {
+      const { compressVideosAfterResponse } = require('../routes/form');
+      spawnSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=size=1920x1080:rate=25:duration=2', '-c:v', 'mjpeg', '-q:v', '2', path.join(dir, 'c7b-test-IMG.mov')], { stdio: 'ignore' });
+      Entwurf.updateMany.mockResolvedValue({ modifiedCount: 1 });
+      Abnahme.updateMany.mockResolvedValue({ modifiedCount: 0 });
+
+      await compressVideosAfterResponse([{ fieldname: 'videoDesAblaufs', filename: 'c7b-test-IMG.mov' }]);
+
+      const expected = [{ videoDesAblaufs: '/uploads/c7b-test-IMG.mov' }, { $set: { videoDesAblaufs: '/uploads/c7b-test-IMG-720p.mp4' } }, { timestamps: false }];
+      expect(Entwurf.updateMany).toHaveBeenCalledWith(...expected);
+      expect(Abnahme.updateMany).toHaveBeenCalledWith(...expected);
+      expect(fs.existsSync(path.join(dir, 'c7b-test-IMG-720p.mp4'))).toBe(true);
+      expect(addOperationLog).toHaveBeenCalledWith(expect.objectContaining({ event: 'upload.compressed', message: expect.stringContaining('1 Formular(e) umgestellt') }));
+    }, 60000);
+  });
+
+  describe('POST /admin/resend-full', () => {
+    function mockAbnahmeLookup(doc) {
+      Abnahme.find.mockReturnValue({ sort: () => ({ limit: () => ({ lean: async () => (doc ? [doc] : []) }) }) });
+    }
+
+    beforeEach(() => {
+      process.env.TESTMODUS_PASSWORD = 'pw';
+    });
+
+    afterEach(() => {
+      delete process.env.TESTMODUS_PASSWORD;
+    });
+
+    it('runs the full submit push for a failed Abnahme', async () => {
+      const handlers = findRouteHandlers('/admin/resend-full', 'post');
+      postTimelineComment.mockResolvedValue({ result: 1 });
+      mockAbnahmeLookup({ _id: 'abn-1', bitrixStatus: 'failed', bitrixAttempts: 4, bitrixAuftragId: '55', terminId: 'UT-1' });
+
+      const res = await runHandlers(handlers, { body: { password: 'pw', entityId: '55' } });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(postTimelineComment).toHaveBeenCalledWith(expect.objectContaining({ entityId: 55 }));
+      expect(Abnahme.updateOne).toHaveBeenCalledWith({ _id: 'abn-1' }, { $set: expect.objectContaining({ bitrixStatus: 'sent' }) });
+    });
+
+    it('refuses when the Abnahme is already sent', async () => {
+      const handlers = findRouteHandlers('/admin/resend-full', 'post');
+      mockAbnahmeLookup({ _id: 'abn-1', bitrixStatus: 'sent', bitrixAuftragId: '55' });
+
+      const res = await runHandlers(handlers, { body: { password: 'pw', entityId: '55' } });
+
+      expect(res.statusCode).toBe(409);
+      expect(postTimelineComment).not.toHaveBeenCalled();
+    });
   });
 
   it('persists Einwilligung fields and uploads the PDF to Bitrix on submit', async () => {
@@ -851,6 +1128,7 @@ describe('form routes', () => {
       expect.objectContaining({ session: expect.any(Object) })
     );
 
+    await req.bitrixPush;
     expect(postTimelineComment).toHaveBeenCalledTimes(1);
     const bitrixCall = postTimelineComment.mock.calls[0][0];
     expect(bitrixCall.entityId).toBe(77);

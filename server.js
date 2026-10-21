@@ -124,6 +124,13 @@ async function startServer() {
 
     await mongoose.connect(mongoUri, mongoOptions);
     console.log('✅  MongoDB verbunden');
+    // Only on Fly (or when asked): a local dev server uses the production DB and
+    // chat, so its jobs would retry real Bitrix pushes and measure the laptop disk.
+    if (process.env.FLY_APP_NAME || process.env.ENABLE_BACKGROUND_JOBS === '1') {
+      formRoutes.startBackgroundJobs();
+    } else {
+      console.log('ℹ️  Hintergrund-Jobs aus (lokal). Einschalten mit ENABLE_BACKGROUND_JOBS=1');
+    }
     return app.listen(PORT, () => console.log(`🚀  Server läuft auf http://localhost:${PORT}`));
   } catch (err) {
     console.error('❌  MongoDB Verbindungsfehler:', err.message);
