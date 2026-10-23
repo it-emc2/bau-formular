@@ -40,12 +40,12 @@ A professional web app for **non-technical workers on iPhones**:
 
 Recommended order: ~~A1+B2~~ → ~~B1+C2~~ → ~~A2+A3~~ → ~~A4~~ → ~~C7~~ → ~~C6~~ → ~~C1+C2~~ → ~~C7b~~ → ~~B4~~ → ~~C4~~ → ~~B5~~ → the rest (small items, any order).
 
-Branches: `plan/reliability-roadmap` (local, **not pushed**) = `form-submit-upload-once-v2` + everything in this plan. **Production runs this branch** (owner's manual `fly deploy`s on 2026-10-02).
+Branches: everything up to B5 + the Auftrags-ID fix is on `main` via PR #6 (merged 2026-10-23). The A3 race fix (`fix/outbox-submit-race`) follows as its own PR.
 
 ### ⚠️ Deployment — read first
 
 - **Deploys are manual only:** the owner runs `fly deploy` by hand and wants to keep it that way. The old "Fly Deploy" GitHub workflow never deployed anything (the `FLY_API_TOKEN` secret is empty, every run failed after ~8 s); since C6 it is a tests-only workflow (`.github/workflows/tests.yml`).
-- **Production runs `plan/reliability-roadmap`; `main` is behind.** A manual `fly deploy` from `main` would roll production back to the old code. Merge this branch into `main` before the next deploy from `main` (owner does the merge).
+- **`main` = production** since PR #6 (merged 2026-10-23). Work on a branch, open a PR to `main`, deploy from `main` after merging.
 - Every `fly deploy` runs `npm test` in the Docker build stage (C6); a failing test aborts the deploy and production keeps running.
 
 ---
@@ -153,6 +153,7 @@ Verified end-to-end on production (2026-10-02, deal 65278): saves uploaded 3 →
 - **Editing stays allowed** while queued; each attempt sends the latest local state.
 - `submitId` (`crypto.randomUUID()`) is created on the first *Absenden* and sent on every attempt, including the first direct one. Server: unique sparse index on `Abnahme.submitId`; a known `submitId` returns the existing Abnahme (`submit.duplicate_ignored`), also when two attempts race (E11000).
 - Status line: *📤 Kein Netz – wird automatisch gesendet, sobald Empfang da ist. Bitte Seite offen lassen.*
+- **Bug found in production (deal 65504, 15.10) and fixed (`fix/outbox-submit-race`):** a direct *Absenden* started while the queue was already sending the same form; the queued copy won, the direct one failed afterwards and re-queued the form **without** `submitId` (cleared on success), so it was sent again and updated the Abnahme (Bitrix posted once only thanks to the in-flight guard). Fix: *Absenden* on a queued form flushes the queue instead of a parallel request; each request keeps its own `submitId`; a failure after the form was sent is ignored; no local snapshot after submit. Browser test with intercepted requests: old code sends a parallel second request, new code exactly one.
 - Known limit: `client.outbox.queued` is logged while offline and therefore usually lost; `client.outbox.sent` carries the delay since the click instead.
 - **Found on live (fixed):** `indexedDB.open()` can stay pending forever (e.g. another tab blocks a pending delete; WebKit has similar glitches). Because `init` awaits the local restore, the form then hung on step 0. `openLocalDb` now gives up after 3 s; the form loads without local backup and the status line warns. Verified locally and on live with two tabs (form loads after ~3 s with the warning).
 - Testing tip: on live, simulate "no signal" by wrapping `window.fetch` in the tab to reject `/api/form/submit` with `TypeError('Load failed')`, then restore it and dispatch `online`. Close other tabs of the same origin before deleting the IndexedDB, or the delete blocks every open.

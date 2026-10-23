@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A reliability roadmap is in progress: **`docs/10-reliability-plan.md`**. It holds the goal, the research findings (production usage data, code gaps, iOS limits), the task list with status, and working notes (local dev against production `.env`, test deal `65278`, deploy/rollback). Read it before starting any task, and update its status table when a task lands.
 
-⚠️ Production runs the branch `plan/reliability-roadmap` via manual `fly deploy`; `main` is behind, so a deploy from `main` would roll production back. See the plan's "Deployment — read first".
+Deploys are manual `fly deploy` from `main` (since PR #6, 2026-10-23, `main` = production). See the plan's "Deployment — read first".
 
 ## Commands
 
