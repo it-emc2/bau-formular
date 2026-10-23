@@ -40,12 +40,12 @@ A professional web app for **non-technical workers on iPhones**:
 
 Recommended order: ~~A1+B2~~ → ~~B1+C2~~ → ~~A2+A3~~ → ~~A4~~ → ~~C7~~ → ~~C6~~ → ~~C1+C2~~ → ~~C7b~~ → ~~B4~~ → ~~C4~~ → ~~B5~~ → the rest (small items, any order).
 
-Branches: `plan/reliability-roadmap` (local, **not pushed**) = `form-submit-upload-once-v2` + everything in this plan. **Production runs this branch** (owner's manual `fly deploy`s on 2026-10-02).
+Branches: everything up to B5 + the Auftrags-ID fix is on `main` via PR #6 (merged 2026-10-23). The A3 race fix (`fix/outbox-submit-race`) follows as its own PR.
 
 ### ⚠️ Deployment — read first
 
 - **Deploys are manual only:** the owner runs `fly deploy` by hand and wants to keep it that way. The old "Fly Deploy" GitHub workflow never deployed anything (the `FLY_API_TOKEN` secret is empty, every run failed after ~8 s); since C6 it is a tests-only workflow (`.github/workflows/tests.yml`).
-- **Production runs `plan/reliability-roadmap`; `main` is behind.** A manual `fly deploy` from `main` would roll production back to the old code. Merge this branch into `main` before the next deploy from `main` (owner does the merge).
+- **`main` = production** since PR #6 (merged 2026-10-23). Work on a branch, open a PR to `main`, deploy from `main` after merging.
 - Every `fly deploy` runs `npm test` in the Docker build stage (C6); a failing test aborts the deploy and production keeps running.
 
 ---
