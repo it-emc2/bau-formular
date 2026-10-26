@@ -115,6 +115,7 @@ All boolean fields default to `false`. These are checkboxes.
 | `videoDesAblaufs` | String | Video URL showing water drainage |
 | `fotosAbdichtung` | [String] | Sealing photos |
 | `bilderBehobeneMaengel` | [String] | Photos of fixed defects |
+| `bilderNachbesserung` | [String] | Photos of the Nachbesserung (required in step 9) |
 
 ### Step 6 — Weitere Bilder (More Images)
 

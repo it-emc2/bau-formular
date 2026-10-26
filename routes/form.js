@@ -1424,6 +1424,7 @@ router.get('/submitted/:id/export', async (req, res) => {
     const fileFields = [
       'bilderFertigerUmbau', 'videoDesAblaufs', 'fotosAbdichtung',
       'bilderBehobeneMaengel', 'weitereBilder', 'weitereBilder2', 'weitereBilder3',
+      'bilderNachbesserung',
     ];
     const missingFiles = [];
     for (const field of fileFields) {
@@ -1891,6 +1892,7 @@ const ADMIN_FILE_FIELD_LABELS = {
   weitereBilder: 'Weitere Bilder',
   weitereBilder2: 'Weitere Bilder 2',
   weitereBilder3: 'Weitere Bilder 3',
+  bilderNachbesserung: 'Bilder Nachbesserung',
 };
 const ADMIN_IMAGE_FIELDS = Object.keys(ADMIN_FILE_FIELD_LABELS);
 const ADMIN_VIDEO_FIELDS = ['videoDesAblaufs'];

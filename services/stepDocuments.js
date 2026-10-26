@@ -1096,6 +1096,7 @@ async function buildStepDocumentAttachments(data = {}, { includeDebug = false, f
   const fileFields = [
     'bilderFertigerUmbau', 'videoDesAblaufs', 'fotosAbdichtung',
     'bilderBehobeneMaengel', 'weitereBilder', 'weitereBilder2', 'weitereBilder3',
+    'bilderNachbesserung',
   ];
   const uploadsDir = getUploadsDir();
   let fileIndex = 0;
