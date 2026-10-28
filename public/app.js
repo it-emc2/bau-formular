@@ -120,6 +120,7 @@
   const FILE_UPLOAD_FIELDS = [
     'bilderFertigerUmbau', 'videoDesAblaufs', 'fotosAbdichtung',
     'bilderBehobeneMaengel', 'weitereBilder', 'weitereBilder2', 'weitereBilder3',
+    'bilderNachbesserung',
   ];
   const SINGLE_FILE_UPLOAD_FIELDS = new Set(['videoDesAblaufs']);
   const SIGNATURE_EXPORT_WIDTH = 600;
@@ -2870,14 +2871,16 @@ function syncDevSidebarVisibility() {
       }
     }
 
-    if (n === 4) {
-      const requiredUploads = [
+    const requiredUploadsByStep = {
+      4: [
         { name: 'bilderFertigerUmbau', label: 'Bilder des fertigen Umbaus' },
         { name: 'videoDesAblaufs', label: 'Video des Ablaufs' },
         { name: 'fotosAbdichtung', label: 'Fotos der Abdichtung' },
-      ];
-
-      requiredUploads.forEach(({ name, label }) => {
+      ],
+      9: [{ name: 'bilderNachbesserung', label: 'Fotos der Nachbesserung' }],
+    };
+    if (requiredUploadsByStep[n]) {
+      requiredUploadsByStep[n].forEach(({ name, label }) => {
         const wrapper = $(`.file-upload[data-name="${name}"]`, section);
         if (!wrapper) return;
         const hasFreshFiles = fileStore[name] && fileStore[name].length > 0;

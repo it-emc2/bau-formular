@@ -126,6 +126,7 @@ const schemaDefinition = {
   preisZusaetzlichNB:            { type: Number, default: 0 },
   alleArbeitenNB:                { type: String, enum: ['Ja', 'Nein', ''], default: '' },
   nichtErledigteArbeitenNB:     { type: String, default: '' },
+  bilderNachbesserung:           [String],
   unterschriftNB:                { type: String, default: '' },
   unterschriftNBZeitpunkt:       { type: Date },
 
